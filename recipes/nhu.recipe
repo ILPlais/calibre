@@ -1,0 +1,64 @@
+#!/usr/bin/env python2
+# vim:fileencoding=utf-8
+from __future__ import unicode_literals, division, absolute_import, print_function
+from calibre.web.feeds.news import BasicNewsRecipe
+# author:  <lionel.plais@ilp-web.net>
+
+class NHUBretagne(BasicNewsRecipe):
+    title = 'NHU Bretagne'
+    __author__ = 'Lionel Plais'
+    description = u'Média collaboratif pour une Bretagne Positive\nNHU : Ni Hon-Unan, qui signifie nous-mêmes en breton'
+    oldest_article = 90
+    language = 'fr'
+    cover_img_url = 'https://www.nhu.bzh/wp-content/uploads/nhu-logo.jpg'
+    masthead_url = cover_img_url
+    remove_javascript = True
+    no_stylesheets = True
+    ignore_duplicate_articles = {'url'}
+
+    keep_only_tags = [
+        dict(name='article'),
+    ]
+
+    remove_tags = [
+        dict(name='div', attrs={'class': ['cs-single-post-controls', 'post-share', 'panel_title', 'author_box', 'comments']}),
+        dict(id=['comments']),
+    ]
+
+    feeds = [
+        (u'Territoires',            u'https://www.nhu.bzh/territoires-bretagne/feed/'),
+        # (u' | Art culinaire',       u'https://www.nhu.bzh/territoires-bretagne/art-culinaire-bretagne/feed/'),
+        # (u' | Environnement',       u'https://www.nhu.bzh/territoires-bretagne/environnement-bretagne/feed/'),
+        # (u' | Géographie',          u'https://www.nhu.bzh/territoires-bretagne/geographie-bretagne/feed/'),
+        # (u' | Histoire',            u'https://www.nhu.bzh/territoires-bretagne/histoire-bretagne/feed/'),
+        # (u' | Traditions',          u'https://www.nhu.bzh/territoires-bretagne/traditions-bretagne/feed/'),
+        (u'Économie',               u'https://www.nhu.bzh/economie-bretonne/feed/'),
+        # (u' | Énergies',            u'https://www.nhu.bzh/economie-bretonne/energies-en-bretagne/feed/'),
+        # (u' | Finances',            u'https://www.nhu.bzh/economie-bretonne/finances-bretagne/feed/'),
+        # (u' | Industrie',           u'https://www.nhu.bzh/economie-bretonne/industrie-en-bretagne/feed/'),
+        # (u' | Mers',                u'https://www.nhu.bzh/economie-bretonne/economie-maritime-bretagne/feed/'),
+        # (u' | Numérique',           u'https://www.nhu.bzh/economie-bretonne/numerique-bretagne/feed/'),
+        # (u' | Terres',              u'https://www.nhu.bzh/economie-bretonne/agriculture-bretonne/feed/'),
+        (u'Passions',               u'https://www.nhu.bzh/passions-en-bretagne/feed/'),
+        # (u' | Création',            u'https://www.nhu.bzh/passions-en-bretagne/la-creation-en-bretagne/feed/'),
+        # (u' | Billet d\'humeur',    u'https://www.nhu.bzh/passions-en-bretagne/billets-d-humeur-bretons/feed/'),
+        # (u' | Musiques',            u'https://www.nhu.bzh/passions-en-bretagne/musiques-bretonnes/feed/'),
+        # (u' | Sports',              u'https://www.nhu.bzh/passions-en-bretagne/sports-en-bretagne/feed/'),
+        (u'Focus',                  u'https://www.nhu.bzh/focus-en-bretagne/feed/'),
+        # (u' | Une entreprise',      u'https://www.nhu.bzh/focus-en-bretagne/une-entreprise-bretonne/feed/'),
+        # (u' | Une île',             u'https://www.nhu.bzh/focus-en-bretagne/une-ile-bretonne/feed/'),
+        # (u' | Un livre',            u'https://www.nhu.bzh/focus-en-bretagne/un-livre-en-bretagne/feed/'),
+        # (u' | Une personnalité',    u'https://www.nhu.bzh/focus-en-bretagne/une-personnalite-bretonne/feed/'),
+        # (u' | Un projet',           u'https://www.nhu.bzh/focus-en-bretagne/des-projets-en-bretagne/feed/'),
+        # (u' | Une ville',           u'https://www.nhu.bzh/focus-en-bretagne/une-ville-bretonne/feed/'),
+        (u'Images',                 u'https://www.nhu.bzh/images-de-bretagne/feed/'),
+        # (u' | Photos',              u'https://www.nhu.bzh/galeries-photos-bretagne/feed/'),
+        # (u' | Vidéos',              u'https://www.nhu.bzh/videos-bretagne/feed/'),
+    ]
+
+    def preprocess_html(self, soup):
+        for alink in soup.findAll('a'):
+            if alink.string is not None:
+                tstr = alink.string
+                alink.replaceWith(tstr)
+        return soup
