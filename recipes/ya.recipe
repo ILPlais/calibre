@@ -1,0 +1,45 @@
+#!/usr/bin/env python
+# vim:fileencoding=utf-8
+from __future__ import absolute_import, division, print_function, unicode_literals
+
+from calibre.web.feeds.news import BasicNewsRecipe
+
+# author:  <lionel.plais@ilp-web.net>
+
+
+class LePeupleBreton(BasicNewsRecipe):
+    title = 'Yà!'
+    __author__ = 'Lionel Plais'
+    description = u"Ar sizhunieg e brezhoneg"
+    oldest_article = 90
+    language = 'br'
+    cover_img_url = 'https://ya.bzh/wp-content/uploads/2025/06/logo-ya-header-2025-300x100.jpg'
+    masthead_url = cover_img_url
+    remove_javascript = True
+    no_stylesheets = True
+
+    keep_only_tags = [
+        dict(name='article'),
+    ]
+
+    remove_tags = [
+        dict(name='div', attrs={'class': ['share-post', 'juiz_sps_links', 'counters_both', 'juiz_sps_displayed_bottom']}),
+    ]
+
+    feeds = [
+        (u'Etrebroadel', u'https://ya.bzh/category/etrebroadel/feed/'),
+        (u'Breizh', u'https://ya.bzh/category/breizh/feed/'),
+        (u'Ekologiezh', u'https://ya.bzh/category/ekologiezh/feed/'),
+        (u'Sevenadur', u'https://ya.bzh/category/sevenadur/feed/'),
+        (u'Ekonomiezh', u'https://ya.bzh/category/ekonomiezh/feed/'),
+        (u'Atersadennoù', u'https://ya.bzh/category/atersadennou/feed/'),
+        (u'Benelouriezh', u'https://ya.bzh/category/benelouriezh/feed/'),
+        (u'Dielloù', u'https://ya.bzh/category/diellou/feed/'),
+    ]
+
+    def preprocess_html(self, soup):
+        for alink in soup.findAll('a'):
+            if alink.string is not None:
+                tstr = alink.string
+                alink.replaceWith(tstr)
+        return soup
