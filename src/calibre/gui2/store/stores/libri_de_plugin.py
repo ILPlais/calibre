@@ -1,18 +1,21 @@
 # -*- coding: utf-8 -*-
+from __future__ import absolute_import, division, print_function, unicode_literals
 
-from __future__ import (unicode_literals, division, absolute_import, print_function)
-store_version = 5  # Needed for dynamic plugin loading
+store_version = 8  # Needed for dynamic plugin loading
 
 __license__ = 'GPL 3'
 __copyright__ = '2011, John Schember <john@nachtimwald.com>'
 __docformat__ = 'restructuredtext en'
 
-import urllib2
 from contextlib import closing
 
-from lxml import html
+try:
+    from urllib.parse import quote
+except ImportError:
+    from urllib import quote
 
-from PyQt5.Qt import QUrl
+from lxml import html
+from qt.core import QUrl
 
 from calibre import browser
 from calibre.gui2 import open_url
@@ -25,9 +28,9 @@ from calibre.gui2.store.web_store_dialog import WebStoreDialog
 class LibreDEStore(BasicStoreConfig, StorePlugin):
 
     def open(self, parent=None, detail_item=None, external=False):
-        url = 'https://www.awin1.com/awclick.php?mid=9359&awinaffid=397537&clickref=gbhome'
-        url_details = ('https://www.awin1.com/cread.php?awinmid=9359&awinaffid=397537&clickref=gbdetails&p='
-                       'http%3A//www.ebook.de/shop/action/productDetails%3FartiId%3D{0}')
+        url = 'https://clk.tradedoubler.com/click?p=324630&a=3252627'
+        url_details = ('https://clk.tradedoubler.com/click?p=324630&a=3252627'
+                       '&url=https%3A%2F%2Fwww.ebook.de%2Fshop%2Faction%2FproductDetails%3FartiId%3D{0}')
 
         if external or self.config.get('open_external', False):
             if detail_item:
@@ -40,28 +43,26 @@ class LibreDEStore(BasicStoreConfig, StorePlugin):
             d = WebStoreDialog(self.gui, url, parent, detail_url)
             d.setWindowTitle(self.name)
             d.set_tags(self.config.get('tags', ''))
-            d.exec_()
+            d.exec()
 
     def search(self, query, max_results=10, timeout=60):
-        url = ('http://www.ebook.de/de/pathSearch?nav=52122&searchString=' + urllib2.quote(query))
+        url = ('http://www.ebook.de/de/pathSearch?nav=52122&searchString=' + quote(query))
         br = browser()
 
         counter = max_results
         with closing(br.open(url, timeout=timeout)) as f:
             doc = html.fromstring(f.read())
-            for data in doc.xpath('//div[contains(@class, "articlecontainer")]'):
+            for data in doc.xpath('//div[@class="articlecontainer"]'):
                 if counter <= 0:
                     break
-
+                id_ = ''.join(data.xpath('.//div[@class="trackArtiId"]/text()'))
+                if not id_:
+                    continue
                 details = data.xpath('./div[contains(@class, "articleinfobox")]')
                 if not details:
                     continue
                 details = details[0]
-                id_ = ''.join(details.xpath('./a/@name')).strip()
-                if not id_:
-                    continue
-                title = ''.join(details.xpath('./h3[@class="title"]/a/text()')).strip()
-
+                title = ''.join(details.xpath('./div[@class="title"]/a/text()')).strip()
                 author = ''.join(details.xpath('.//div[@class="author"]/text()')).strip()
                 if author.startswith('von'):
                     author = author[4:]

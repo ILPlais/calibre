@@ -1,6 +1,6 @@
 .. _catalog_tut:
 
-Creating AZW3 • EPUB • MOBI catalogs 
+Creating AZW3 • EPUB • MOBI catalogs
 =====================================
 
 calibre's Create catalog feature enables you to create a catalog of your library in a variety of formats. This help file describes cataloging options when generating a catalog in AZW3, EPUB and MOBI formats.
@@ -19,7 +19,7 @@ If you want only *some* of your library cataloged, you have two options:
     * Create a multiple selection of the books you want cataloged. With more than one book selected in calibre's main window, only the selected books will be cataloged.
     * Use the Search field or the Tag browser to filter the displayed books. Only the displayed books will be cataloged.
 
-To begin catalog generation, select the menu item :guilabel:`Convert books > Create a catalog of the books in your calibre library`. You may also add a :guilabel:`Create Catalog` button to a toolbar in :guilabel:`Preferences > Interface > Toolbars` for easier access to the Generate catalog dialog.
+To begin catalog generation, select the menu item :guilabel:`Convert books > Create a catalog of the books in your calibre library`. You may also add a :guilabel:`Create catalog` button to a toolbar in :guilabel:`Preferences > Interface > Toolbars & menus` for easier access to the Generate catalog dialog.
 
 .. image:: images/catalog_options.png
     :alt: Catalog options
@@ -28,7 +28,7 @@ To begin catalog generation, select the menu item :guilabel:`Convert books > Cre
 In :guilabel:`Catalog options`, select **AZW3, EPUB or MOBI** as the Catalog format. In the :guilabel:`Catalog title` field, provide a name that will be used for the generated catalog. If a catalog of the same name and format already exists, it will be replaced with the newly-generated catalog.
 
 .. image:: images/catalog_send_to_device.png
-    :alt: Catalog send to device
+    :alt: Catalog: send to device automatically option
     :align: center
 
 Enabling :guilabel:`Send catalog to device automatically` will download the generated catalog to a connected device upon completion.
@@ -37,7 +37,7 @@ Included sections
 -------------------
 
 .. image:: images/included_sections.png
-    :alt: Included sections
+    :alt: Included sections in catalog
     :align: center
 
 Sections enabled by a checkmark will be included in the generated catalog:
@@ -72,7 +72,7 @@ Excluded books
 -----------------
 
 .. image:: images/excluded_books.png
-    :alt: Excluded books
+    :alt: Excluded books in catalog
     :align: center
 
 Exclusion rules allow you to specify books that will not be cataloged.
@@ -92,7 +92,7 @@ Excluded genres
 ---------------
 
 .. image:: images/excluded_genres.png
-    :alt: Excluded genres
+    :alt: Excluded genres in catalog
     :align: center
 
 When the catalog is generated, tags in your database are used as genres. For example, you may use the tags ``Fiction`` and ``Nonfiction``. These tags become genres in the generated catalog, with books listed under their respective genre lists based on their assigned tags. A book will be listed in every genre section for which it has a corresponding tag.
@@ -107,25 +107,25 @@ Other options
 --------------
 
 .. image:: images/other_options.png
-    :alt: Other options
+    :alt: Other options for catalog
     :align: center
 
-:guilabel:`Catalog cover` specifies whether to generate a new cover or use an existing cover. It is possible to create a custom cover for your catalogs - see :ref:`Custom catalog covers` for more information. If you have created a custom cover that you want to reuse, select :guilabel:`Use existing cover`. Otherwise, select :guilabel:`Generate new cover`.
+:guilabel:`Catalog cover` specifies whether to generate a new cover or use an existing cover. It is possible to create a custom cover for your catalogs - see :ref:`custom_catalog_covers` for more information. If you have created a custom cover that you want to reuse, select :guilabel:`Use existing cover`. Otherwise, select :guilabel:`Generate new cover`.
 
 :guilabel:`Extra Description note` specifies a custom column's contents to be inserted into the Description page, next to the cover thumbnail. For example, you might want to display the date you last read a book using a :guilabel:`Last Read` custom column. For advanced use of the Description note feature, see `this post in the calibre forum <https://www.mobileread.com/forums/showpost.php?p=1335767&postcount=395>`_.
 
 :guilabel:`Thumb width` specifies a width preference for cover thumbnails included with Descriptions pages. Thumbnails are cached to improve performance. To experiment with different widths, try generating a catalog with just a few books until you've determined your preferred width, then generate your full catalog. The first time a catalog is generated with a new thumbnail width, performance will be slower, but subsequent builds of the catalog will take advantage of the thumbnail cache.
 
-:guilabel:`Merge with Comments` specifies a custom column whose content will be non-destructively merged with the Comments metadata during catalog generation. For example, you might have a custom column :guilabel:`Author bio` that you'd like to append to the Comments metadata. You can choose to insert the custom column contents *before or after* the Comments section, and optionally separate the appended content with a horizontal rule separator. Eligible custom column types include ``text, comments, and composite``.
+:guilabel:`Merge with comments` specifies a custom column whose content will be non-destructively merged with the comments metadata during catalog generation. For example, you might have a custom column :guilabel:`Author bio` that you'd like to append to the comments metadata. You can choose to insert the custom column contents *before or after* the comments section, and optionally separate the appended content with a horizontal rule separator. Eligible custom column types include ``text, comments, and composite``.
 
-.. _Custom catalog covers:
+.. _custom_catalog_covers:
 
 Custom catalog covers
 -----------------------
 
 .. |cc| image:: images/custom_cover.png
 
-|cc| With the `Generate Cover plugin <https://www.mobileread.com/forums/showthread.php?t=124219>`_ installed, you can create custom covers for your catalog. 
+|cc| With the `Generate Cover plugin <https://www.mobileread.com/forums/showthread.php?t=124219>`_ installed, you can create custom covers for your catalog.
 To install the plugin, go to :guilabel:`Preferences > Advanced > Plugins > Get new plugins`.
 
 Additional help resources
@@ -133,5 +133,4 @@ Additional help resources
 
 For more information on calibre's Catalog feature, see the MobileRead forum sticky `Creating Catalogs - Start here <https://www.mobileread.com/forums/showthread.php?t=118556>`_, where you can find information on how to customize the catalog templates, and how to submit a bug report.
 
-To ask questions or discuss calibre's Catalog feature with other users, visit the MobileRead forum `Calibre Catalogs <https://www.mobileread.com/forums/forumdisplay.php?f=236>`_.
-
+To ask questions or discuss calibre's Catalog feature with other users, visit the MobileRead forum `Library Management <https://www.mobileread.com/forums/forumdisplay.php?f=236>`_.

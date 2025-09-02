@@ -1,19 +1,20 @@
-#!/usr/bin/env python2
-# vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
-from __future__ import with_statement
+#!/usr/bin/env python
+
 
 __license__   = 'GPL v3'
 __copyright__ = '2009, Kovid Goyal <kovid@kovidgoyal.net>'
 __docformat__ = 'restructuredtext en'
 
-import re, uuid
+import re
+import uuid
+from collections import Counter, OrderedDict
 
 from lxml import etree
-from urlparse import urlparse
-from collections import OrderedDict, Counter
 
-from calibre.ebooks.oeb.base import XPNSMAP, TOC, XHTML, xml2text, barename
 from calibre.ebooks import ConversionError
+from calibre.ebooks.oeb.base import TOC, XHTML, XPNSMAP, barename, xml2text
+from polyglot.builtins import itervalues
+from polyglot.urllib import urlparse
 
 
 def XPath(x):
@@ -21,11 +22,11 @@ def XPath(x):
         return etree.XPath(x, namespaces=XPNSMAP)
     except etree.XPathSyntaxError:
         raise ConversionError(
-        'The syntax of the XPath expression %s is invalid.' % repr(x))
+        f'The syntax of the XPath expression {x!r} is invalid.')
 
 
 def isspace(x):
-    return not x or x.replace(u'\xa0', u'').isspace()
+    return not x or x.replace('\xa0', '').isspace()
 
 
 def at_start(elem):
@@ -46,7 +47,7 @@ def at_start(elem):
     return False
 
 
-class DetectStructure(object):
+class DetectStructure:
 
     def __call__(self, oeb, opts):
         self.log = oeb.log
@@ -68,8 +69,7 @@ class DetectStructure(object):
                 self.oeb.toc = orig_toc
             else:
                 self.oeb.auto_generated_toc = True
-                self.log('Auto generated TOC with %d entries.' %
-                        self.oeb.toc.count())
+                self.log(f'Auto generated TOC with {self.oeb.toc.count()} entries.')
 
         if opts.toc_filter is not None:
             regexp = re.compile(opts.toc_filter)
@@ -84,8 +84,8 @@ class DetectStructure(object):
             for item in oeb.spine:
                 for elem in pb_xpath(item.data):
                     try:
-                        prev = elem.itersiblings(tag=etree.Element,
-                                preceding=True).next()
+                        prev = next(elem.itersiblings(tag=etree.Element,
+                                preceding=True))
                         if (barename(elem.tag) in {'h1', 'h2'} and barename(
                                 prev.tag) in {'h1', 'h2'} and (not prev.tail or
                                     not prev.tail.split())):
@@ -111,9 +111,9 @@ class DetectStructure(object):
         expr = self.opts.start_reading_at
         try:
             expr = XPath(expr)
-        except:
+        except Exception:
             self.log.warn(
-                'Invalid start reading at XPath expression, ignoring: %s'%expr)
+                f'Invalid start reading at XPath expression, ignoring: {expr}')
             return
         for item in self.oeb.spine:
             if not hasattr(item.data, 'xpath'):
@@ -123,21 +123,19 @@ class DetectStructure(object):
                 elem = matches[0]
                 eid = elem.get('id', None)
                 if not eid:
-                    eid = u'start_reading_at_'+unicode(uuid.uuid4()).replace(u'-', u'')
+                    eid = 'start_reading_at_'+str(uuid.uuid4()).replace('-', '')
                     elem.set('id', eid)
-                if u'text' in self.oeb.guide:
-                    self.oeb.guide.remove(u'text')
-                self.oeb.guide.add(u'text', u'Start', item.href+u'#'+eid)
-                self.log('Setting start reading at position to %s in %s'%(
-                    self.opts.start_reading_at, item.href))
+                if 'text' in self.oeb.guide:
+                    self.oeb.guide.remove('text')
+                self.oeb.guide.add('text', 'Start', item.href+'#'+eid)
+                self.log(f'Setting start reading at position to {self.opts.start_reading_at} in {item.href}')
                 return
-        self.log.warn("Failed to find start reading at position: %s"%
-                self.opts.start_reading_at)
+        self.log.warn(f'Failed to find start reading at position: {self.opts.start_reading_at}')
 
     def get_toc_parts_for_xpath(self, expr):
         # if an attribute is selected by the xpath expr then truncate it
         # from the path and instead return it as where to find the title text
-        title_attribute_regex = re.compile('/@([-\w]+)$')
+        title_attribute_regex = re.compile(r'/@([-\w]+)$')
         match = title_attribute_regex.search(expr)
         if match is not None:
             return expr[0:match.start()], match.group(1)
@@ -153,8 +151,8 @@ class DetectStructure(object):
                 ans = XPath(expr)(doc)
                 len(ans)
                 return ans
-            except:
-                self.log.warn('Invalid chapter expression, ignoring: %s'%expr)
+            except Exception:
+                self.log.warn(f'Invalid chapter expression, ignoring: {expr}')
                 return []
 
         if self.opts.chapter:
@@ -231,7 +229,7 @@ class DetectStructure(object):
                                 play_order=self.oeb.toc.next_play_order())
                             num += 1
                         except ValueError:
-                            self.oeb.log.exception('Failed to process link: %r' % href)
+                            self.oeb.log.exception(f'Failed to process link: {href!r}')
                             continue  # Most likely an incorrectly URL encoded link
                         if self.opts.max_toc_links > 0 and \
                                 num >= self.opts.max_toc_links:
@@ -250,7 +248,7 @@ class DetectStructure(object):
             text = elem.get('alt', '')
         text = re.sub(r'\s+', ' ', text.strip())
         text = text[:1000].strip()
-        id = elem.get('id', 'calibre_toc_%d'%counter)
+        id = elem.get('id', f'calibre_toc_{counter}')
         elem.set('id', id)
         href = '#'.join((item.href, id))
         return text, href
@@ -265,13 +263,13 @@ class DetectStructure(object):
                 ans = XPath(expr)(doc)
                 len(ans)
                 return ans
-            except:
-                self.log.warn('Invalid ToC expression, ignoring: %s'%expr)
+            except Exception:
+                self.log.warn(f'Invalid ToC expression, ignoring: {expr}')
                 return []
 
         for document in self.oeb.spine:
-            previous_level1 = list(added.itervalues())[-1] if added else None
-            previous_level2 = list(added2.itervalues())[-1] if added2 else None
+            previous_level1 = list(itervalues(added))[-1] if added else None
+            previous_level2 = list(itervalues(added2))[-1] if added2 else None
 
             level1_toc, level1_title = self.get_toc_parts_for_xpath(self.opts.level1_toc)
             for elem in find_matches(level1_toc, document.data):

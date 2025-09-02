@@ -42,47 +42,58 @@ typedef struct {
 
 #define CHAR(x) (( (x) > 127 ) ? (x)-256 : (x))
 
+static bool
+write_to_bytes_object(PyObject **output, size_t pos, char ch) {
+    if (pos >= PyBytes_GET_SIZE(*output)) {
+        if (_PyBytes_Resize(output, 2 * pos) != 0) return false;
+    }
+    PyBytes_AS_STRING(*output)[pos] = ch;
+    return true;
+}
+
 static PyObject *
 cpalmdoc_decompress(PyObject *self, PyObject *args) {
     const char *_input = NULL; Py_ssize_t input_len = 0;
-    Byte *input; char *output; Byte c; PyObject *ans;
-    Py_ssize_t i = 0, o = 0, j = 0, di, n;
-    if (!PyArg_ParseTuple(args, "t#", &_input, &input_len))
+    Byte *input; Byte c; PyObject *ans = NULL;
+    Py_ssize_t i = 0, j = 0;
+    size_t o = 0, di = 0, n = 0;
+    if (!PyArg_ParseTuple(args, "y#", &_input, &input_len))
 		return NULL;
     input = (Byte *) PyMem_Malloc(sizeof(Byte)*input_len);
     if (input == NULL) return PyErr_NoMemory();
     // Map chars to bytes
-    for (j = 0; j < input_len; j++) 
+    for (j = 0; j < input_len; j++) {
         input[j] = (_input[j] < 0) ? _input[j]+256 : _input[j];
-    output = (char *)PyMem_Malloc(sizeof(char)*(MAX(BUFFER, 8*input_len)));
-    if (output == NULL) return PyErr_NoMemory();
+    }
+    ans = PyBytes_FromStringAndSize(NULL, 8*input_len);
+    if (ans == NULL) { PyMem_Free(input); return NULL; }
 
+#define write(ch) if (!write_to_bytes_object(&ans, o++, ch)) { PyMem_Free(input); return NULL; }
     while (i < input_len) {
         c = input[i++];
-        if (c >= 1 && c <= 8)  // copy 'c' bytes
-            while (c--) output[o++] = (char)input[i++];
-
-        else if (c <= 0x7F)  // 0, 09-7F = self
-            output[o++] = (char)c;
-        
-        else if (c >= 0xC0) { // space + ASCII char
-            output[o++] = ' ';
-            output[o++] = c ^ 0x80;
-        }
-        else { // 80-BF repeat sequences
+        if (c >= 1 && c <= 8)  { // copy 'c' bytes
+            while (c-- && i < input_len) { write(input[i++]); }
+        } else if (c <= 0x7F)  { // 0, 09-7F = self
+            write((char)c);
+        } else if (c >= 0xC0) { // space + ASCII char
+            write(' '); write(c ^ 0x80);
+        } else if (i < input_len) { // 80-BF repeat sequences
             c = (c << 8) + input[i++];
             di = (c & 0x3FFF) >> 3;
-            for ( n = (c & 7) + 3; n--; ++o ) 
-                output[o] = output[o - di];
+            if (di <= o) {
+                for ( n = (c & 7) + 3; n--; ++o ) {
+                    if (!write_to_bytes_object(&ans, o, PyBytes_AS_STRING(ans)[o-di])) { PyMem_Free(input); return NULL; }
+                }
+            }
         }
     }
-    ans = Py_BuildValue("s#", output, o);
-    if (output != NULL) PyMem_Free(output);
-    if (input != NULL) PyMem_Free(input);
+#undef write
+    PyMem_Free(input);
+    if (_PyBytes_Resize(&ans, o) != 0) return NULL;
     return ans;
 }
 
-static bool 
+static bool
 cpalmdoc_memcmp( Byte *a, Byte *b, Py_ssize_t len) {
     Py_ssize_t i;
     for (i = 0; i < len; i++) if (a[i] != b[i]) return false;
@@ -92,7 +103,7 @@ cpalmdoc_memcmp( Byte *a, Byte *b, Py_ssize_t len) {
 static Py_ssize_t
 cpalmdoc_rfind(Byte *data, Py_ssize_t pos, Py_ssize_t chunk_length) {
     Py_ssize_t i;
-    for (i = pos - chunk_length; i > -1; i--) 
+    for (i = pos - chunk_length; i > -1; i--)
         if (cpalmdoc_memcmp(data+i, data+pos, chunk_length)) return i;
     return pos;
 }
@@ -105,7 +116,7 @@ cpalmdoc_do_compress(buffer *b, char *output) {
     Byte c, n;
     bool found;
     char *head;
-    buffer temp; 
+    buffer temp;
     head = output;
     temp.data = (Byte *)PyMem_Malloc(sizeof(Byte)*8); temp.len = 0;
     if (temp.data == NULL) return 0;
@@ -162,12 +173,12 @@ cpalmdoc_compress(PyObject *self, PyObject *args) {
     char *output; PyObject *ans;
     Py_ssize_t j = 0;
     buffer b;
-    if (!PyArg_ParseTuple(args, "t#", &_input, &input_len))
+    if (!PyArg_ParseTuple(args, "y#", &_input, &input_len))
 		return NULL;
     b.data = (Byte *)PyMem_Malloc(sizeof(Byte)*input_len);
     if (b.data == NULL) return PyErr_NoMemory();
     // Map chars to bytes
-    for (j = 0; j < input_len; j++) 
+    for (j = 0; j < input_len; j++)
         b.data[j] = (_input[j] < 0) ? _input[j]+256 : _input[j];
     b.len = input_len;
     // Make the output buffer larger than the input as sometimes
@@ -176,13 +187,15 @@ cpalmdoc_compress(PyObject *self, PyObject *args) {
     if (output == NULL) return PyErr_NoMemory();
     j = cpalmdoc_do_compress(&b, output);
     if ( j == 0) return PyErr_NoMemory();
-    ans = Py_BuildValue("s#", output, j);
+    ans = Py_BuildValue("y#", output, j);
     PyMem_Free(output);
     PyMem_Free(b.data);
     return ans;
 }
 
-static PyMethodDef cPalmdocMethods[] = {
+static char cPalmdoc_doc[] = "Compress and decompress palmdoc strings.";
+
+static PyMethodDef cPalmdoc_methods[] = {
     {"decompress", cpalmdoc_decompress, METH_VARARGS,
     "decompress(bytestring) -> decompressed bytestring\n\n"
     		"Decompress a palmdoc compressed byte string. "
@@ -195,12 +208,17 @@ static PyMethodDef cPalmdocMethods[] = {
     {NULL, NULL, 0, NULL}
 };
 
-CALIBRE_MODINIT_FUNC
-initcPalmdoc(void) {
-    PyObject *m;
-    m = Py_InitModule3("cPalmdoc", cPalmdocMethods,
-    "Compress and decompress palmdoc strings."
-    );
-    if (m == NULL) return;
-}
+static int
+exec_module(PyObject *module) { return 0; }
 
+static PyModuleDef_Slot slots[] = { {Py_mod_exec, exec_module}, {0, NULL} };
+
+static struct PyModuleDef module_def = {
+    .m_base     = PyModuleDef_HEAD_INIT,
+    .m_name     = "cPalmdoc",
+    .m_doc      = cPalmdoc_doc,
+    .m_methods  = cPalmdoc_methods,
+    .m_slots    = slots,
+};
+
+CALIBRE_MODINIT_FUNC PyInit_cPalmdoc(void) { return PyModuleDef_Init(&module_def); }

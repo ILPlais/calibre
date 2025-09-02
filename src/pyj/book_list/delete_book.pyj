@@ -7,7 +7,7 @@ from gettext import gettext as _
 
 from ajax import ajax
 from book_list.add import write_access_error
-from book_list.library_data import book_after, force_refresh_on_next_load
+from book_list.library_data import book_after, force_refresh_on_next_load, remove_book
 from book_list.router import back
 from book_list.ui import show_panel
 from dom import clear
@@ -22,6 +22,16 @@ def delete_from_cache(library_id, book_id, title):
     db.delete_books_matching(library_id, book_id)
 
 
+def refresh_after_delete(book_id, library_id):
+    force_refresh_on_next_load()
+    next_book_id = book_after(book_id)
+    remove_book(book_id)
+    if next_book_id:
+        show_panel('book_details', {'book_id': str(next_book_id), 'library_id': library_id}, True)
+    else:
+        back()
+
+
 def do_delete_from_library(parent, close_modal, library_id, book_id, title):
     parent.appendChild(E.div(_('Deleting {0} from library, please wait...').format(title)))
 
@@ -29,12 +39,7 @@ def do_delete_from_library(parent, close_modal, library_id, book_id, title):
         if end_type is 'load' or end_type is 'abort':
             close_modal()
             if end_type is 'load':
-                force_refresh_on_next_load()
-                next_book_id = book_after(book_id)
-                if next_book_id:
-                    show_panel('book_details', {'book_id': str(next_book_id), 'library_id': library_id}, True)
-                else:
-                    back()
+                refresh_after_delete(book_id, library_id)
             return
         clear(parent)
         msg = E.div()

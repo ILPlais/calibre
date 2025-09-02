@@ -1,7 +1,5 @@
-#! /usr/bin/env python2
-# coding: utf-8
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
+#!/usr/bin/env python
+
 
 __license__   = 'GPL v3'
 __copyright__ = '2011, Anthon van der Neut <A.van.der.Neut@ruamel.eu>'
@@ -11,20 +9,18 @@ __copyright__ = '2011, Anthon van der Neut <A.van.der.Neut@ruamel.eu>'
 # DjVu v3
 # November 2005
 
-import sys
 import struct
+import sys
 
 from calibre.ebooks.djvu.djvubzzdec import BZZDecoder
-from calibre.constants import plugins
 
 
-class DjvuChunk(object):
+class DjvuChunk:
 
     def __init__(self, buf, start, end, align=True, bigendian=True,
             inclheader=False, verbose=0):
-        self.speedup, err = plugins['bzzdec']
-        if self.speedup is None:
-            raise RuntimeError('Failed to load bzzdec plugin: %s' % err)
+        from calibre_extensions import bzzdec
+        self.speedup = bzzdec
         self.subtype = None
         self._subchunks = []
         self.buf = buf
@@ -41,16 +37,15 @@ class DjvuChunk(object):
         self.dataend = pos + self.size - (8 if inclheader else 0)
         if self.type == b'FORM':
             oldpos, pos = pos, pos+4
-            # print oldpos, pos
+            # print(oldpos, pos)
             self.subtype = buf[oldpos:pos]
             # self.headersize += 4
         self.datastart = pos
         if verbose > 0:
-            print ('found', self.type, self.subtype, pos, self.size)
+            print('found', self.type, self.subtype, pos, self.size)
         if self.type in b'FORM'.split():
             if verbose > 0:
-                print ('processing substuff %d %d (%x)' % (pos, self.dataend,
-                    self.dataend))
+                print(f'processing substuff {pos} {self.dataend} ({self.dataend:x})')
             numchunks = 0
             while pos < self.dataend:
                 x = DjvuChunk(buf, pos, start+self.size, verbose=verbose)
@@ -58,11 +53,10 @@ class DjvuChunk(object):
                 self._subchunks.append(x)
                 newpos = pos + x.size + x.headersize + (1 if (x.size % 2) else 0)
                 if verbose > 0:
-                    print ('newpos %d %d (%x, %x) %d' % (newpos, self.dataend,
-                        newpos, self.dataend, x.headersize))
+                    print(f'newpos {newpos} {self.dataend} ({newpos:x}, {self.dataend:x}) {x.headersize}')
                 pos = newpos
             if verbose > 0:
-                print ('                  end of chunk %d (%x)' % (pos, pos))
+                print(f'                  end of chunk {pos} ({pos:x})')
 
     def dump(self, verbose=0, indent=1, out=None, txtout=None, maxlevel=100):
         if out:
@@ -85,21 +79,21 @@ class DjvuChunk(object):
                 if not res.strip(b'\0'):
                     raise ValueError('TXTz block is completely null')
                 l = 0
-                for x in res[:3]:
+                for x in bytearray(res[:3]):
                     l <<= 8
-                    l += ord(x)
+                    l += x
                 if verbose > 0 and out:
-                    print (l, file=out)
+                    print(l, file=out)
                 txtout.write(res[3:3+l])
             txtout.write(b'\037')
         if txtout and self.type == b'TXTa':
             res = self.buf[self.datastart: self.dataend]
             l = 0
-            for x in res[:3]:
+            for x in bytearray(res[:3]):
                 l <<= 8
-                l += ord(x)
+                l += x
             if verbose > 0 and out:
-                print (l, file=out)
+                print(l, file=out)
             txtout.write(res[3:3+l])
             txtout.write(b'\037')
         if indent >= maxlevel:
@@ -108,12 +102,12 @@ class DjvuChunk(object):
             schunk.dump(verbose=verbose, indent=indent+1, out=out, txtout=txtout)
 
 
-class DJVUFile(object):
+class DJVUFile:
 
     def __init__(self, instream, verbose=0):
         self.instream = instream
         buf = self.instream.read(4)
-        assert(buf == b'AT&T')
+        assert buf == b'AT&T'
         buf = self.instream.read()
         self.dc = DjvuChunk(buf, 0, len(buf), verbose=verbose)
 
@@ -126,7 +120,8 @@ class DJVUFile(object):
 
 def main():
     f = DJVUFile(open(sys.argv[-1], 'rb'))
-    print (f.get_text(sys.stdout))
+    print(f.get_text(sys.stdout))
+
 
 if __name__ == '__main__':
     main()

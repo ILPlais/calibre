@@ -1,15 +1,9 @@
-#!/usr/bin/env python2
-# vim:fileencoding=utf-8
+#!/usr/bin/env python
 # License: GPLv3 Copyright: 2017, Kovid Goyal <kovid at kovidgoyal.net>
 
-from __future__ import absolute_import, division, print_function, unicode_literals
-
-import httplib
 import json
 import os
 import sys
-from urllib import urlencode
-from urlparse import urlparse, urlunparse
 
 from calibre import browser, prints
 from calibre.constants import __appname__, __version__, iswindows
@@ -19,13 +13,15 @@ from calibre.utils.config import OptionParser, prefs
 from calibre.utils.localization import localize_user_manual_link
 from calibre.utils.lock import singleinstance
 from calibre.utils.serialize import MSGPACK_MIME
+from polyglot import http_client
+from polyglot.urllib import urlencode, urlparse, urlunparse
 
 COMMANDS = (
     'list', 'add', 'remove', 'add_format', 'remove_format', 'show_metadata',
     'set_metadata', 'export', 'catalog', 'saved_searches', 'add_custom_column',
     'custom_columns', 'remove_custom_column', 'set_custom', 'restore_database',
     'check_library', 'list_categories', 'backup_metadata', 'clone', 'embed_metadata',
-    'search'
+    'search', 'fts_index', 'fts_search',
 )
 
 
@@ -37,24 +33,11 @@ def option_parser_for(cmd, args=()):
     return cmd_option_parser
 
 
-def send_message(msg=''):
-    prints('Notifying calibre of the change')
-    from calibre.utils.ipc import RC
-    t = RC(print_error=False)
-    t.start()
-    t.join(3)
-    if t.done:
-        t.conn.send('refreshdb:' + msg)
-        t.conn.close()
-
-
 def run_cmd(cmd, opts, args, dbctx):
     m = module_for_cmd(cmd)
     if dbctx.is_remote and getattr(m, 'no_remote', False):
         raise SystemExit(_('The {} command is not supported with remote (server based) libraries').format(cmd))
     ret = m.main(opts, args, dbctx)
-    # if not dbctx.is_remote and not opts.dont_notify_gui and not getattr(m, 'readonly', False):
-    #     send_message()
     return ret
 
 
@@ -100,6 +83,13 @@ def get_parser(usage):
                ' for your shell.').format(
                    '<stdin>', '<f:C:/path/to/file>' if iswindows else '<f:/path/to/file>')
     )
+    go.add_option(
+        '--timeout',
+        type=float,
+        default=120,
+        help=_('The timeout, in seconds, when connecting to a calibre library over the network. The default is'
+               ' two minutes.')
+    )
 
     return parser
 
@@ -126,18 +116,20 @@ def read_credentials(opts):
     pw = opts.password
     if pw:
         if pw == '<stdin>':
-            from calibre.utils.unicode_getpass import getpass
+            from getpass import getpass
             pw = getpass(_('Enter the password: '))
         elif pw.startswith('<f:') and pw.endswith('>'):
-            with lopen(pw[3:-1], 'rb') as f:
+            with open(pw[3:-1], 'rb') as f:
                 pw = f.read().decode('utf-8').rstrip()
     return username, pw
 
 
-class DBCtx(object):
+class DBCtx:
 
-    def __init__(self, opts):
+    def __init__(self, opts, option_parser):
+        self.option_parser = option_parser
         self.library_path = opts.library_path or prefs['library_path']
+        self.timeout = opts.timeout
         self.url = None
         if self.library_path is None:
             raise SystemExit(
@@ -148,7 +140,7 @@ class DBCtx(object):
             parts = urlparse(self.library_path)
             self.library_id = parts.fragment or None
             self.url = urlunparse(parts._replace(fragment='')).rstrip('/')
-            self.br = browser(handle_refresh=False, user_agent='{} {}'.format(__appname__, __version__))
+            self.br = browser(handle_refresh=False, user_agent=f'{__appname__} {__version__}')
             self.is_remote = True
             username, password = read_credentials(opts)
             self.has_credentials = False
@@ -166,7 +158,7 @@ class DBCtx(object):
                     'Another calibre program such as {} or the main calibre program is running.'
                     ' Having multiple programs that can make changes to a calibre library'
                     ' running at the same time is a bad idea. calibredb can connect directly'
-                    ' to a running calibre content server, to make changes through it, instead.'
+                    ' to a running calibre Content server, to make changes through it, instead.'
                     ' See the documentation of the {} option for details.'
                 ).format('calibre-server' + ext, '--with-library')
                 )
@@ -181,7 +173,7 @@ class DBCtx(object):
 
     def path(self, path):
         if self.is_remote:
-            with lopen(path, 'rb') as f:
+            with open(path, 'rb') as f:
                 return path, f.read()
         return path
 
@@ -192,31 +184,33 @@ class DBCtx(object):
         return m.implementation(self.db.new_api, None, *args)
 
     def interpret_http_error(self, err):
-        if err.code == httplib.UNAUTHORIZED:
+        if err.code == http_client.UNAUTHORIZED:
             if self.has_credentials:
                 raise SystemExit('The username/password combination is incorrect')
             raise SystemExit('A username and password is required to access this server')
-        if err.code == httplib.FORBIDDEN:
+        if err.code == http_client.FORBIDDEN:
             raise SystemExit(err.reason)
-        if err.code == httplib.NOT_FOUND:
+        if err.code == http_client.NOT_FOUND:
             raise SystemExit(err.reason)
 
     def remote_run(self, name, m, *args):
         from mechanize import HTTPError, Request
-        from calibre.utils.serialize import msgpack_loads, msgpack_dumps
+
+        from calibre.utils.serialize import msgpack_dumps, msgpack_loads
         url = self.url + '/cdb/cmd/{}/{}'.format(name, getattr(m, 'version', 0))
         if self.library_id:
             url += '?' + urlencode({'library_id':self.library_id})
         rq = Request(url, data=msgpack_dumps(args),
                      headers={'Accept': MSGPACK_MIME, 'Content-Type': MSGPACK_MIME})
         try:
-            res = self.br.open_novisit(rq)
+            res = self.br.open_novisit(rq, timeout=self.timeout)
             ans = msgpack_loads(res.read())
         except HTTPError as err:
             self.interpret_http_error(err)
             raise
         if 'err' in ans:
-            prints(ans['tb'])
+            if ans['tb']:
+                prints(ans['tb'])
             raise SystemExit(ans['err'])
         return ans['result']
 
@@ -224,7 +218,7 @@ class DBCtx(object):
         from mechanize import HTTPError
         url = self.url + '/ajax/library-info'
         try:
-            res = self.br.open_novisit(url)
+            res = self.br.open_novisit(url, timeout=self.timeout)
             ans = json.loads(res.read())
         except HTTPError as err:
             self.interpret_http_error(err)
@@ -239,6 +233,9 @@ def main(args=sys.argv):
     if len(args) < 2:
         parser.print_help()
         return 1
+    if args[1] in ('-h', '--help'):
+        parser.print_help()
+        return 0
     if args[1] == '--version':
         parser.print_version()
         return 0
@@ -248,11 +245,12 @@ def main(args=sys.argv):
             break
     else:
         parser.print_help()
-        return 1
+        print()
+        raise SystemExit(_('Error: You must specify a command from the list above'))
     del args[i]
     parser = option_parser_for(cmd, args[1:])()
     opts, args = parser.parse_args(args)
-    return run_cmd(cmd, opts, args[1:], DBCtx(opts))
+    return run_cmd(cmd, opts, args[1:], DBCtx(opts, parser))
 
 
 if __name__ == '__main__':

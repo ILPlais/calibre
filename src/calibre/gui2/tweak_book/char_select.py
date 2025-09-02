@@ -1,27 +1,51 @@
-#!/usr/bin/env python2
-# vim:fileencoding=utf-8
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
+#!/usr/bin/env python
+
 
 __license__ = 'GPL v3'
 __copyright__ = '2014, Kovid Goyal <kovid at kovidgoyal.net>'
 
-import re, textwrap
+import re
+import textwrap
+import unicodedata
 from bisect import bisect
 from functools import partial
 
-from PyQt5.Qt import (
-    QAbstractItemModel, QModelIndex, Qt, pyqtSignal, QApplication, QHBoxLayout,
-    QTreeView, QSize, QGridLayout, QAbstractListModel, QListView, QPen, QMenu,
-    QStyledItemDelegate, QSplitter, QLabel, QSizePolicy, QIcon, QMimeData,
-    QPushButton, QToolButton, QInputMethodEvent, QCheckBox)
+from qt.core import (
+    QAbstractItemModel,
+    QAbstractItemView,
+    QAbstractListModel,
+    QApplication,
+    QCheckBox,
+    QDialogButtonBox,
+    QGridLayout,
+    QHBoxLayout,
+    QIcon,
+    QInputMethodEvent,
+    QLabel,
+    QListView,
+    QMenu,
+    QMimeData,
+    QModelIndex,
+    QPen,
+    QPushButton,
+    QSize,
+    QSizePolicy,
+    QSplitter,
+    QStyledItemDelegate,
+    Qt,
+    QToolButton,
+    QTreeView,
+    pyqtSignal,
+)
 
-from calibre.constants import plugins
-from calibre.gui2.widgets2 import HistoryLineEdit2
 from calibre.gui2.tweak_book import tprefs
-from calibre.gui2.tweak_book.widgets import Dialog, BusyCursor
-from calibre.utils.icu import safe_chr as chr
+from calibre.gui2.tweak_book.widgets import Dialog
+from calibre.gui2.widgets import BusyCursor
+from calibre.gui2.widgets2 import HistoryLineEdit2
+from calibre.startup import connect_lambda
+from calibre.utils.icu import safe_chr as codepoint_to_chr
 from calibre.utils.unicode_names import character_name_from_code, points_for_word
+from calibre_extensions.progress_indicator import set_no_activate_on_click
 
 ROOT = QModelIndex()
 
@@ -117,7 +141,7 @@ class CategoryModel(QAbstractItemModel):
     (_('Ethiopic extended A'), (0xAB00, 0xAB2F)),
     (_('Meroitic cursive'), (0x109A0, 0x109FF)),
     (_('Meroitic hieroglyphs'), (0x10980, 0x1099F)),
-    (_('N\'Ko'), (0x7C0, 0x7FF)),
+    (_("N'Ko"), (0x7C0, 0x7FF)),
     (_('Osmanya'), (0x10480, 0x104AF)),
     (_('Tifinagh'), (0x2D30, 0x2D7F)),
     (_('Vai'), (0xA500, 0xA63F)),
@@ -371,7 +395,7 @@ class CategoryModel(QAbstractItemModel):
         self.starts.sort()
         self.bold_font = f = QApplication.font()
         f.setBold(True)
-        self.fav_icon = QIcon(I('rating.png'))
+        self.fav_icon = QIcon.ic('rating.png')
 
     def columnCount(self, parent=ROOT):
         return 1
@@ -401,19 +425,19 @@ class CategoryModel(QAbstractItemModel):
             return ROOT
         return self.index(pid - 1, 0)
 
-    def data(self, index, role=Qt.DisplayRole):
+    def data(self, index, role=Qt.ItemDataRole.DisplayRole):
         if not index.isValid():
             return None
         pid = index.internalId()
         if pid == 0:
-            if role == Qt.DisplayRole:
+            if role == Qt.ItemDataRole.DisplayRole:
                 return self.categories[index.row()][0]
-            if role == Qt.FontRole:
+            if role == Qt.ItemDataRole.FontRole:
                 return self.bold_font
-            if role == Qt.DecorationRole and index.row() == 0:
+            if role == Qt.ItemDataRole.DecorationRole and index.row() == 0:
                 return self.fav_icon
         else:
-            if role == Qt.DisplayRole:
+            if role == Qt.ItemDataRole.DisplayRole:
                 item = self.categories[pid - 1][1][index.row()]
                 return item[0]
         return None
@@ -426,7 +450,7 @@ class CategoryModel(QAbstractItemModel):
                     return (_('Favorites'), list(tprefs['charmap_favorites']))
             else:
                 item = self.categories[pid - 1][1][index.row()]
-                return (item[0], list(xrange(item[1][0], item[1][1] + 1)))
+                return (item[0], list(range(item[1][0], item[1][1] + 1)))
 
     def get_char_info(self, char_code):
         ipos = bisect(self.starts, char_code) - 1
@@ -459,9 +483,7 @@ class CategoryView(QTreeView):
         self.setAnimated(True)
         self.activated.connect(self.item_activated)
         self.clicked.connect(self.item_activated)
-        pi = plugins['progress_indicator'][0]
-        if hasattr(pi, 'set_no_activate_on_click'):
-            pi.set_no_activate_on_click(self)
+        set_no_activate_on_click(self)
         self.initialized = False
         self.setExpandsOnDoubleClick(False)
 
@@ -502,19 +524,19 @@ class CharModel(QAbstractListModel):
         return len(self.chars)
 
     def data(self, index, role):
-        if role == Qt.UserRole and -1 < index.row() < len(self.chars):
+        if role == Qt.ItemDataRole.UserRole and -1 < index.row() < len(self.chars):
             return self.chars[index.row()]
         return None
 
     def flags(self, index):
-        ans = Qt.ItemIsEnabled
+        ans = Qt.ItemFlag.ItemIsEnabled
         if self.allow_dnd:
-            ans |= Qt.ItemIsSelectable
-            ans |= Qt.ItemIsDragEnabled if index.isValid() else Qt.ItemIsDropEnabled
+            ans |= Qt.ItemFlag.ItemIsSelectable
+            ans |= Qt.ItemFlag.ItemIsDragEnabled if index.isValid() else Qt.ItemFlag.ItemIsDropEnabled
         return ans
 
     def supportedDropActions(self):
-        return Qt.MoveAction
+        return Qt.DropAction.MoveAction
 
     def mimeTypes(self):
         return ['application/calibre_charcode_indices']
@@ -526,9 +548,9 @@ class CharModel(QAbstractListModel):
         return md
 
     def dropMimeData(self, md, action, row, column, parent):
-        if action != Qt.MoveAction or not md.hasFormat('application/calibre_charcode_indices') or row < 0 or column != 0:
+        if action != Qt.DropAction.MoveAction or not md.hasFormat('application/calibre_charcode_indices') or row < 0 or column != 0:
             return False
-        indices = map(int, bytes(md.data('application/calibre_charcode_indices')).split(','))
+        indices = list(map(int, bytes(md.data('application/calibre_charcode_indices')).decode('ascii').split(',')))
         codes = [self.chars[x] for x in indices]
         for x in indices:
             self.chars[x] = None
@@ -554,7 +576,7 @@ class CharDelegate(QStyledItemDelegate):
     def paint(self, painter, option, index):
         QStyledItemDelegate.paint(self, painter, option, index)
         try:
-            charcode = int(index.data(Qt.UserRole))
+            charcode = int(index.data(Qt.ItemDataRole.UserRole))
         except (TypeError, ValueError):
             return
         painter.save()
@@ -570,12 +592,12 @@ class CharDelegate(QStyledItemDelegate):
         f = option.font
         f.setPixelSize(option.rect.height() - 8)
         painter.setFont(f)
-        painter.drawText(option.rect, Qt.AlignHCenter | Qt.AlignBottom | Qt.TextSingleLine, chr(charcode))
+        painter.drawText(option.rect, Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignBottom | Qt.TextFlag.TextSingleLine, codepoint_to_chr(charcode))
 
     def paint_non_printing(self, painter, option, charcode):
         text = self.np_pat.sub(r'\n\1', non_printing[charcode])
-        painter.drawText(option.rect, Qt.AlignCenter | Qt.TextWordWrap | Qt.TextWrapAnywhere, text)
-        painter.setPen(QPen(Qt.DashLine))
+        painter.drawText(option.rect, Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap | Qt.TextFlag.TextWrapAnywhere, text)
+        painter.setPen(QPen(Qt.PenStyle.DashLine))
         painter.drawRect(option.rect.adjusted(1, 1, -1, -1))
 
 
@@ -590,29 +612,27 @@ class CharView(QListView):
         self._model = CharModel(self)
         self.setModel(self._model)
         self.delegate = CharDelegate(self)
-        self.setResizeMode(self.Adjust)
+        self.setResizeMode(QListView.ResizeMode.Adjust)
         self.setItemDelegate(self.delegate)
-        self.setFlow(self.LeftToRight)
+        self.setFlow(QListView.Flow.LeftToRight)
         self.setWrapping(True)
         self.setMouseTracking(True)
         self.setSpacing(2)
         self.setUniformItemSizes(True)
-        self.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self.context_menu)
         self.showing_favorites = False
-        pi = plugins['progress_indicator'][0]
-        if hasattr(pi, 'set_no_activate_on_click'):
-            pi.set_no_activate_on_click(self)
+        set_no_activate_on_click(self)
         self.activated.connect(self.item_activated)
         self.clicked.connect(self.item_activated)
 
     def item_activated(self, index):
         try:
-            char_code = int(self.model().data(index, Qt.UserRole))
+            char_code = int(self.model().data(index, Qt.ItemDataRole.UserRole))
         except (TypeError, ValueError):
             pass
         else:
-            self.char_selected.emit(chr(char_code))
+            self.char_selected.emit(codepoint_to_chr(char_code))
 
     def set_allow_drag_and_drop(self, enabled):
         if not enabled:
@@ -621,7 +641,7 @@ class CharView(QListView):
             self.setDropIndicatorShown(True)
             self._model.allow_dnd = False
         else:
-            self.setSelectionMode(self.ExtendedSelection)
+            self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
             self.viewport().setAcceptDrops(True)
             self.setDragEnabled(True)
             self.setAcceptDrops(True)
@@ -642,14 +662,14 @@ class CharView(QListView):
             if row != self.last_mouse_idx:
                 self.last_mouse_idx = row
                 try:
-                    char_code = int(self.model().data(index, Qt.UserRole))
+                    char_code = int(self.model().data(index, Qt.ItemDataRole.UserRole))
                 except (TypeError, ValueError):
                     pass
                 else:
                     self.show_name.emit(char_code)
-            self.setCursor(Qt.PointingHandCursor)
+            self.setCursor(Qt.CursorShape.PointingHandCursor)
         else:
-            self.setCursor(Qt.ArrowCursor)
+            self.setCursor(Qt.CursorShape.ArrowCursor)
             self.show_name.emit(-1)
             self.last_mouse_idx = -1
         return QListView.mouseMoveEvent(self, ev)
@@ -658,18 +678,18 @@ class CharView(QListView):
         index = self.indexAt(pos)
         if index.isValid():
             try:
-                char_code = int(self.model().data(index, Qt.UserRole))
+                char_code = int(self.model().data(index, Qt.ItemDataRole.UserRole))
             except (TypeError, ValueError):
                 pass
             else:
                 m = QMenu(self)
-                m.addAction(QIcon(I('edit-copy.png')), _('Copy %s to clipboard') % chr(char_code), partial(self.copy_to_clipboard, char_code))
-                m.addAction(QIcon(I('rating.png')),
-                            (_('Remove %s from favorites') if self.showing_favorites else _('Add %s to favorites')) % chr(char_code),
+                m.addAction(QIcon.ic('edit-copy.png'), _('Copy %s to clipboard') % codepoint_to_chr(char_code), partial(self.copy_to_clipboard, char_code))
+                m.addAction(QIcon.ic('rating.png'),
+                            (_('Remove %s from favorites') if self.showing_favorites else _('Add %s to favorites')) % codepoint_to_chr(char_code),
                             partial(self.remove_from_favorites, char_code))
                 if self.showing_favorites:
                     m.addAction(_('Restore favorites to defaults'), self.restore_defaults)
-                m.exec_(self.mapToGlobal(pos))
+                m.exec(self.mapToGlobal(pos))
 
     def restore_defaults(self):
         del tprefs['charmap_favorites']
@@ -679,7 +699,7 @@ class CharView(QListView):
 
     def copy_to_clipboard(self, char_code):
         c = QApplication.clipboard()
-        c.setText(chr(char_code))
+        c.setText(codepoint_to_chr(char_code))
 
     def remove_from_favorites(self, char_code):
         existing = tprefs['charmap_favorites']
@@ -699,47 +719,48 @@ class CharSelect(Dialog):
     def __init__(self, parent=None):
         self.initialized = False
         Dialog.__init__(self, _('Insert character'), 'charmap_dialog', parent)
-        self.setWindowIcon(QIcon(I('character-set.png')))
+        self.setWindowIcon(QIcon.ic('character-set.png'))
         self.setFocusProxy(parent)
 
     def setup_ui(self):
         self.l = l = QGridLayout(self)
         self.setLayout(l)
 
-        self.bb.setStandardButtons(self.bb.Close)
-        self.rearrange_button = b = self.bb.addButton(_('Re-arrange favorites'), self.bb.ActionRole)
+        self.bb.setStandardButtons(QDialogButtonBox.StandardButton.Close)
+        self.rearrange_button = b = self.bb.addButton(_('Re-arrange favorites'), QDialogButtonBox.ButtonRole.ActionRole)
         b.setCheckable(True)
         b.setChecked(False)
         b.setVisible(False)
         b.setDefault(True)
 
         self.splitter = s = QSplitter(self)
-        s.setFocusPolicy(Qt.NoFocus)
+        s.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         s.setChildrenCollapsible(False)
 
         self.search = h = HistoryLineEdit2(self)
         h.setToolTip(textwrap.fill(_(
-            'Search for unicode characters by using the English names or nicknames.'
+            'Search for Unicode characters by using the English names or nicknames.'
             ' You can also search directly using a character code. For example, the following'
             ' searches will all yield the no-break space character: U+A0, nbsp, no-break')))
         h.initialize('charmap_search')
         h.setPlaceholderText(_('Search by name, nickname or character code'))
         self.search_button = b = QPushButton(_('&Search'))
-        b.setFocusPolicy(Qt.NoFocus)
+        b.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         h.returnPressed.connect(self.do_search)
         b.clicked.connect(self.do_search)
         self.clear_button = cb = QToolButton(self)
-        cb.setIcon(QIcon(I('clear_left.png')))
-        cb.setFocusPolicy(Qt.NoFocus)
+        cb.setIcon(QIcon.ic('clear_left.png'))
+        cb.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         cb.setText(_('Clear search'))
         cb.clicked.connect(self.clear_search)
         l.addWidget(h), l.addWidget(b, 0, 1), l.addWidget(cb, 0, 2)
 
         self.category_view = CategoryView(self)
-        self.category_view.setFocusPolicy(Qt.NoFocus)
+        self.category_view.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.category_view.clicked.connect(self.category_view_clicked)
         l.addWidget(s, 1, 0, 1, 3)
         self.char_view = CharView(self)
-        self.char_view.setFocusPolicy(Qt.NoFocus)
+        self.char_view.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.rearrange_button.toggled[bool].connect(self.set_allow_drag_and_drop)
         self.category_view.category_selected.connect(self.show_chars)
         self.char_view.show_name.connect(self.show_char_info)
@@ -747,12 +768,12 @@ class CharSelect(Dialog):
         s.addWidget(self.category_view), s.addWidget(self.char_view)
 
         self.char_info = la = QLabel('\xa0')
-        la.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        la.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         l.addWidget(la, 2, 0, 1, 3)
 
         self.rearrange_msg = la = QLabel(_(
             'Drag and drop characters to re-arrange them. Click the "Re-arrange" button again when you are done.'))
-        la.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        la.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         la.setVisible(False)
         l.addWidget(la, 3, 0, 1, 3)
         self.h = h = QHBoxLayout()
@@ -763,10 +784,15 @@ class CharSelect(Dialog):
         connect_lambda(mm.stateChanged, self, lambda self: tprefs.set('char_select_match_any', self.match_any.isChecked()))
         h.addWidget(mm), h.addStretch(), h.addWidget(self.bb)
         l.addLayout(h, 4, 0, 1, 3)
-        self.char_view.setFocus(Qt.OtherFocusReason)
+        self.char_view.setFocus(Qt.FocusReason.OtherFocusReason)
+
+    def category_view_clicked(self):
+        p = self.parent()
+        if p is not None and p.focusWidget() is not None:
+            p.activateWindow()
 
     def do_search(self):
-        text = unicode(self.search.text()).strip()
+        text = str(self.search.text()).strip()
         if not text:
             return self.clear_search()
         with BusyCursor():
@@ -798,19 +824,19 @@ class CharSelect(Dialog):
         return QSize(800, 600)
 
     def show_char_info(self, char_code):
+        text = '\xa0'
         if char_code > 0:
             category_name, subcategory_name, character_name = self.category_view.model().get_char_info(char_code)
-            self.char_info.setText('%s - %s - %s (U+%04X)' % (category_name, subcategory_name, character_name, char_code))
-        else:
-            self.char_info.clear()
+            text = _('{character_name} (U+{char_code:04X}) in {category_name} - {subcategory_name}').format(**locals())
+        self.char_info.setText(text)
 
     def show(self):
         self.initialize()
         Dialog.show(self)
-        self.raise_()
+        self.raise_and_focus()
 
     def char_selected(self, c):
-        if QApplication.keyboardModifiers() & Qt.CTRL:
+        if QApplication.keyboardModifiers() & Qt.KeyboardModifier.ControlModifier:
             self.hide()
         if self.parent() is None or self.parent().focusWidget() is None:
             QApplication.clipboard().setText(c)
@@ -818,7 +844,7 @@ class CharSelect(Dialog):
         self.parent().activateWindow()
         w = self.parent().focusWidget()
         e = QInputMethodEvent('', [])
-        e.setCommitString(c)
+        e.setCommitString(unicodedata.normalize('NFC', c))
         if hasattr(w, 'no_popup'):
             oval = w.no_popup
             w.no_popup = True
@@ -833,4 +859,4 @@ if __name__ == '__main__':
     w = CharSelect()
     w.initialize()
     w.show()
-    app.exec_()
+    app.exec()

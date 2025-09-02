@@ -1,13 +1,12 @@
-#!/usr/bin/env python2
-# vim:fileencoding=utf-8
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
+#!/usr/bin/env python
+
 
 __license__ = 'GPL v3'
 __copyright__ = '2013, Kovid Goyal <kovid at kovidgoyal.net>'
 
-from calibre.ebooks.metadata.book import TOP_LEVEL_IDENTIFIERS, ALL_METADATA_FIELDS
+from numbers import Number
 
+from calibre.ebooks.metadata.book import ALL_METADATA_FIELDS, TOP_LEVEL_IDENTIFIERS
 from calibre.utils.formatter import TemplateFormatter
 
 
@@ -17,7 +16,7 @@ class SafeFormat(TemplateFormatter):
         TemplateFormatter.__init__(self)
 
     def get_value(self, orig_key, args, kwargs):
-        if not orig_key:
+        if not orig_key or isinstance(orig_key, Number):
             return ''
         key = orig_key = orig_key.lower()
         if (key != 'title_sort' and key not in TOP_LEVEL_IDENTIFIERS and
@@ -32,7 +31,7 @@ class SafeFormat(TemplateFormatter):
                     raise ValueError(_('Value: unknown field ') + orig_key)
         try:
             b = self.book.get_user_metadata(key, False)
-        except:
+        except Exception:
             b = None
         if b and b['datatype'] in {'int', 'float'} and self.book.get(key, None) is None:
             v = ''
@@ -43,5 +42,3 @@ class SafeFormat(TemplateFormatter):
         if v == '':
             return ''
         return v
-
-

@@ -1,8 +1,6 @@
-#!/usr/bin/env python2
-# vim:fileencoding=utf-8
+#!/usr/bin/env python
 # License: GPLv3 Copyright: 2017, Kovid Goyal <kovid at kovidgoyal.net>
 
-from __future__ import absolute_import, division, print_function, unicode_literals
 
 import os
 
@@ -25,7 +23,7 @@ def option_parser(get_parser, args):
 %prog clone path/to/new/library
 
 Create a clone of the current library. This creates a new, empty library that has all the
-same custom columns, virtual libraries and other settings as the current library.
+same custom columns, Virtual libraries and other settings as the current library.
 
 The cloned library will contain no books. If you want to create a full duplicate, including
 all books, then simply use your filesystem tools to copy the library folder.
@@ -50,12 +48,12 @@ def main(opts, args, dbctx):
     if not empty:
         raise SystemExit(
             _(
-                '%s is not empty. You must choose an empty directory for the new library.'
+                '%s is not empty. You must choose an empty folder for the new library.'
             ) % loc
         )
     if iswindows and len(loc) > LibraryDatabase.WINDOWS_LIBRARY_PATH_LIMIT:
         raise SystemExit(
-            _('Path to library too long. Must be less than'
+            _('Path to library too long. It must be less than'
               ' %d characters.') % LibraryDatabase.WINDOWS_LIBRARY_PATH_LIMIT
         )
     LibraryDatabase(loc, default_prefs=prefs)

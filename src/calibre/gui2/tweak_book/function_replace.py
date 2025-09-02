@@ -1,36 +1,38 @@
-#!/usr/bin/env python2
-# vim:fileencoding=utf-8
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
+#!/usr/bin/env python
+
 
 __license__ = 'GPL v3'
 __copyright__ = '2014, Kovid Goyal <kovid at kovidgoyal.net>'
 
-import re, io, weakref, sys
-from cStringIO import StringIO
+import io
+import re
+import sys
+import weakref
 
-from PyQt5.Qt import (
-    pyqtSignal, QVBoxLayout, QHBoxLayout, QPlainTextEdit, QLabel, QFontMetrics,
-    QSize, Qt, QApplication, QIcon)
+from qt.core import QApplication, QDialogButtonBox, QFontMetrics, QHBoxLayout, QIcon, QLabel, QPlainTextEdit, QSize, Qt, QVBoxLayout, pyqtSignal
 
-from calibre.ebooks.oeb.polish.utils import apply_func_to_match_groups, apply_func_to_html_text
+from calibre.ebooks.oeb.polish.utils import apply_func_to_html_text, apply_func_to_match_groups
 from calibre.gui2 import error_dialog
 from calibre.gui2.complete2 import EditWithComplete
-from calibre.gui2.tweak_book import dictionaries
-from calibre.gui2.tweak_book.widgets import Dialog
+from calibre.gui2.dialogs.confirm_delete import confirm
+from calibre.gui2.tweak_book import dictionaries, tprefs
 from calibre.gui2.tweak_book.editor.text import TextEdit
+from calibre.gui2.tweak_book.widgets import Dialog
 from calibre.utils.config import JSONConfig
-from calibre.utils.icu import capitalize, upper, lower, swapcase
-from calibre.utils.titlecase import titlecase
+from calibre.utils.icu import capitalize, lower, swapcase, upper
 from calibre.utils.localization import localize_user_manual_link
+from calibre.utils.resources import get_path as P
+from calibre.utils.titlecase import titlecase
+from polyglot.builtins import iteritems
+from polyglot.io import PolyglotStringIO
 
 user_functions = JSONConfig('editor-search-replace-functions')
 
 
 def compile_code(src, name='<string>'):
-    if not isinstance(src, unicode):
-        match = re.search(r'coding[:=]\s*([-\w.]+)', src[:200])
-        enc = match.group(1) if match else 'utf-8'
+    if not isinstance(src, str):
+        match = re.search(br'coding[:=]\s*([-\w.]+)', src[:200])
+        enc = match.group(1).decode('utf-8') if match else 'utf-8'
         src = src.decode(enc)
     if not src or not src.strip():
         src = EMPTY_FUNC
@@ -45,7 +47,7 @@ def compile_code(src, name='<string>'):
     return namespace
 
 
-class Function(object):
+class Function:
 
     def __init__(self, name, source=None, func=None):
         self._source = source
@@ -58,7 +60,7 @@ class Function(object):
             self.func = func
             self.mod = None
         if not callable(self.func):
-            raise ValueError('%r is not a function' % self.func)
+            raise ValueError(f'{self.func!r} is not a function')
         self.file_order = getattr(self.func, 'file_order', None)
 
     def init_env(self, name=''):
@@ -67,8 +69,8 @@ class Function(object):
         self.match_index = 0
         self.boss = get_boss()
         self.data = {}
-        self.debug_buf = StringIO()
-        self.functions = {name:func.mod for name, func in functions().iteritems() if func.mod is not None}
+        self.debug_buf = PolyglotStringIO()
+        self.functions = {name:func.mod for name, func in iteritems(functions()) if func.mod is not None}
 
     def __hash__(self):
         return hash(self.name)
@@ -108,7 +110,7 @@ class DebugOutput(Dialog):
 
     def __init__(self, parent=None):
         Dialog.__init__(self, 'Debug output', 'sr-function-debug-output')
-        self.setAttribute(Qt.WA_DeleteOnClose, False)
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, False)
 
     def setup_ui(self):
         self.l = l = QVBoxLayout(self)
@@ -116,17 +118,19 @@ class DebugOutput(Dialog):
         self.log_text = ''
         l.addWidget(t)
         l.addWidget(self.bb)
-        self.bb.setStandardButtons(self.bb.Close)
-        self.cb = b = self.bb.addButton(_('&Copy to clipboard'), self.bb.ActionRole)
+        self.bb.setStandardButtons(QDialogButtonBox.StandardButton.Close)
+        self.cb = b = self.bb.addButton(_('&Copy to clipboard'), QDialogButtonBox.ButtonRole.ActionRole)
         b.clicked.connect(self.copy_to_clipboard)
-        b.setIcon(QIcon(I('edit-copy.png')))
+        b.setIcon(QIcon.ic('edit-copy.png'))
 
     def show_log(self, name, text):
+        if isinstance(text, bytes):
+            text = text.decode('utf-8', 'replace')
         self.setWindowTitle(_('Debug output from %s') % name)
         self.text.setPlainText(self.windowTitle() + '\n\n' + text)
         self.log_text = text
         self.show()
-        self.raise_()
+        self.raise_and_focus()
 
     def sizeHint(self):
         fm = QFontMetrics(self.text.font())
@@ -137,7 +141,7 @@ class DebugOutput(Dialog):
 
 
 def builtin_functions():
-    for name, obj in globals().iteritems():
+    for name, obj in iteritems(globals()):
         if name.startswith('replace_') and callable(obj) and hasattr(obj, 'imports'):
             yield obj
 
@@ -151,7 +155,7 @@ def functions(refresh=False):
         ans = _functions = {}
         for func in builtin_functions():
             ans[func.name] = Function(func.name, func=func)
-        for name, source in user_functions.iteritems():
+        for name, source in iteritems(user_functions):
             try:
                 f = Function(name, source=source)
             except Exception:
@@ -209,7 +213,7 @@ class FunctionBox(EditWithComplete):
             menu.addSeparator()
             menu.addAction(_('Save current search'), self.save_search.emit)
             menu.addAction(_('Show saved searches'), self.show_saved_searches.emit)
-        menu.exec_(event.globalPos())
+        menu.exec(event.globalPos())
 
 
 class FunctionEditor(Dialog):
@@ -250,6 +254,7 @@ class FunctionEditor(Dialog):
         l.addWidget(la)
 
         l.addWidget(self.bb)
+        self.initial_source = self.source
 
     def sizeHint(self):
         fm = QFontMetrics(self.font())
@@ -281,6 +286,13 @@ class FunctionEditor(Dialog):
         refresh_boxes()
 
         Dialog.accept(self)
+
+    def reject(self):
+        if self.source != self.initial_source:
+            if not confirm(_('All unsaved changes will be lost. Are you sure?'), 'function-replace-close-confirm',
+                           parent=self, config_set=tprefs):
+                return
+        return super().reject()
 
 # Builtin functions ##########################################################
 
@@ -371,5 +383,5 @@ def replace_swapcase_ignore_tags(match, number, file_name, metadata, dictionarie
 
 if __name__ == '__main__':
     app = QApplication([])
-    FunctionEditor().exec_()
+    FunctionEditor().exec()
     del app

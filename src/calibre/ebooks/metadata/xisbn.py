@@ -1,18 +1,18 @@
-#!/usr/bin/env python2
-# vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
+#!/usr/bin/env python
 
-from __future__ import print_function
+
 __license__   = 'GPL v3'
 __copyright__ = '2010, Kovid Goyal <kovid@kovidgoyal.net>'
 __docformat__ = 'restructuredtext en'
 
-import threading, re, json
+import json
+import re
+import threading
 
 from calibre import browser
 
 
-class xISBN(object):
-
+class xISBN:
     '''
     This class is used to find the ISBN numbers of "related" editions of a
     book, given its ISBN. Useful when querying services for metadata by ISBN,
@@ -52,8 +52,7 @@ class xISBN(object):
 
     def isbns_in_data(self, data):
         for rec in data:
-            for i in rec.get('isbn', []):
-                yield i
+            yield from rec.get('isbn', [])
 
     def get_data(self, isbn):
         isbn = self.purify(isbn)
@@ -61,7 +60,7 @@ class xISBN(object):
             if isbn not in self._map:
                 try:
                     data = self.fetch_data(isbn)
-                except:
+                except Exception:
                     import traceback
                     traceback.print_exc()
                     data = []
@@ -74,7 +73,7 @@ class xISBN(object):
 
     def get_associated_isbns(self, isbn):
         data = self.get_data(isbn)
-        ans = set([])
+        ans = set()
         for rec in data:
             for i in rec.get('isbn', []):
                 ans.add(i)
@@ -93,7 +92,7 @@ class xISBN(object):
                 year = int(x['year'])
                 if year < min_year:
                     min_year = year
-            except:
+            except Exception:
                 continue
         if min_year == 100000:
             min_year = None
@@ -103,7 +102,8 @@ class xISBN(object):
 xisbn = xISBN()
 
 if __name__ == '__main__':
-    import sys, pprint
+    import pprint
+    import sys
     isbn = sys.argv[-1]
     print(pprint.pprint(xisbn.get_data(isbn)))
     print()

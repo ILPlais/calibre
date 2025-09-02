@@ -1,13 +1,11 @@
-# -*- coding: utf-8 -*-
-
 __license__ = 'GPL 3'
 __copyright__ = '2009, John Schember <john@nachtimwald.com>'
 __docformat__ = 'restructuredtext en'
 
-import os, cStringIO
+import io
+import os
 
-from calibre.customize.conversion import (OutputFormatPlugin,
-        OptionRecommendation)
+from calibre.customize.conversion import OptionRecommendation, OutputFormatPlugin
 from calibre.ptempfile import TemporaryDirectory
 
 
@@ -40,7 +38,7 @@ class PMLOutput(OutputFormatPlugin):
 
         with TemporaryDirectory('_pmlz_output') as tdir:
             pmlmlizer = PMLMLizer(log)
-            pml = unicode(pmlmlizer.extract_content(oeb_book, opts))
+            pml = str(pmlmlizer.extract_content(oeb_book, opts))
             with open(os.path.join(tdir, 'index.pml'), 'wb') as out:
                 out.write(pml.encode(opts.pml_output_encoding, 'replace'))
 
@@ -54,22 +52,18 @@ class PMLOutput(OutputFormatPlugin):
             pmlz.add_dir(tdir)
 
     def write_images(self, manifest, image_hrefs, out_dir, opts):
-        try:
-            from PIL import Image
-            Image
-        except ImportError:
-            import Image
+        from PIL import Image
 
         from calibre.ebooks.oeb.base import OEB_RASTER_IMAGES
         for item in manifest:
             if item.media_type in OEB_RASTER_IMAGES and item.href in image_hrefs.keys():
                 if opts.full_image_depth:
-                    im = Image.open(cStringIO.StringIO(item.data))
+                    im = Image.open(io.BytesIO(item.data))
                 else:
-                    im = Image.open(cStringIO.StringIO(item.data)).convert('P')
-                    im.thumbnail((300,300), Image.ANTIALIAS)
+                    im = Image.open(io.BytesIO(item.data)).convert('P')
+                    im.thumbnail((300,300), Image.Resampling.LANCZOS)
 
-                data = cStringIO.StringIO()
+                data = io.BytesIO()
                 im.save(data, 'PNG')
                 data = data.getvalue()
 

@@ -6,41 +6,33 @@
  */
 
 #include "global.h"
+#include <sstream>
+#include <stdexcept>
+#include <string_view>
 
 using namespace pdf;
 
-void pdf::podofo_set_exception(const PdfError &err) {
-    const char *msg = PdfError::ErrorMessage(err.GetError());
-    if (msg == NULL) msg = err.what();
-    PyErr_SetString(Error, msg);
+void
+pdf::podofo_set_exception(const PdfError &err) {
+    const char *msg = err.what();
+    std::stringstream stream;
+    stream << msg << "\n";
+    const PdErrorInfoStack &s = err.GetCallStack();
+    for (auto info : s) {
+        stream << "File: " << info.GetFilePath() << " Line: " << info.GetLine() << " " << info.GetInformation() << "\n";
+    }
+    PyErr_SetString(Error, stream.str().c_str());
 }
 
 PyObject *
 pdf::podofo_convert_pdfstring(const PdfString &s) {
-    std::string raw = s.GetStringUtf8();
-	return PyString_FromStringAndSize(raw.c_str(), raw.length());
+    return PyUnicode_FromString(s.GetString().c_str());
 }
 
-PdfString *
-pdf::podofo_convert_pystring(PyObject *py) {
-    Py_UNICODE* u = PyUnicode_AS_UNICODE(py);
-    PyObject *u8 = PyUnicode_EncodeUTF8(u, PyUnicode_GET_SIZE(py), "replace");
-    if (u8 == NULL) { PyErr_NoMemory(); return NULL; }
-    pdf_utf8 *s8 = reinterpret_cast<pdf_utf8 *>(PyString_AS_STRING(u8));
-    PdfString *ans = new PdfString(s8);
-    Py_DECREF(u8);
-    if (ans == NULL) PyErr_NoMemory();
-    return ans;
+const PdfString
+pdf::podofo_convert_pystring(PyObject *val) {
+    Py_ssize_t len;
+    const char *data = PyUnicode_AsUTF8AndSize(val, &len);
+    if (data == NULL) throw std::runtime_error("Failed to convert python string to UTF-8, possibly not a string object");
+    return PdfString(std::string_view(data, len));
 }
-
-PdfString *
-pdf::podofo_convert_pystring_single_byte(PyObject *py) {
-    Py_UNICODE* u = PyUnicode_AS_UNICODE(py);
-    PyObject *s = PyUnicode_Encode(u, PyUnicode_GET_SIZE(py), "cp1252", "replace");
-    if (s == NULL) { PyErr_NoMemory(); return NULL; }
-    PdfString *ans = new PdfString(PyString_AS_STRING(s));
-    Py_DECREF(s);
-    if (ans == NULL) PyErr_NoMemory();
-    return ans;
-}
-

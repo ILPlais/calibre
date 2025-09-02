@@ -1,18 +1,17 @@
-#!/usr/bin/env python2
-# vim:fileencoding=utf-8
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
+#!/usr/bin/env python
+
 
 __license__ = 'GPL v3'
 __copyright__ = '2013, Kovid Goyal <kovid at kovidgoyal.net>'
 
 import re
 
-from PyQt5.Qt import QTextBlockUserData
+from qt.core import QTextBlockUserData
 
 from calibre.gui2.tweak_book import verify_link
-from calibre.gui2.tweak_book.editor import syntax_text_char_format, LINK_PROPERTY, CSS_PROPERTY
+from calibre.gui2.tweak_book.editor import CSS_PROPERTY, LINK_PROPERTY, syntax_text_char_format
 from calibre.gui2.tweak_book.editor.syntax.base import SyntaxHighlighter
+from polyglot.builtins import iteritems
 
 space_pat = re.compile(r'[ \n\t\r\f]+')
 cdo_pat = re.compile(r'/\*')
@@ -22,7 +21,7 @@ sheet_tokens = [(re.compile(k), v, n) for k, v, n in [
     (r'\#[a-zA-Z0-9_-]+', 'id_selector', 'id-selector'),
     (r'@[a-zA-Z0-9_-]+', 'preproc', 'atrule'),
     (r'[a-zA-Z0-9_-]+', 'tag', 'tag'),
-    (r'[~\^\*!%&\[\]\(\)<>\|+=@:;,./?-]', 'operator', 'operator'),
+    (r'[\$~\^\*!%&\[\]\(\)<>\|+=@:;,./?-]', 'operator', 'operator'),
 ]]
 
 URL_TOKEN = 'url'
@@ -40,8 +39,8 @@ content_tokens = [(re.compile(k), v, n) for k, v, n in [
     r'border-right-style|border-right-width|border-right|border-top-color|'
     r'border-top-style|border-top-width|border-bottom|'
     r'border-collapse|border-left|border-width|border-color|'
-    r'border-spacing|border-style|border-top|border|caption-side|'
-    r'clear|clip|color|content|counter-increment|counter-reset|'
+    r'border-spacing|border-style|border-top|border-box|border|box-sizing|caption-side|'
+    r'clear|clip|color|content-box|content|counter-increment|counter-reset|'
     r'cue-after|cue-before|cue|cursor|direction|display|'
     r'elevation|empty-cells|float|font-family|font-size|'
     r'font-size-adjust|font-stretch|font-style|font-variant|'
@@ -53,6 +52,7 @@ content_tokens = [(re.compile(k), v, n) for k, v, n in [
     r'outline-style|outline-width|overflow(?:-x|-y)?|padding-bottom|'
     r'padding-left|padding-right|padding-top|padding|'
     r'page-break-after|page-break-before|page-break-inside|'
+    r'break-before|break-after|break-inside|'
     r'pause-after|pause-before|pause|pitch|pitch-range|'
     r'play-during|position|pre-wrap|pre-line|pre|quotes|richness|right|size|'
     r'speak-header|speak-numeral|speak-punctuation|speak|'
@@ -142,9 +142,9 @@ IN_CONTENT = 4
 IN_COMMENT_CONTENT = 5
 
 
-class CSSState(object):
+class CSSState:
 
-    __slots__ = ('parse', 'blocks')
+    __slots__ = ('blocks', 'parse')
 
     def __init__(self):
         self.parse  = NORMAL
@@ -163,7 +163,7 @@ class CSSState(object):
         return not self.__eq__(other)
 
     def __repr__(self):
-        return "CSSState(parse=%s, blocks=%s)" % (self.parse, self.blocks)
+        return f'CSSState(parse={self.parse}, blocks={self.blocks})'
     __str__ = __repr__
 
 
@@ -268,6 +268,7 @@ def in_string(state, text, i, formats, user_data):
     state.parse = (NORMAL if state.blocks < 1 else IN_CONTENT)
     return [(pos - i + len(q), formats['string'])]
 
+
 state_map = {
     NORMAL:normal,
     IN_COMMENT_NORMAL: comment,
@@ -294,10 +295,10 @@ def create_formats(highlighter):
         'pseudo_selector': theme['Special'],
         'tag': theme['Identifier'],
     }
-    for name, msg in {
+    for name, msg in iteritems({
         'unknown-normal': _('Invalid text'),
         'unterminated-string': _('Unterminated string'),
-    }.iteritems():
+    }):
         f = formats[name] = syntax_text_char_format(formats['error'])
         f.setToolTip(msg)
     formats['link'] = syntax_text_char_format(theme['Link'])
@@ -327,6 +328,7 @@ if __name__ == '__main__':
 /* A demonstration css sheet */
 body {
     color: green;
+    box-sizing: border-box;
     font-size: 12pt
 }
 
@@ -340,4 +342,3 @@ li[rel="mewl"], p.mewl {
 }
 
 ''', path_is_raw=True, syntax='css')
-

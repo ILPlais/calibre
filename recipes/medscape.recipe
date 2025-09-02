@@ -1,4 +1,4 @@
-#!/usr/bin/env  python2
+#!/usr/bin/env python
 __license__ = 'GPL v3'
 __author__ = 'Tony Stegall'
 __copyright__ = '2010, Tony Stegall or Tonythebookworm on mobileread.com'
@@ -56,7 +56,7 @@ class MedScrape(BasicNewsRecipe):
         # the original url is: http://www.medscape.com/viewarticle/728955?src=rss
         # the print    url is: http://www.medscape.com/viewarticle/728955_print
         print_url = url.partition('?')[0] + '_print'
-        # print 'the printable version is: ',print_url
+        # print('the printable version is: ',print_url)
         return print_url
 
     def preprocess_html(self, soup):

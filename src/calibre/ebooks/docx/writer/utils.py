@@ -1,7 +1,5 @@
-#!/usr/bin/env python2
-# vim:fileencoding=utf-8
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
+#!/usr/bin/env python
+
 
 __license__ = 'GPL v3'
 __copyright__ = '2013, Kovid Goyal <kovid at kovidgoyal.net>'
@@ -15,8 +13,8 @@ def int_or_zero(raw):
     except (ValueError, TypeError, AttributeError):
         return 0
 
-# convert_color() {{{
 
+# convert_color() {{{
 
 def convert_color(value):
     if not value:
@@ -28,7 +26,7 @@ def convert_color(value):
         return
     if val.alpha < 0.01:
         return
-    return '%02X%02X%02X' % (int(val.red * 255), int(val.green * 255), int(val.blue * 255))
+    return f'{int(val.red * 255):02X}{int(val.green * 255):02X}{int(val.blue * 255):02X}'
 
 
 def test_convert_color(return_tests=False):

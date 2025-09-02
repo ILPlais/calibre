@@ -1,35 +1,32 @@
-#!/usr/bin/env python2
-# vim:fileencoding=utf-8
+#!/usr/bin/env python
 # License: GPLv3 Copyright: 2015, Kovid Goyal <kovid at kovidgoyal.net>
 
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
 
-import httplib, os, weakref, socket
-from base64 import standard_b64encode
+import os
+import socket
+import weakref
 from collections import deque
 from hashlib import sha1
-from Queue import Queue, Empty
-from struct import unpack_from, pack, error as struct_error
+from struct import error as struct_error
+from struct import pack, unpack_from
 from threading import Lock
 
 from calibre import as_unicode
-from calibre.constants import plugins
-from calibre.srv.loop import ServerLoop, HandleInterrupt, WRITE, READ, RDWR, Connection
 from calibre.srv.http_response import HTTPConnection, create_http_handler
+from calibre.srv.loop import RDWR, READ, WRITE, Connection, HandleInterrupt, ServerLoop
 from calibre.srv.utils import DESIRED_SEND_BUFFER_SIZE
 from calibre.utils.speedups import ReadOnlyFileBuffer
-speedup, err = plugins['speedup']
-if not speedup:
-    raise RuntimeError('Failed to load speedup module with error: ' + err)
-fast_mask, utf8_decode = speedup.websocket_mask, speedup.utf8_decode
-del speedup, err
+from calibre_extensions.speedup import utf8_decode
+from calibre_extensions.speedup import websocket_mask as fast_mask
+from polyglot import http_client
+from polyglot.binary import as_base64_unicode
+from polyglot.queue import Empty, Queue
 
 HANDSHAKE_STR = (
-    "HTTP/1.1 101 Switching Protocols\r\n"
-    "Upgrade: WebSocket\r\n"
-    "Connection: Upgrade\r\n"
-    "Sec-WebSocket-Accept: %s\r\n\r\n"
+    'HTTP/1.1 101 Switching Protocols\r\n'
+    'Upgrade: WebSocket\r\n'
+    'Connection: Upgrade\r\n'
+    'Sec-WebSocket-Accept: %s\r\n\r\n'
 )
 GUID_STR = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11'
 
@@ -57,7 +54,7 @@ UNEXPECTED_ERROR = 1011
 RESERVED_CLOSE_CODES = (1004,1005,1006,)
 
 
-class ReadFrame(object):  # {{{
+class ReadFrame:  # {{{
 
     def __init__(self):
         self.header_buf = bytearray(14)
@@ -88,8 +85,8 @@ class ReadFrame(object):  # {{{
             self.opcode = b1 & 0b1111
             self.is_control = self.opcode in CONTROL_CODES
             if self.opcode not in ALL_CODES:
-                conn.log.error('Unknown OPCODE from client: %r' % self.opcode)
-                conn.websocket_close(PROTOCOL_ERROR, 'Unknown OPCODE: %r' % self.opcode)
+                conn.log.error(f'Unknown OPCODE from client: {self.opcode!r}')
+                conn.websocket_close(PROTOCOL_ERROR, f'Unknown OPCODE: {self.opcode!r}')
                 return
             if not self.fin and self.is_control:
                 conn.log.error('Fragmented control frame from client')
@@ -175,11 +172,11 @@ class ReadFrame(object):  # {{{
 
 # }}}
 
+
 # Sending frames {{{
 
-
 def create_frame(fin, opcode, payload, mask=None, rsv=0):
-    if isinstance(payload, type('')):
+    if isinstance(payload, str):
         payload = payload.encode('utf-8')
     l = len(payload)
     header_len = 2 + (0 if l < 126 else 2 if 126 <= l <= 65535 else 8) + (0 if mask is None else 4)
@@ -204,11 +201,11 @@ def create_frame(fin, opcode, payload, mask=None, rsv=0):
     return memoryview(frame)
 
 
-class MessageWriter(object):
+class MessageWriter:
 
     def __init__(self, buf, mask=None, chunk_size=None):
         self.buf, self.data_type, self.mask = buf, BINARY, mask
-        if isinstance(buf, type('')):
+        if isinstance(buf, str):
             self.buf, self.data_type = ReadOnlyFileBuffer(buf.encode('utf-8')), TEXT
         elif isinstance(buf, bytes):
             self.buf = ReadOnlyFileBuffer(buf)
@@ -235,10 +232,11 @@ class MessageWriter(object):
         return ReadOnlyFileBuffer(create_frame(fin, opcode, raw, self.mask))
 # }}}
 
+
 conn_id = 0
 
 
-class UTF8Decoder(object):  # {{{
+class UTF8Decoder:  # {{{
 
     def __init__(self):
         self.reset()
@@ -285,11 +283,11 @@ class WebSocketConnection(HTTPConnection):
         except Exception:
             ver_ok = False
         if not ver_ok:
-            return self.simple_response(httplib.BAD_REQUEST, 'Unsupported WebSocket protocol version: %s' % ver)
+            return self.simple_response(http_client.BAD_REQUEST, f'Unsupported WebSocket protocol version: {ver}')
         if self.method != 'GET':
-            return self.simple_response(httplib.BAD_REQUEST, 'Invalid WebSocket method: %s' % self.method)
+            return self.simple_response(http_client.BAD_REQUEST, f'Invalid WebSocket method: {self.method}')
 
-        response = HANDSHAKE_STR % standard_b64encode(sha1(key + GUID_STR).digest())
+        response = HANDSHAKE_STR % as_base64_unicode(sha1((key + GUID_STR).encode('utf-8')).digest())
         self.optimize_for_sending_packet()
         self.socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         self.set_state(WRITE, self.upgrade_connection_to_ws, ReadOnlyFileBuffer(response.encode('ascii')), inheaders)
@@ -304,7 +302,7 @@ class WebSocketConnection(HTTPConnection):
                 self.websocket_handler.handle_websocket_upgrade(self.websocket_connection_id, weakref.ref(self), inheaders)
             except Exception as err:
                 self.log.exception('Error in WebSockets upgrade handler:')
-                self.websocket_close(UNEXPECTED_ERROR, 'Unexpected error in handler: %r' % as_unicode(err))
+                self.websocket_close(UNEXPECTED_ERROR, f'Unexpected error in handler: {as_unicode(err)!r}')
             self.handle_event = self.ws_duplex
             self.set_ws_state()
             self.end_send_optimization()
@@ -386,7 +384,7 @@ class WebSocketConnection(HTTPConnection):
             self.handle_websocket_data(data, message_starting, message_finished)
         except Exception as err:
             self.log.exception('Error in WebSockets data handler:')
-            self.websocket_close(UNEXPECTED_ERROR, 'Unexpected error in handler: %r' % as_unicode(err))
+            self.websocket_close(UNEXPECTED_ERROR, f'Unexpected error in handler: {as_unicode(err)!r}')
 
     def ws_control_frame(self, opcode, data):
         if opcode in (PING, CLOSE):
@@ -398,7 +396,7 @@ class WebSocketConnection(HTTPConnection):
                     try:
                         close_code = unpack_from(b'!H', data)[0]
                     except struct_error:
-                        data = pack(b'!H', PROTOCOL_ERROR) + b'close frame data must be atleast two bytes'
+                        data = pack(b'!H', PROTOCOL_ERROR) + b'close frame data must be at least two bytes'
                     else:
                         try:
                             utf8_decode(data[2:])
@@ -422,7 +420,7 @@ class WebSocketConnection(HTTPConnection):
         self.set_ws_state()
 
     def websocket_close(self, code=NORMAL_CLOSE, reason=b''):
-        if isinstance(reason, type('')):
+        if isinstance(reason, str):
             reason = reason.encode('utf-8')
         self.stop_reading = True
         reason = reason[:123]
@@ -487,7 +485,7 @@ class WebSocketConnection(HTTPConnection):
         ''' Useful for streaming handlers that want to break up messages into
         frames themselves. Note that these frames will be interleaved with
         control frames, so they should not be too large. '''
-        opcode = (TEXT if isinstance(data, type('')) else BINARY) if is_first else CONTINUATION
+        opcode = (TEXT if isinstance(data, str) else BINARY) if is_first else CONTINUATION
         fin = 1 if is_last else 0
         frame = create_frame(fin, opcode, data)
         with self.cf_lock:
@@ -496,7 +494,7 @@ class WebSocketConnection(HTTPConnection):
     def send_websocket_ping(self, data=b''):
         ''' Send a PING to the remote client, it should reply with a PONG which
         will be sent to the handle_websocket_pong callback in your handler. '''
-        if isinstance(data, type('')):
+        if isinstance(data, str):
             data = data.encode('utf-8')
         frame = create_frame(True, PING, data)
         with self.cf_lock:
@@ -512,7 +510,7 @@ class WebSocketConnection(HTTPConnection):
         self.websocket_handler.handle_websocket_data(self.websocket_connection_id, data, message_starting, message_finished)
 
 
-class DummyHandler(object):
+class DummyHandler:
 
     def handle_websocket_upgrade(self, connection_id, connection_ref, inheaders):
         conn = connection_ref()
@@ -527,13 +525,12 @@ class DummyHandler(object):
     def handle_websocket_close(self, connection_id):
         pass
 
+
 # Testing {{{
 
-# Run this file with calibre-debug and use wstest to run the Autobahn test
-# suite
+# Run this file with calibre-debug and use wstest to run the Autobahn test suite
 
-
-class EchoHandler(object):
+class EchoHandler:
 
     def __init__(self, *args, **kwargs):
         self.ws_connections = {}
@@ -561,6 +558,7 @@ def run_echo_server():
     s = ServerLoop(create_http_handler(websocket_handler=EchoHandler()))
     with HandleInterrupt(s.wakeup):
         s.serve_forever()
+
 
 if __name__ == '__main__':
     # import cProfile

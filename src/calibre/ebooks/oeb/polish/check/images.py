@@ -1,17 +1,17 @@
-#!/usr/bin/env python2
-# vim:fileencoding=utf-8
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
+#!/usr/bin/env python
+
 
 __license__ = 'GPL v3'
 __copyright__ = '2013, Kovid Goyal <kovid at kovidgoyal.net>'
 
 from io import BytesIO
+
 from PIL import Image
 
 from calibre import as_unicode
-from calibre.ebooks.oeb.polish.check.base import BaseError, WARN
+from calibre.ebooks.oeb.polish.check.base import WARN, BaseError
 from calibre.ebooks.oeb.polish.check.parsing import EmptyFile
+from polyglot.builtins import error_message
 
 
 class InvalidImage(BaseError):
@@ -32,7 +32,8 @@ class CMYKImage(BaseError):
     level = WARN
 
     def __call__(self, container):
-        from PyQt5.Qt import QImage
+        from qt.core import QImage
+
         from calibre.gui2 import pixmap_to_data
         ext = container.mime_map[self.name].split('/')[-1].upper()
         if ext == 'JPG':
@@ -59,7 +60,7 @@ def check_raster_images(name, mt, raw):
     try:
         i = Image.open(BytesIO(raw))
     except Exception as e:
-        errors.append(InvalidImage(as_unicode(e.message), name))
+        errors.append(InvalidImage(as_unicode(error_message(e)), name))
     else:
         if i.mode == 'CMYK':
             errors.append(CMYKImage(_('Image is in the CMYK colorspace'), name))

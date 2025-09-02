@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-
 '''
 Read content from ereader pdb file with a 116 and 202 byte header created by Makebook.
 '''
@@ -12,11 +10,12 @@ import struct
 
 from calibre import CurrentDir
 from calibre.ebooks.metadata.opf2 import OPFCreator
-from calibre.ebooks.pdb.formatreader import FormatReader
 from calibre.ebooks.pdb.ereader import EreaderError
+from calibre.ebooks.pdb.formatreader import FormatReader
+from polyglot.builtins import as_unicode
 
 
-class HeaderRecord(object):
+class HeaderRecord:
     '''
     The first record in the file is always the header record. It holds
     information related to the location of text, images, and so on
@@ -46,7 +45,7 @@ class Reader202(FormatReader):
         self.header_record = HeaderRecord(self.section_data(0))
 
         if self.header_record.version not in (2, 4):
-            raise EreaderError('Unknown book version %i.' % self.header_record.version)
+            raise EreaderError(f'Unknown book version {self.header_record.version}.')
 
         from calibre.ebooks.metadata.pdb import get_metadata
         self.mi = get_metadata(stream, False)
@@ -56,15 +55,17 @@ class Reader202(FormatReader):
 
     def decompress_text(self, number):
         from calibre.ebooks.compression.palmdoc import decompress_doc
-        return decompress_doc(''.join([chr(ord(x) ^ 0xA5) for x in self.section_data(number)])).decode('cp1252' if self.encoding is None else self.encoding, 'replace')  # noqa
+        data = bytearray(self.section_data(number))
+        data = bytes(bytearray(x ^ 0xA5 for x in data))
+        return decompress_doc(data).decode(self.encoding or 'cp1252', 'replace')
 
     def get_image(self, number):
         name = None
         img = None
 
         data = self.section_data(number)
-        if data.startswith('PNG'):
-            name = data[4:4 + 32].strip('\x00')
+        if data.startswith(b'PNG'):
+            name = data[4:4 + 32].strip(b'\x00')
             img = data[62:]
 
         return name, img
@@ -75,7 +76,7 @@ class Reader202(FormatReader):
         assumed to be encoded as Windows-1252. The encoding is part of
         the eReader file spec and should always be this encoding.
         '''
-        if number not in range(1, self.header_record.num_text_pages + 1):
+        if not (1 <= number <= self.header_record.num_text_pages):
             return ''
 
         return self.decompress_text(number)
@@ -88,17 +89,16 @@ class Reader202(FormatReader):
         if not os.path.exists(output_dir):
             os.makedirs(output_dir)
 
-        pml = u''
+        pml = ''
         for i in range(1, self.header_record.num_text_pages + 1):
-            self.log.debug('Extracting text page %i' % i)
+            self.log.debug(f'Extracting text page {i}')
             pml += self.get_text_page(i)
 
         title = self.mi.title
-        if not isinstance(title, unicode):
+        if not isinstance(title, str):
             title = title.decode('utf-8', 'replace')
 
-        html = u'<html><head><title>%s</title></head><body>%s</body></html>' % \
-            (title, pml_to_html(pml))
+        html = f'<html><head><title>{title}</title></head><body>{pml_to_html(pml)}</body></html>'
 
         with CurrentDir(output_dir):
             with open('index.html', 'wb') as index:
@@ -112,9 +112,10 @@ class Reader202(FormatReader):
             for i in range(self.header_record.non_text_offset, len(self.sections)):
                 name, img = self.get_image(i)
                 if name:
+                    name = as_unicode(name)
                     images.append(name)
                     with open(name, 'wb') as imgf:
-                        self.log.debug('Writing image %s to images/' % name)
+                        self.log.debug(f'Writing image {name} to images/')
                         imgf.write(img)
 
         opf_path = self.create_opf(output_dir, images)
@@ -158,7 +159,7 @@ class Reader202(FormatReader):
             os.makedirs(output_dir)
 
         with CurrentDir(output_dir):
-            for i in range(0, self.header_record.num_image_pages):
+            for i in range(self.header_record.num_image_pages):
                 name, img = self.get_image(self.header_record.image_data_offset + i)
                 with open(name, 'wb') as imgf:
                     imgf.write(img)

@@ -1,18 +1,17 @@
-#!/usr/bin/env python2
-# vim:fileencoding=utf-8
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
+#!/usr/bin/env python
+
 
 __license__ = 'GPL v3'
 __copyright__ = '2014, Kovid Goyal <kovid at kovidgoyal.net>'
 
+import numbers
 from functools import partial
 
-from PyQt5.Qt import QTextBlockUserData
-from pygments.lexer import _TokenType, Error
+from pygments.lexer import Error, _TokenType
+from qt.core import QTextBlockUserData
 
 from calibre.gui2.tweak_book.editor.syntax.base import SyntaxHighlighter
-from calibre.gui2.tweak_book.editor.syntax.utils import format_for_pygments_token, NULL_FMT
+from calibre.gui2.tweak_book.editor.syntax.utils import NULL_FMT, format_for_pygments_token
 
 NORMAL = 0
 
@@ -35,8 +34,7 @@ def create_lexer(base_class):
                         if type(action) is _TokenType:
                             yield pos, action, m.group()
                         else:
-                            for item in action(self, m):
-                                yield item
+                            yield from action(self, m)
                     pos = m.end()
                     if new_state is not None:
                         # state transition
@@ -48,13 +46,13 @@ def create_lexer(base_class):
                                     statestack.append(statestack[-1])
                                 else:
                                     statestack.append(state)
-                        elif isinstance(new_state, int):
+                        elif isinstance(new_state, numbers.Integral):
                             # pop
                             del statestack[new_state:]
                         elif new_state == '#push':
                             statestack.append(statestack[-1])
                         else:
-                            assert False, "wrong state def: %r" % new_state
+                            assert False, f'wrong state def: {new_state!r}'
                         statetokens = tokendefs[statestack[-1]]
                     break
             else:
@@ -92,13 +90,15 @@ def create_lexer(base_class):
         state.pygments_stack = statestack
         return formats
 
-    return type(str('Qt'+base_class.__name__), (base_class,), {
+    name_type = type(base_class.__name__)
+
+    return type(name_type('Qt'+base_class.__name__), (base_class,), {
         'get_tokens_unprocessed': get_tokens_unprocessed,
         'lex_a_line':lex_a_line,
     })
 
 
-class State(object):
+class State:
 
     __slots__ = ('parse', 'pygments_stack')
 
@@ -119,7 +119,7 @@ class State(object):
         return not self.__eq__(other)
 
     def __repr__(self):
-        return "PythonState(%r)" % self.pygments_stack
+        return f'PythonState({self.pygments_stack!r})'
     __str__ = __repr__
 
 
@@ -143,7 +143,8 @@ def create_formats(highlighter):
 
 
 def create_highlighter(name, lexer_class):
-    return type(str(name), (SyntaxHighlighter,), {
+    name_type = type(lexer_class.__name__)
+    return type(name_type(name), (SyntaxHighlighter,), {
         'state_map': {NORMAL:create_lexer(lexer_class)().lex_a_line},
         'create_formats_func': create_formats,
         'user_data_factory': PygmentsUserData,

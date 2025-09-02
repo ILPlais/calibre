@@ -1,55 +1,67 @@
-from __future__ import with_statement
-__license__ = 'GPL 3'
-__copyright__ = '2009, Kovid Goyal <kovid@kovidgoyal.net>'
-__docformat__ = 'restructuredtext en'
+#!/usr/bin/env python
+# License: GPLv3 Copyright: 2009, Kovid Goyal <kovid at kovidgoyal.net>
 
-'A simplified logging system'
+# A simplified logging system
+
+import io
+import sys
+import traceback
+from contextlib import suppress
+from functools import partial
+from threading import Lock
+
+from calibre.prints import prints
+from polyglot.builtins import as_unicode
 
 DEBUG = 0
 INFO  = 1
 WARN  = 2
 ERROR = 3
 
-import sys, traceback, cStringIO
-from functools import partial
-from threading import Lock
 
-from calibre import isbytestring, force_unicode, as_unicode, prints
-
-
-class Stream(object):
+class Stream:
 
     def __init__(self, stream=None):
         if stream is None:
-            stream = cStringIO.StringIO()
+            stream = io.StringIO()
         self.stream = stream
-        self._prints = partial(prints, safe_encode=True, file=stream)
+        self.encoding = getattr(self.stream, 'encoding', None) or 'utf-8'
+
+    def write(self, text):
+        self._prints(text, end='')
 
     def flush(self):
-        self.stream.flush()
+        with suppress(BrokenPipeError):
+            # Don't fail if we were logging to a pipe and it got closed
+            self.stream.flush()
 
     def prints(self, level, *args, **kwargs):
         self._prints(*args, **kwargs)
 
+    def _prints(self, *args, **kwargs):
+        prints(*args, **kwargs, file=self.stream)
+
+
+stdout_sentinel = object()
+
 
 class ANSIStream(Stream):
 
-    def __init__(self, stream=sys.stdout):
+    def __init__(self, stream=stdout_sentinel):
+        if stream is stdout_sentinel:
+            stream = sys.stdout
         Stream.__init__(self, stream)
         self.color = {
-                      DEBUG: u'green',
-                      INFO: None,
-                      WARN: u'yellow',
-                      ERROR: u'red',
-                      }
+            DEBUG: 'green',
+            INFO: None,
+            WARN: 'yellow',
+            ERROR: 'red',
+        }
 
     def prints(self, level, *args, **kwargs):
         from calibre.utils.terminal import ColoredStream
         with ColoredStream(self.stream, self.color[level]):
             self._prints(*args, **kwargs)
-
-    def flush(self):
-        self.stream.flush()
 
 
 class FileStream(Stream):
@@ -64,24 +76,22 @@ class FileStream(Stream):
 class HTMLStream(Stream):
 
     color = {
-            DEBUG: '<span style="color:green">',
-            INFO:'<span>',
-            WARN: '<span style="color:blue">',
-            ERROR: '<span style="color:red">'
-            }
+        DEBUG: '<span style="color:green">',
+        INFO: '<span>',
+        WARN: '<span style="color:blue">',
+        ERROR: '<span style="color:red">'
+    }
     normal = '</span>'
 
-    def __init__(self, stream=sys.stdout):
+    def __init__(self, stream=stdout_sentinel):
+        if stream is stdout_sentinel:
+            stream = sys.stdout
         Stream.__init__(self, stream)
 
     def prints(self, level, *args, **kwargs):
-        self.stream.write(self.color[level])
-        kwargs['file'] = self.stream
+        self._prints(self.color[level], end='')
         self._prints(*args, **kwargs)
-        self.stream.write(self.normal)
-
-    def flush(self):
-        self.stream.flush()
+        self._prints(self.normal, end='')
 
 
 class UnicodeHTMLStream(HTMLStream):
@@ -100,14 +110,11 @@ class UnicodeHTMLStream(HTMLStream):
             self.data.append(col)
             self.last_col = col
 
-        sep  = kwargs.get(u'sep', u' ')
-        end  = kwargs.get(u'end', u'\n')
+        sep  = kwargs.get('sep', ' ')
+        end  = kwargs.get('end', '\n')
 
         for arg in args:
-            if isbytestring(arg):
-                arg = force_unicode(arg)
-            elif not isinstance(arg, unicode):
-                arg = as_unicode(arg)
+            arg = as_unicode(arg)
             self.data.append(arg+sep)
             self.plain_text.append(arg+sep)
         self.data.append(end)
@@ -120,8 +127,8 @@ class UnicodeHTMLStream(HTMLStream):
 
     @property
     def html(self):
-        end = self.normal if self.data else u''
-        return u''.join(self.data) + end
+        end = self.normal if self.data else ''
+        return ''.join(self.data) + end
 
     def dump(self):
         return [self.data, self.plain_text, self.last_col]
@@ -136,7 +143,7 @@ class UnicodeHTMLStream(HTMLStream):
         self.last_col = lc
 
 
-class Log(object):
+class Log:
 
     DEBUG = DEBUG
     INFO  = INFO
@@ -148,10 +155,10 @@ class Log(object):
         default_output = ANSIStream()
         self.outputs = [default_output]
 
-        self.debug = partial(self.prints, DEBUG)
-        self.info  = partial(self.prints, INFO)
-        self.warn  = self.warning = partial(self.prints, WARN)
-        self.error = partial(self.prints, ERROR)
+        self.debug = partial(self.print_with_flush, DEBUG)
+        self.info  = partial(self.print_with_flush, INFO)
+        self.warn  = self.warning = partial(self.print_with_flush, WARN)
+        self.error = partial(self.print_with_flush, ERROR)
 
     def prints(self, level, *args, **kwargs):
         if level < self.filter_level:
@@ -159,13 +166,20 @@ class Log(object):
         for output in self.outputs:
             output.prints(level, *args, **kwargs)
 
+    def print_with_flush(self, level, *args, **kwargs):
+        if level < self.filter_level:
+            return
+        for output in self.outputs:
+            output.prints(level, *args, **kwargs)
+        self.flush()
+
     def exception(self, *args, **kwargs):
         limit = kwargs.pop('limit', None)
-        self.prints(ERROR, *args, **kwargs)
-        self.prints(DEBUG, traceback.format_exc(limit))
+        self.print_with_flush(ERROR, *args, **kwargs)
+        self.print_with_flush(DEBUG, traceback.format_exc(limit))
 
     def __call__(self, *args, **kwargs):
-        self.prints(INFO, *args, **kwargs)
+        self.info(*args, **kwargs)
 
     def __enter__(self):
         self.orig_filter_level = self.filter_level
@@ -203,11 +217,15 @@ class ThreadSafeLog(Log):
         with self._lock:
             Log.prints(self, *args, **kwargs)
 
+    def print_with_flush(self, *args, **kwargs):
+        with self._lock:
+            Log.print_with_flush(self, *args, **kwargs)
+
     def exception(self, *args, **kwargs):
         limit = kwargs.pop('limit', None)
         with self._lock:
-            Log.prints(self, ERROR, *args, **kwargs)
-            Log.prints(self, self.exception_traceback_level, traceback.format_exc(limit))
+            Log.print_with_flush(self, ERROR, *args, **kwargs)
+            Log.print_with_flush(self, self.exception_traceback_level, traceback.format_exc(limit))
 
 
 class ThreadSafeWrapper(Log):
@@ -221,9 +239,12 @@ class ThreadSafeWrapper(Log):
         with self._lock:
             Log.prints(self, *args, **kwargs)
 
+    def print_with_flush(self, *args, **kwargs):
+        with self._lock:
+            Log.print_with_flush(self, *args, **kwargs)
+
 
 class GUILog(ThreadSafeLog):
-
     '''
     Logs in HTML and plain text as unicode. Ideal for display in a GUI context.
     '''
@@ -241,7 +262,7 @@ class GUILog(ThreadSafeLog):
 
     @property
     def plain_text(self):
-        return u''.join(self.outputs[0].plain_text)
+        return ''.join(self.outputs[0].plain_text)
 
     def dump(self):
         return self.outputs[0].dump()

@@ -1,16 +1,11 @@
-#!/usr/bin/env python2
-# vim:fileencoding=utf-8
+#!/usr/bin/env python
 # License: GPLv3 Copyright: 2015, Kovid Goyal <kovid at kovidgoyal.net>
 
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
+
 import ctypes
-from ctypes import windll
-from ctypes import wintypes
 from collections import namedtuple
 from contextlib import contextmanager
-
-from calibre.constants import is64bit
+from ctypes import windll, wintypes
 
 # Wraps (part of) the IPHelper API, useful to enumerate the network routes and
 # adapters on the local machine
@@ -18,10 +13,10 @@ from calibre.constants import is64bit
 
 class GUID(ctypes.Structure):
     _fields_ = [
-        ("data1", wintypes.DWORD),
-        ("data2", wintypes.WORD),
-        ("data3", wintypes.WORD),
-        ("data4", wintypes.BYTE * 8)]
+        ('data1', wintypes.DWORD),
+        ('data2', wintypes.WORD),
+        ('data3', wintypes.WORD),
+        ('data4', wintypes.BYTE * 8)]
 
     def __init__(self, l, w1, w2, b1, b2, b3, b4, b5, b6, b7, b8):
         self.data1 = l
@@ -42,6 +37,7 @@ class SOCKADDR(ctypes.Structure):
         ('sa_family', wintypes.USHORT),
         ('sa_data', ctypes.c_char * 14),
     ]
+
 
 ERROR_SUCCESS = 0
 ERROR_INSUFFICIENT_BUFFER = 122
@@ -206,7 +202,7 @@ class IP_ADAPTER_ADDRESSES(ctypes.Structure):
         ('Dhcpv6ClientDuid', ctypes.c_ubyte * MAX_DHCPV6_DUID_LENGTH),
         ('Dhcpv6ClientDuidLength', wintypes.ULONG),
         ('Dhcpv6Iaid', wintypes.ULONG),
-        # Vista SP1 and later, so we comment it out as we dont need it
+        # Vista SP1 and later, so we comment it out as we don't need it
         # ('FirstDnsSuffix', ctypes.POINTER(IP_ADAPTER_DNS_SUFFIX)),
     ]
 
@@ -256,7 +252,7 @@ GetProcessHeap.argtypes = []
 GetProcessHeap.restype = wintypes.HANDLE
 
 HeapAlloc = windll.kernel32.HeapAlloc
-HeapAlloc.argtypes = [wintypes.HANDLE, wintypes.DWORD, ctypes.c_uint64 if is64bit else ctypes.c_uint32]
+HeapAlloc.argtypes = [wintypes.HANDLE, wintypes.DWORD, ctypes.c_uint64]
 HeapAlloc.restype = wintypes.LPVOID
 
 HeapFree = windll.kernel32.HeapFree
@@ -296,7 +292,7 @@ def _get_forward_table():
                 yield p_forward_table
                 break
             else:
-                raise OSError('Unable to get IP forward table. Error: %s' % err)
+                raise OSError(f'Unable to get IP forward table. Error: {err}')
         if p_forward_table is None:
             raise OSError('Failed to get IP routing table, table appears to be changing rapidly')
     finally:
@@ -324,13 +320,14 @@ def _get_adapters():
                 buf = _heap_alloc(heap, size)
                 addresses = ctypes.cast(buf, ctypes.POINTER(IP_ADAPTER_ADDRESSES))
             else:
-                raise OSError('Failed to determine size for adapters table with error: %s' % err)
+                raise OSError(f'Failed to determine size for adapters table with error: {err}')
         if addresses is None:
             raise OSError('Failed to get adapter addresses, table appears to be changing rapidly')
     finally:
         if addresses is not None:
             HeapFree(heap, 0, addresses)
             addresses = None
+
 
 Adapter = namedtuple('Adapter', 'name if_index if_index6 friendly_name status transmit_speed receive_speed')
 
@@ -389,8 +386,8 @@ def routes():
 
     return ans
 
+
 if __name__ == '__main__':
     from pprint import pprint
     pprint(adapters())
     pprint(routes())
-

@@ -1,13 +1,11 @@
-#!/usr/bin/env python2
-# vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
-from __future__ import with_statement
+#!/usr/bin/env python
+
 
 __license__   = 'GPL v3'
 __copyright__ = '2009, Kovid Goyal <kovid@kovidgoyal.net>'
 __docformat__ = 'restructuredtext en'
 
-from calibre.customize.conversion import (OutputFormatPlugin,
-        OptionRecommendation)
+from calibre.customize.conversion import OptionRecommendation, OutputFormatPlugin
 
 
 def remove_html_cover(oeb, log):
@@ -51,10 +49,10 @@ class MOBIOutput(OutputFormatPlugin):
         ),
         OptionRecommendation(name='no_inline_toc',
             recommended_value=False, level=OptionRecommendation.LOW,
-            help=_('Don\'t add Table of Contents to the book. Useful if '
+            help=_("Don't add Table of Contents to the book. Useful if "
                 'the book has its own table of contents.')),
         OptionRecommendation(name='toc_title', recommended_value=None,
-            help=_('Title for any generated in-line table of contents.')
+            help=_('Title for any generated inline table of contents.')
         ),
         OptionRecommendation(name='dont_compress',
             recommended_value=False, level=OptionRecommendation.LOW,
@@ -65,7 +63,9 @@ class MOBIOutput(OutputFormatPlugin):
                    ' This option has no effect on the conversion. It is used'
                    ' only when sending MOBI files to a device. If the file'
                    ' being sent has the specified tag, it will be marked as'
-                   ' a personal document when sent to the Kindle.')
+                   ' a personal document when sent to the Kindle. Use the value *'
+                   ' to match all books.'
+            )
         ),
         OptionRecommendation(name='mobi_ignore_margins',
             recommended_value=False,
@@ -80,7 +80,7 @@ class MOBIOutput(OutputFormatPlugin):
         ),
         OptionRecommendation(name='extract_to',
             help=_('Extract the contents of the generated %s file to the '
-                'specified directory. The contents of the directory are first '
+                'specified folder. The contents of the folder are first '
                 'deleted, so be careful.') % 'MOBI'
         ),
         OptionRecommendation(name='share_not_sync', recommended_value=False,
@@ -121,7 +121,7 @@ class MOBIOutput(OutputFormatPlugin):
         if not found:
             from calibre.ebooks import generate_masthead
             self.oeb.log.debug('No masthead found in manifest, generating default mastheadImage...')
-            raw = generate_masthead(unicode(self.oeb.metadata['title'][0]))
+            raw = generate_masthead(str(self.oeb.metadata['title'][0]))
             id, href = self.oeb.manifest.generate('masthead', 'masthead')
             self.oeb.manifest.add(id, href, 'image/gif', data=raw)
             self.oeb.guide.add('masthead', 'Masthead Image', href)
@@ -165,7 +165,7 @@ class MOBIOutput(OutputFormatPlugin):
                     sec.nodes.remove(a)
 
             root = TOC(klass='periodical', href=self.oeb.spine[0].href,
-                    title=unicode(self.oeb.metadata.title[0]))
+                    title=str(self.oeb.metadata.title[0]))
 
             for s in sections:
                 if articles[id(s)]:
@@ -190,6 +190,7 @@ class MOBIOutput(OutputFormatPlugin):
             mobi_type = 'old'  # Amazon does not support KF8 periodicals
         create_kf8 = mobi_type in ('new', 'both')
 
+        self.oeb.set_page_progression_direction_if_needed()
         remove_html_cover(self.oeb, self.log)
         resources = Resources(oeb, opts, self.is_periodical,
                 add_fonts=create_kf8)
@@ -218,11 +219,11 @@ class MOBIOutput(OutputFormatPlugin):
                 for_joint=for_joint)
 
     def write_mobi(self, input_plugin, output_path, kf8, resources):
+        from calibre.customize.ui import plugin_for_input_format
         from calibre.ebooks.mobi.mobiml import MobiMLizer
+        from calibre.ebooks.oeb.transforms.htmltoc import HTMLTOCAdder
         from calibre.ebooks.oeb.transforms.manglecase import CaseMangler
         from calibre.ebooks.oeb.transforms.rasterize import SVGRasterizer, Unavailable
-        from calibre.ebooks.oeb.transforms.htmltoc import HTMLTOCAdder
-        from calibre.customize.ui import plugin_for_input_format
 
         opts, oeb = self.opts, self.oeb
         if not opts.no_inline_toc:
@@ -281,10 +282,10 @@ class AZW3Output(OutputFormatPlugin):
         ),
         OptionRecommendation(name='no_inline_toc',
             recommended_value=False, level=OptionRecommendation.LOW,
-            help=_('Don\'t add Table of Contents to the book. Useful if '
+            help=_("Don't add Table of Contents to the book. Useful if "
                 'the book has its own table of contents.')),
         OptionRecommendation(name='toc_title', recommended_value=None,
-            help=_('Title for any generated in-line table of contents.')
+            help=_('Title for any generated inline table of contents.')
         ),
         OptionRecommendation(name='dont_compress',
             recommended_value=False, level=OptionRecommendation.LOW,
@@ -297,7 +298,7 @@ class AZW3Output(OutputFormatPlugin):
         ),
         OptionRecommendation(name='extract_to',
             help=_('Extract the contents of the generated %s file to the '
-                'specified directory. The contents of the directory are first '
+                'specified folder. The contents of the folder are first '
                 'deleted, so be careful.') % 'AZW3'),
         OptionRecommendation(name='share_not_sync', recommended_value=False,
             help=_('Enable sharing of book content via Facebook etc. '
@@ -309,12 +310,13 @@ class AZW3Output(OutputFormatPlugin):
 
     def convert(self, oeb, output_path, input_plugin, opts, log):
         from calibre.ebooks.mobi.writer2.resources import Resources
-        from calibre.ebooks.mobi.writer8.main import create_kf8_book
         from calibre.ebooks.mobi.writer8.cleanup import remove_duplicate_anchors
+        from calibre.ebooks.mobi.writer8.main import create_kf8_book
 
         self.oeb, self.opts, self.log = oeb, opts, log
         opts.mobi_periodical = self.is_periodical
         passthrough = getattr(opts, 'mobi_passthrough', False)
+        self.oeb.set_page_progression_direction_if_needed()
         remove_duplicate_anchors(oeb)
 
         resources = Resources(self.oeb, self.opts, self.is_periodical,

@@ -9,14 +9,12 @@
     :license: BSD, see LICENSE for more details.
 """
 
-from __future__ import unicode_literals
 
-import re
-import sys
-import operator
 import functools
+import operator
+import re
 import string
-
+import sys
 
 # * Raw strings with the r'' notation are used so that \ do not need
 #   to be escaped.
@@ -187,6 +185,7 @@ def _init():
         for names in dispatch
     )
 
+
 _init()
 
 
@@ -197,6 +196,7 @@ def _unicode_replace(match, int=int, unichr=unichr, maxunicode=sys.maxunicode):
     else:
         return '\N{REPLACEMENT CHARACTER}'  # U+FFFD
 
+
 UNICODE_UNESCAPE = functools.partial(
     re.compile(COMPILED_MACROS['unicode'], re.I).sub,
     _unicode_replace)
@@ -205,16 +205,19 @@ NEWLINE_UNESCAPE = functools.partial(
     re.compile(r'()\\' + COMPILED_MACROS['nl']).sub,
     '')
 
+
 SIMPLE_UNESCAPE = functools.partial(
-    re.compile(r'\\(%s)' % COMPILED_MACROS['simple_escape'] , re.I).sub,
+    re.compile(r'\\(%s)' % COMPILED_MACROS['simple_escape'], re.I).sub,
     # Same as r'\1', but faster on CPython
     operator.methodcaller('group', 1))
 
-FIND_NEWLINES = lambda x : list(re.compile(COMPILED_MACROS['nl']).finditer(x))
+
+def FIND_NEWLINES(x):
+    return list(re.compile(COMPILED_MACROS['nl']).finditer(x))
 
 
-class Token(object):
-    """A single atomic token.
+class Token:
+    r"""A single atomic token.
 
     .. attribute:: is_container
 
@@ -330,7 +333,7 @@ class Token(object):
                 .format(self, self.unit or ''))
 
 
-class ContainerToken(object):
+class ContainerToken:
     """A token that contains other (nested) tokens.
 
     .. attribute:: is_container
@@ -440,11 +443,12 @@ class TokenList(list):
         """
         return ''.join(token.as_css() for token in self)
 
+
 def load_c_tokenizer():
-    from calibre.constants import plugins
-    tokenizer, err = plugins['tokenizer']
-    if err:
-        raise RuntimeError('Failed to load module tokenizer: %s' % err)
+    from calibre_extensions import tokenizer
     tokens = list(':;(){}[]') + ['DELIM', 'INTEGER', 'STRING']
-    tokenizer.init(COMPILED_TOKEN_REGEXPS, UNICODE_UNESCAPE, NEWLINE_UNESCAPE, SIMPLE_UNESCAPE, FIND_NEWLINES, TOKEN_DISPATCH, COMPILED_TOKEN_INDEXES, *tokens)
+    tokenizer.init(
+        COMPILED_TOKEN_REGEXPS, UNICODE_UNESCAPE, NEWLINE_UNESCAPE,
+        SIMPLE_UNESCAPE, FIND_NEWLINES, TOKEN_DISPATCH, COMPILED_TOKEN_INDEXES,
+        *tokens)
     return tokenizer

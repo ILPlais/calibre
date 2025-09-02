@@ -4,10 +4,10 @@ Editing e-books
 ========================
 
 calibre has an integrated e-book editor that can be used to edit books in the
-EPUB and AZW3 (Kindle) formats. The editor shows you the HTML and CSS that is
-used internally inside the book files, with a live preview that updates as you
-make changes. It also contains various automated tools to perform common
-cleanup and fixing tasks.
+EPUB, KEPUB (Kobo) and AZW3 (Kindle) formats. The editor shows you the HTML and
+CSS that is used internally inside the book files, with a live preview that
+updates as you make changes. It also contains various automated tools to
+perform common cleanup and fixing tasks.
 
 You can use this editor by right clicking on any book in calibre and selecting
 :guilabel:`Edit book`.
@@ -26,16 +26,15 @@ Basic workflow
 ---------------
 
 .. note::
-    A video tour of the calibre editor is available `here
-    <https://calibre-ebook.com/demo#tutorials>`_.
+    A video tour of the calibre E-book editor is available :website:`here <demo#tutorials>`.
 
 When you first open a book with the Edit book tool, you will be presented with
 a list of files on the left. These are the individual HTML files, stylesheets,
 images, etc. that make up the content of the book. Simply double click on a
 file to start editing it. Note that if you want to do anything more
 sophisticated than making a few small tweaks, you will need to know `HTML
-Tutorial <http://html.net/tutorials/html/>`_ and `CSS Tutorial
-<http://html.net/tutorials/css/>`_.
+Tutorial <https://www.w3schools.com/Html/default.asp>`_ and `CSS Tutorial
+<https://www.w3schools.com/css/default.asp>`_.
 
 As you make changes to the HTML or CSS in the editor, the changes will be
 previewed, live, in the preview panel to the right. When you are happy with how
@@ -50,7 +49,7 @@ you created the checkpoint. To create a checkpoint, use :guilabel:`Edit->Create
 checkpoint`. Checkpoints will also be automatically created for you whenever you
 run any automated tool like global search and replace. The checkpointing
 functionality is in addition to the normal undo/redo mechanism when editing
-individual files. Checkpoints are useful for when changes are spread over
+individual files. Checkpoints are needed for when changes are spread over
 multiple files in the book.
 
 That is the basic work flow for editing books -- Open a file, make changes,
@@ -61,7 +60,7 @@ The File browser
 ------------------
 
 .. image:: images/files_browser.png
-    :alt: The File browser
+    :alt: The File browser showing files in the book
     :class: float-left-img
 
 The :guilabel:`File browser` gives you an overview of the various files inside
@@ -99,8 +98,8 @@ name, calibre will take care of the rest.
 You can also bulk rename many files at once. This is useful
 if you want the files to have some simple name pattern. For example you might
 want to rename all the HTML files to have names Chapter-1.html, Chapter-2.html
-and so on. Select the files you want bulk renamed by holding down the Shift or
-Ctrl key and clicking the files. Then right click and select :guilabel:`Bulk
+and so on. Select the files you want bulk renamed by holding down the :kbd:`Shift` or
+:kbd:`Ctrl` key and clicking the files. Then right click and select :guilabel:`Bulk
 rename`. Enter a prefix and what number you would like the automatic numbering
 to start at, click OK and you are done. The bulk rename dialog also lets you
 rename files by the order they appear in the book instead of the order you
@@ -119,7 +118,7 @@ can sometimes be useful to have everything in a single file. Be wary, though,
 putting a lot of content into a single file will cause performance problems
 when viewing the book in a typical e-book reader.
 
-To merge multiple files together, select them by holding the Ctrl key and
+To merge multiple files together, select them by holding the :kbd:`Ctrl` key and
 clicking on them (make sure you only select files of one type, either all HTML
 files or all CSS files and so on). Then right click and select merge. That's
 all, calibre will merge the files, automatically taking care of migrating all
@@ -127,14 +126,21 @@ links and references to the merged files. Note that merging files can sometimes
 cause text styling to change, since the individual files could have used
 different stylesheets.
 
+You can also select text files and then drag and drop the text files onto
+another text file to merge the dropped text files into the target text file.
+
 Changing text file order
 ^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 You can re-arrange the order in which text (HTML) files are opened when reading
-the book by simply dragging and dropping them in the Files browser. For the
-technically inclined, this is called re-ordering the book spine. Note that you
-have to drop the items *between* other items, not on top of them, this can be a
-little fiddly until you get used to it.
+the book by simply dragging and dropping them in the :guilabel:`File browser` or clicking
+on the file to move and then pressing the :kbd:`Ctrl+Shift` modifiers with the
+:kbd:`Up`, :kbd:`Down`, :kbd:`Home` or :kbd:`End` keys. For the technically
+inclined, this is called re-ordering the book spine.
+
+Note that you have to drop the items *between* other items, not on top of them,
+this can be a little fiddly until you get used to it. Dropping on top of
+another file will cause the files to be merged.
 
 Marking the cover
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -174,6 +180,12 @@ Once you are done working on the exported file, you can re-import it into the
 book, by right clicking on the file again and choosing :guilabel:`Replace with
 file...` which will allow you to replace the file in the book with
 the previously exported file.
+
+You can also copy files between multiple editor instances. Select
+the files you want to copy in the :guilabel:`File browser`, then right click
+and choose, :guilabel:`Copy selected files to another editor instance`. Then,
+in the other editor instance, right click in the :guilabel:`File browser`
+and choose :guilabel:`Paste file from other editor instance`.
 
 Adding new images/fonts/etc. or creating new blank files
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -252,7 +264,7 @@ click in the Find box and select :guilabel:`Save current search`.
 You can bring up the saved searches via :guilabel:`Search->Saved
 searches`. This will present you with a list of search and replace expressions
 that you can apply. You can even select multiple entries in the list by holding
-down the Ctrl Key while clicking so as to run multiple search and replace
+down the :kbd:`Ctrl` key while clicking so as to run multiple search and replace
 expressions in a single operation.
 
 Function mode
@@ -306,15 +318,15 @@ will show you the location. Click OK once you are happy with the location.
     :alt: The Edit Table of Contents tool, how to change the location an entry points to
     :align: center
 
-Checking the Book
+Checking the book
 ^^^^^^^^^^^^^^^^^^^^^
 
-The :guilabel:`Check Book` tool searches your book for problems that could
+The :guilabel:`Check book` tool searches your book for problems that could
 prevent it working as intended on actual reader devices. Activate it via
-:guilabel:`Tools->Check Book`.
+:guilabel:`Tools->Check book`.
 
 .. image:: images/check-book.png
-    :alt: The Check Book tool
+    :alt: The Check book tool
     :align: center
 
 Any problems found are
@@ -508,7 +520,7 @@ You can create a checkpoint via :guilabel:`Edit->Create checkpoint`. And go back
 to a previous checkpoint with :guilabel:`Edit->Revert to ...`
 
 The check pointing functionality is in addition to the normal Undo/redo
-mechanism when editing individual files. Checkpoints are particularly useful
+mechanism when editing individual files. Checkpoints are needed
 for when changes are spread over multiple files in the book or when you wish to
 be able to revert a large group of related changes as a whole.
 
@@ -523,7 +535,7 @@ The Live preview panel
 ------------------------
 
 .. image:: images/live-preview.png
-    :alt: The Live preview Panel
+    :alt: The Live preview panel showing a rendering of the current file
     :class: float-left-img
 
 The :guilabel:`File preview` gives you an overview of the various files inside
@@ -561,7 +573,7 @@ Splitting HTML files
 .. |spmb| image:: images/split-button.png
 
 One, perhaps non-obvious, use of the preview panel is to split long HTML files.
-While viewing the file you want to split, click the :guilabel:`split mode`
+While viewing the file you want to split, click the :guilabel:`Split mode`
 button under the preview panel |spmb|. Then simply move your mouse to the place
 where you want to split the file and click. A thick green line will show you
 exactly where the split will happen as you move your mouse. Once you have found
@@ -584,7 +596,7 @@ The Live CSS panel
 ---------------------
 
 .. image:: images/live_css.png
-    :alt: The Live CSS Panel
+    :alt: The Live CSS panel showing the styles for the current element
     :class: float-left-img
 
 
@@ -628,7 +640,7 @@ Checking the spelling of words in the book
 You can run a spelling checker via :guilabel:`Tools->Check spelling`.
 
 .. image:: images/edit-book-spell.png
-    :alt: The Check Spelling tool
+    :alt: The Check spelling tool
     :align: center
     :class: fit-img
 
@@ -664,9 +676,17 @@ common in your book and to run a simple search and replace on individual words.
 
 .. note::
     If you make any changes to the book by editing files while the spell check
-    tool is open, you should click the :guilabel:`Refresh` button in the spell
-    check tool. If you do not do this and continue to use the spell check tool,
+    tool is open, you should click the :guilabel:`Refresh` button in the Spell
+    check tool. If you do not do this and continue to use the Spell check tool,
     you could lose the changes you have made in the editor.
+
+.. note::
+   To exclude an individual file from being spell checked when running the
+   spell check tool, you can use the :guilabel:`Exclude files` button or
+   add the following comment just under the opening tag in the file::
+
+        <!-- calibre-no-spell-check -->
+
 
 Adding new dictionaries
 ###########################
@@ -676,15 +696,15 @@ Spanish languages. You can install your own dictionaries via
 :guilabel:`Preferences->Editor->Manage spelling dictionaries`. The spell
 checker can use dictionaries from the LibreOffice program (in the .oxt
 format). You can download these dictionaries from
-`The LibreOffice Extensions repository <https://extensions.libreoffice.org/extension-center?getCategories=Dictionary&getCompatibility=any&sort_on=positive_ratings>`_.
+`The LibreOffice Extensions repository <https://extensions.libreoffice.org/?Tags%5B%5D=50>`_.
 
 
 Inserting special characters
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 You can insert characters that are difficult to type by using the
-:guilabel:`Edit->Insert special character` tool. This shows you all unicode
-characters, simply click on the character you want to type. If you hold Ctrl
+:guilabel:`Edit->Insert special character` tool. This shows you all Unicode
+characters, simply click on the character you want to type. If you hold :kbd:`Ctrl`
 while clicking, the window will close itself after inserting the selected
 character. This tool can be used to insert special characters into the main
 text or into any other area of the user interface, such as the Search and
@@ -698,12 +718,12 @@ favorites by clicking the :guilabel:`Re-arrange favorites` button and then drag
 and dropping the characters in favorites around.
 
 You can also directly type in special characters using the keyboard. To do
-this, you type the unicode code for the character (in hexadecimal) and then
-press the :guilabel:`Alt+X` key which will convert the previously typed code
+this, you type the Unicode code for the character (in hexadecimal) and then
+press the :kbd:`Alt+X` key which will convert the previously typed code
 into the corresponding character. For example, to type ÿ you would type ff and
-then Alt+X. To type a non-breaking space you would use a0 and then
-:guilabel:`Alt+X`, to type the horizontal ellipsis you would use 2026 and
-:guilabel:`Alt+X` and so on.
+then :kbd:`Alt+X`. To type a non-breaking space you would use a0 and then
+:kbd:`Alt+X`, to type the horizontal ellipsis you would use 2026 and
+:kbd:`Alt+X` and so on.
 
 Finally, you can type in special characters by using HTML named entities. For
 example, typing &nbsp; will be replaced by a non breaking space when you type the
@@ -726,7 +746,7 @@ Checking external links
 
 You can use this tool to check all links in your book that point to external
 websites. The tool will try to visit every externally linked website, and
-if the visit fails, it will report all broken links in a convenient format for 
+if the visit fails, it will report all broken links in a convenient format for
 you to fix.
 
 
@@ -777,7 +797,7 @@ entries the :guilabel:`Source` column to jump to where the link is defined and
 entries in the :guilabel:`Target` column to jump to where the link points.
 
 .. image:: images/reports-ss.png
-    :alt: The Reports tool
+    :alt: The Reports tool with information and statistics about the book
     :align: center
     :class: fit-img
 
@@ -796,11 +816,13 @@ The HTML editor has very sophisticated syntax highlighting. Features include:
     * The text inside bold, italic and heading tags is made bold/italic
     * As you move your cursor through the HTML, the matching HTML tags are
       highlighted, and you can jump to the opening or closing tag with the
-      keyboard shortcuts :kbd:`Ctrl+{` and :kbd:`Ctrl+}`
+      keyboard shortcuts :kbd:`Ctrl+{` and :kbd:`Ctrl+}`. Similarly, you
+      can select the contents of a tag with :kbd:`Ctrl+Alt+T` or
+      :kbd:`Ctrl+Shift+T`.
     * Invalid HTML is highlighted with a red underline
     * Spelling errors in the text inside HTML tags and attributes such as title
       are highlighted. The spell checking is language aware, based on the value
-      of the lang attribute of the current tag and the overall book language.
+      of the ``lang`` attribute of the current tag and the overall book language.
     * CSS embedded inside ``<style>`` tags is highlighted
     * Special characters that can be hard to distinguish such as non-breaking
       spaces, different types of hyphens, etc. are highlighted.
@@ -813,8 +835,13 @@ Context sensitive help
 
 You can right click on an HTML tag name or a CSS property name to get help for that tag or property.
 
-You can also hold down the Ctrl key and click on any filename inside a link tag
-to open that file in the editor automatically.
+You can also hold down the :kbd:`Ctrl` key and click on any filename inside a link tag
+to open that file in the editor automatically. Similarly, :kbd:`Ctrl` clicking
+a class name will take you to the first style rule that matches the tag and class.
+
+Right clicking a class name in an HTML file will allow you to rename the class,
+changing all occurrences of the class throughout the book and all its
+stylesheets.
 
 .. _editor_auto_complete:
 
@@ -827,7 +854,7 @@ the correct filename and relative path to the file. The editor has
 auto-complete to make that easier.
 
 As you type a filename, the editor automatically pops up suggestions. Simply
-use the Tab key to select the correct file name. The editor even offers
+use the :kbd:`Tab` key to select the correct file name. The editor even offers
 suggestions for links pointing to an anchor inside another HTML file. After you
 type the ``#`` character, the editor will show you a list of all anchors in the
 target file, with a small snippet of text to help you choose the right anchor.
@@ -836,7 +863,7 @@ Note that unlike most other completion systems, the editor's completion system
 uses subsequence matching. This means that you can type just two or three
 letters from anywhere in the filename to complete the filename. For example,
 say you want the filename ``../images/arrow1.png``, you can simply type ``ia1``
-and press Tab to complete the filename. When searching for matches, the
+and press :kbd:`Tab` to complete the filename. When searching for matches, the
 completion system prioritizes letters that are at the start of a word, or
 immediately after a path separator. Once you get used to this system, you will
 find it saves you a lot of time and effort.
@@ -844,7 +871,7 @@ find it saves you a lot of time and effort.
 Snippets
 ^^^^^^^^^^^^^^^
 
-The calibre editor supports *snippets*. A snippet is a
+The calibre E-book editor supports *snippets*. A snippet is a
 piece of text that is either re-used often or contains a lot of redundant
 text. The editor allows you to insert a snippet with only a few key strokes.
 The snippets are very powerful, with many features, such as placeholders you

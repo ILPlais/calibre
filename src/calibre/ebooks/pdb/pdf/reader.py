@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-
 '''
 Read content from palmdoc pdb file.
 '''
@@ -27,7 +25,7 @@ class Reader(FormatReader):
         pdf = PersistentTemporaryFile('.pdf')
         pdf.close()
         pdf = open(pdf, 'wb')
-        for x in xrange(self.header.section_count()):
+        for x in range(self.header.section_count()):
             pdf.write(self.header.section_data(x))
         pdf.close()
 

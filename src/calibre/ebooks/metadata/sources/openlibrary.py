@@ -1,7 +1,6 @@
-#!/usr/bin/env python2
+#!/usr/bin/env python
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
+from __future__ import absolute_import, division, print_function, unicode_literals
 
 __license__   = 'GPL v3'
 __copyright__ = '2011, Kovid Goyal <kovid@kovidgoyal.net>'
@@ -13,7 +12,7 @@ from calibre.ebooks.metadata.sources.base import Source
 class OpenLibrary(Source):
 
     name = 'Open Library'
-    version = (1, 0, 0)
+    version = (1, 0, 2)
     minimum_calibre_version = (2, 80, 0)
     description = _('Downloads covers from The Open Library')
 

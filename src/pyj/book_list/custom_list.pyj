@@ -58,9 +58,13 @@ def default_template():
 
 
 def render_field(field, mi, book_id):  # {{{
+    if field is 'id':
+        return book_id + ''
     field_metadata = library_data.field_metadata
+    if not field_metadata:
+        return
     fm = field_metadata[field]
-    if not fm:
+    if not fm or not mi:
         return
     val = mi[field]
     if val is undefined or val is None:
@@ -133,11 +137,24 @@ def render_field(field, mi, book_id):  # {{{
                 val = 1
             return fmt_sidx(val, use_roman=interface_data.use_roman_numerals_for_series_number)
 
+    def process_size(field, fm, name, val):
+        val = val or 0
+        mb = 1024 * 1024
+
+        def fmt(val, suffix):
+            ans = f'{val:.1f}'
+            if ans.endsWith('.0'):
+                ans = ans[:-2]
+            return ans + suffix
+
+        if val < mb:
+            return fmt(val / 1024, 'KB')
+        return fmt(val / mb, 'MB')
+
     name = fm.name or field
     datatype = fm.datatype
-    if field is 'comments' or datatype is 'comments':
+    if field is 'comments':
         return
-    func = None
     if datatype is 'composite':
         func = process_composite
     elif field is 'formats':
@@ -156,8 +173,15 @@ def render_field(field, mi, book_id):  # {{{
         func = process_datetime
     elif datatype is 'series':
         func = process_series
+    elif datatype is 'comments':
+        if fm.display?.interpret_as is 'short-text':
+            return add_val(val)
+        else:
+            return
     elif field.endswith('_index'):
         func = process_series_index
+    elif field is 'size':
+        func = process_size
     ans = None
     if func:
         ans = func(field, fm, name, val)
@@ -184,10 +208,10 @@ def render_part(part, template, book_id, metadata):
     count = rendered_count = 0
     ans = E.div()
     ans.innerHTML = part
-    walk = document.createTreeWalker(ans, NodeFilter.SHOW_TEXT, None, False)
+    iterator = document.createNodeIterator(ans, NodeFilter.SHOW_TEXT)
     replacements = v'[]'
     while True:
-        n = walk.nextNode()
+        n = iterator.nextNode()
         if not n:
             break
         rendered = E.span()

@@ -1,165 +1,185 @@
-#!/usr/bin/env python2
+#!/usr/bin/env python
 # vim:fileencoding=utf-8
+#
+# 11 Jan 2021 -  L. Houpert - Major changes in the Mediapart recipe:
+#   1) Summary of the article are noow available
+#   2) Additional sections  International, France, Economie and Culture have
+# been added through custom entries in the function my_parse_index.
+#   3) Fix the cover image so it doesn't disappear from the Kindle menu
+# ( cover image format is changed to .jpeg)
+# 14 Jan 2021 - Add Mediapart Logo url as masthead_url and change cover
+#   by overlaying the date on top of the Mediapart cover
+# 22 Mar 2023 - Switch to Google feeds
+
 from __future__ import unicode_literals
 
 __license__ = 'GPL v3'
-__copyright__ = '2016, Daniel Bonnery ? (contact: DanielBonnery sur mobileread.com) 2009, Mathieu Godlewski <mathieu at godlewski.fr>; 2010-2012, Louis Gesbert <meta at antislash dot info>'  # noqa
+__copyright__ = '2021, Loïc Houpert <houpertloic at gmail .com>. Adapted from: 2016, Daniel Bonnery; 2009, Mathieu Godlewski; 2010-2012, Louis Gesbert'
 '''
 Mediapart
 '''
 
-import re
-from calibre.web.feeds.news import BasicNewsRecipe
-from calibre.web.feeds import feeds_from_index
-from datetime import date, timedelta
+from datetime import datetime, timedelta, timezone
+
+from calibre.ptempfile import PersistentTemporaryFile
+from calibre.web.feeds.news import BasicNewsRecipe, classes
 
 
 class Mediapart(BasicNewsRecipe):
     title = 'Mediapart'
-    __author__ = 'Daniel Bonnery from a version by Mathieu Godlewski, Louis Gesbert'
-    description = 'Global news in french from news site Mediapart'
+    __author__ = 'Loïc Houpert, unkn0wn'
+    description = 'Global news in French from news site Mediapart'
     publication_type = 'newspaper'
     language = 'fr'
     needs_subscription = True
-    oldest_article = 2
 
     use_embedded_content = False
     no_stylesheets = True
 
-    cover_url = 'https://static.mediapart.fr/files/M%20Philips/logo-mediapart.png'
-
-# --
-
-    oldest_article_date = date.today() - timedelta(days=oldest_article)
-
-# -- get the index (the feed at 'http://www.mediapart.fr/articles/feed' only has
-#    the 10 last elements :/)
-
-    feeds = [
-        ('La Une', 'http://www.mediapart.fr/articles/feed'),
+    keep_only_tags = [
+        classes(
+            'news__heading__top news__heading__center news__body__center__article'
+        )
     ]
 
-    def parse_feeds(self):
-        feeds = super(Mediapart, self).parse_feeds()
-        feeds += feeds_from_index(self.my_parse_index(feeds))
-        return feeds
-
-    def my_parse_index(self, la_une):
-        articles = []
-
-        breves = []
-        liens = []
-        confidentiels = []
-
-        soup = self.index_to_soup(
-            'https://www.mediapart.fr/journal/fil-dactualites')
-        page = soup.find('main', {'class': 'global-wrapper'})
-        fils = page.find('ul', {'class': 'post-list universe-journal'})
-
-        for article in fils.findAll('li'):
-            try:
-                title = article.find('h3', recursive=False)
-
-                if title is None or title['class'] == 'title-specific':
-                    continue
-
-                # print "found fil ",title
-                article_type = article.find('a', {'href': re.compile(
-                    r'.*\/type-darticles\/.*')}).renderContents()
-                # print "kind: ",article_type
-
-                for s in title('span'):
-                    s.replaceWith(s.renderContents() + "\n")
-                url = title.find('a', href=True)['href']
-
-                # article_date = self.parse_french_date(article.find("span", "article-date").renderContents())
-                # print("################################# 9")
-                # print(article_date)
-
-                # if article_date < self.oldest_article_date:
-                #    print "too old"
-                #    continue
-
-                authors = article.findAll(
-                    'a', {'class': re.compile(r'\bjournalist\b')})
-                authors = [self.tag_to_string(a) for a in authors]
-
-                # description = article.find('div', {'class': lambda c: c != 'taxonomy-teaser'}, recursive=False).findAll('p')
-
-                # print "fil ",title," by ",authors," : ",description
-
-                summary = {
-                    'title': self.tag_to_string(title).strip(),
-                    'author': ', '.join(authors),
-                    'url': 'https://www.mediapart.fr' + url
-                }
-                if article_type == 'Lien':
-                    liens.append(summary)
-                if article_type == 'Confidentiel':
-                    confidentiels.append(summary)
-                if article_type not in ['Lien', 'Confidentiel']:
-                    breves.append(summary)
-            except:
-                pass
-
-        # print 'La Une: ', len(la_une), ' articles'
-        # for a in la_une: print a["title"]
-        # print 'Brèves: ', len(breves), ' articles'
-        # print 'Revue web: ', len(liens), ' articles'
-        # print 'Confidentiel: ', len(confidentiels), ' articles'
-
-        articles += [('Brèves', breves)] if breves else []
-        articles += [('Revue du Web', liens)] if liens else []
-        articles += [('Confidentiel', confidentiels)] if confidentiels else []
-        return articles
-# -- print-version
+    remove_tags = [
+        classes('action-links media--rich read-also login-subscribe print-source_url screen-reader-only'),
+        dict(name='svg'),
+    ]
 
     conversion_options = {'smarten_punctuation': True}
 
-    remove_tags = [dict(name='div', attrs={'class': 'print-source_url'})]
+    masthead_url = 'https://raw.githubusercontent.com/lhoupert/calibre_contrib/main/mediapart_masthead.png'
 
-    # non-locale specific date parse (strptime("%d %b %Y",s) would work with
-    # french locale)
-    def parse_french_date(self, date_str):
-        date_arr = date_str.lower().split()
-        return date(day=int(date_arr[0]),
-                    year=int(date_arr[2]),
-                    month=[None, 'janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet',
-                           'août', 'septembre', 'octobre', 'novembre', 'décembre'].index(date_arr[1]))
+    ignore_duplicate_articles = {'title'}
+    resolve_internal_links  = True
+    remove_empty_feeds = True
 
-    def print_version(self, url):
+    articles_are_obfuscated = True
+
+    def get_obfuscated_article(self, url):
+        br = self.get_browser()
+        try:
+            br.open(url)
+        except Exception as e:
+            url = e.hdrs.get('location')
         soup = self.index_to_soup(url)
-        # Filter old articles
-        # article_date = self.parse_french_date(self.tag_to_string(soup.find('span', 'article-date')))
+        link = soup.find('a', href=True)
+        skip_sections =[  # add sections you want to skip
+            '/video/', '/videos/', '/media/'
+        ]
+        if any(x in link['href'] for x in skip_sections):
+            self.log('Aborting Article ', link['href'])
+            self.abort_article('skipping video links')
 
-        # if article_date < self.oldest_article_date:
-        #     return None
+        self.log('Downloading ', link['href'])
+        html = br.open(link['href']).read()
+        pt = PersistentTemporaryFile('.html')
+        pt.write(html)
+        pt.close()
+        return pt.name
 
-        tools = soup.find('li', {'class': 'print'})
-        link = tools.find('a', {'href': re.compile(r'\/print\/.*')})
-        # if link is None:
-        #    print 'Error: print link not found'
-        #    return None
-        return 'https://mediapart.fr' + link['href']
+    feeds = []
 
-# -- Handle login
+    sections = [
+        'france', 'international', 'economie', 'culture-et-idees', 'politique', 'ecologie', 'fil-dactualites'
+    ]
+
+    mediapart_feed = 'https://www.mediapart.fr/articles/feed'
+    for sec in sections:
+        feeds.append((sec.capitalize(), mediapart_feed))
+    feeds.append(('Autres', mediapart_feed))
+
+    def parse_feeds(self):
+        feeds = BasicNewsRecipe.parse_feeds(self)
+        for feed in feeds:
+            feed_name = feed.title.lower()
+            for article in feed.articles:
+                if feed_name != 'autres' and feed_name not in article.url:
+                    feed.articles.remove(article)
+                if feed_name == 'autres' and any(section in article.url for section in self.sections):
+                    feed.articles.remove(article)
+
+        return feeds
+
     def get_browser(self):
-        def is_form_login(form):
-            return "id" in form.attrs and form.attrs['id'] == "logFormEl"
+        # -- Handle login
         br = BasicNewsRecipe.get_browser(self)
         if self.username is not None and self.password is not None:
             br.open('https://www.mediapart.fr/login')
-            br.select_form(predicate=is_form_login)
-            br['name'] = self.username
+            br.select_form(nr=0)
+            br['email'] = self.username
             br['password'] = self.password
             br.submit()
+
         return br
 
-    # This is a workaround articles with scribd content that include
-    # <body></body> tags _within_ the body
-    preprocess_regexps = [
-        (re.compile(r'(<body.*?>)(.*)</body>', re.IGNORECASE | re.DOTALL),
-         lambda match:
-             match.group(1) + re.sub(
-                 re.compile(r'</?body>', re.IGNORECASE | re.DOTALL), '', match.group(2)) + '</body>')
-    ]
+    def default_cover(self, cover_file):
+        '''
+        Create a generic cover for recipes that don't have a cover
+        '''
+        from qt.core import QFont, QImage, QPainter, QPen, QRect, Qt
+
+        from calibre.gui2 import ensure_app, load_builtin_fonts, pixmap_to_data
+
+        def init_environment():
+            ensure_app()
+            load_builtin_fonts()
+
+        def create_cover_mediapart(date):
+            ' Create a cover for mediapart adding the date on Mediapart Cover'
+            init_environment()
+            # Get data
+            image_url = 'https://raw.githubusercontent.com/lhoupert/calibre_contrib/main/mediapart.jpeg'
+            data = self.index_to_soup(image_url, raw=True)
+            # Get date and hour corresponding to french time zone
+            today = datetime.now(timezone.utc) + timedelta(hours=1)
+            wkd = today.weekday()
+            french_weekday={0:'Mon',1:'Mar',2:'Mer',3:'Jeu',4:'Ven',5:'Sam',6:'Dim'}
+            day = french_weekday[wkd]+'.'
+            date = day + ' ' + today.strftime('%d %b. %Y')
+            edition = today.strftime('Édition de %Hh')
+
+            # Get Cover data
+            img  = QImage()
+            img.loadFromData(data)
+
+            # Overlay date on cover
+            p = QPainter(img)
+            pen = QPen(Qt.black)
+            pen.setWidth(6)
+            p.setPen(pen)
+            font = QFont()
+            font.setFamily('Times')
+            font.setPointSize(72)
+            p.setFont(font)
+            r = QRect(0, 600, 744,100)
+            p.drawText(r, Qt.AlignmentFlag.AlignJustify | Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignCenter, date)
+            p.end()
+
+            # Overlay edition information on cover
+            p = QPainter(img)
+            pen = QPen(Qt.black)
+            pen.setWidth(4)
+            p.setPen(pen)
+            font = QFont()
+            font.setFamily('Times')
+            font.setItalic(True)
+            font.setPointSize(66)
+            p.setFont(font)
+            # Add date
+            r = QRect(0, 720, 744,100)
+            p.drawText(r, Qt.AlignmentFlag.AlignJustify | Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignCenter, edition)
+            p.end()
+            return pixmap_to_data(img)
+
+        try:
+            today=datetime.today()
+            date = today.strftime('%d %b %Y')
+            img_data = create_cover_mediapart(date)
+            cover_file.write(img_data)
+            cover_file.flush()
+        except Exception:
+            self.log.exception('Failed to generate default cover')
+            return False
+        return True

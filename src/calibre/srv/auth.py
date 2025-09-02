@@ -1,27 +1,29 @@
-#!/usr/bin/env python2
-# vim:fileencoding=utf-8
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
+#!/usr/bin/env python
+
 
 __license__ = 'GPL v3'
 __copyright__ = '2015, Kovid Goyal <kovid at kovidgoyal.net>'
 
-import binascii, os, random, struct, base64, httplib
+import os
+import random
+import struct
 from collections import OrderedDict
 from hashlib import md5, sha256
 from itertools import permutations
 from threading import Lock
 
-from calibre.srv.errors import HTTPAuthRequired, HTTPSimpleResponse, HTTPForbidden
+from calibre.srv.errors import HTTPAuthRequired, HTTPForbidden, HTTPSimpleResponse
 from calibre.srv.http_request import parse_uri
-from calibre.srv.utils import parse_http_dict, encode_path
+from calibre.srv.utils import encode_path, parse_http_dict
 from calibre.utils.monotonic import monotonic
+from polyglot import http_client
+from polyglot.binary import as_hex_unicode, from_base64_unicode, from_hex_bytes
 
 MAX_AGE_SECONDS = 3600
 nonce_counter, nonce_counter_lock = 0, Lock()
 
 
-class BanList(object):
+class BanList:
 
     def __init__(self, ban_time_in_minutes=0, max_failures_before_ban=5):
         self.interval = max(0, ban_time_in_minutes) * 60
@@ -66,16 +68,22 @@ def as_bytestring(x):
     return x
 
 
+def as_unicodestring(x):
+    if isinstance(x, bytes):
+        x = x.decode('utf-8')
+    return x
+
+
 def md5_hex(s):
-    return md5(as_bytestring(s)).hexdigest().decode('ascii')
+    return as_unicodestring(md5(as_bytestring(s)).hexdigest())
 
 
 def sha256_hex(s):
-    return sha256(as_bytestring(s)).hexdigest().decode('ascii')
+    return as_unicodestring(sha256(as_bytestring(s)).hexdigest())
 
 
 def base64_decode(s):
-    return base64.standard_b64decode(as_bytestring(s)).decode('utf-8')
+    return from_base64_unicode(s)
 
 
 def synthesize_nonce(key_order, realm, secret, timestamp=None):
@@ -92,7 +100,7 @@ def synthesize_nonce(key_order, realm, secret, timestamp=None):
             # The resolution of monotonic() on windows is very low (10s of
             # milliseconds) so to ensure nonce values are not re-used, we have a
             # global counter
-            timestamp = binascii.hexlify(struct.pack(b'!dH', float(monotonic()), nonce_counter))
+            timestamp = as_hex_unicode(struct.pack(b'!dH', float(monotonic()), nonce_counter))
     h = sha256_hex(key_order.format(timestamp, realm, secret))
     nonce = ':'.join((timestamp, h))
     return nonce
@@ -106,14 +114,14 @@ def validate_nonce(key_order, nonce, realm, secret):
 
 def is_nonce_stale(nonce, max_age_seconds=MAX_AGE_SECONDS):
     try:
-        timestamp = struct.unpack(b'!dH', binascii.unhexlify(as_bytestring(nonce.partition(':')[0])))[0]
+        timestamp = struct.unpack(b'!dH', from_hex_bytes(as_bytestring(nonce.partition(':')[0])))[0]
         return timestamp + max_age_seconds < monotonic()
     except Exception:
         pass
     return True
 
 
-class DigestAuth(object):  # {{{
+class DigestAuth:  # {{{
 
     valid_algorithms = {'MD5', 'MD5-SESS'}
     valid_qops = {'auth', 'auth-int'}
@@ -133,25 +141,25 @@ class DigestAuth(object):  # {{{
         self.nonce_count = data.get('nc')
 
         if self.algorithm not in self.valid_algorithms:
-            raise HTTPSimpleResponse(httplib.BAD_REQUEST, 'Unsupported digest algorithm')
+            raise HTTPSimpleResponse(http_client.BAD_REQUEST, 'Unsupported digest algorithm')
 
         if not (self.username and self.realm and self.nonce and self.uri and self.response):
-            raise HTTPSimpleResponse(httplib.BAD_REQUEST, 'Digest algorithm required fields missing')
+            raise HTTPSimpleResponse(http_client.BAD_REQUEST, 'Digest algorithm required fields missing')
 
         if self.qop:
             if self.qop not in self.valid_qops:
-                raise HTTPSimpleResponse(httplib.BAD_REQUEST, 'Unsupported digest qop')
+                raise HTTPSimpleResponse(http_client.BAD_REQUEST, 'Unsupported digest qop')
             if not (self.cnonce and self.nonce_count):
-                raise HTTPSimpleResponse(httplib.BAD_REQUEST, 'qop present, but cnonce and nonce_count absent')
+                raise HTTPSimpleResponse(http_client.BAD_REQUEST, 'qop present, but cnonce and nonce_count absent')
         else:
             if self.cnonce or self.nonce_count:
-                raise HTTPSimpleResponse(httplib.BAD_REQUEST, 'qop missing')
+                raise HTTPSimpleResponse(http_client.BAD_REQUEST, 'qop missing')
 
     def H(self, val):
         return md5_hex(val)
 
     def H_A2(self, data):
-        """Returns the H(A2) string. See :rfc:`2617` section 3.2.2.3."""
+        '''Returns the H(A2) string. See :rfc:`2617` section 3.2.2.3.'''
         # RFC 2617 3.2.2.3
         # If the "qop" directive's value is "auth" or is unspecified,
         # then A2 is:
@@ -159,10 +167,10 @@ class DigestAuth(object):  # {{{
         #
         # If the "qop" value is "auth-int", then A2 is:
         #    A2 = method ":" digest-uri-value ":" H(entity-body)
-        if self.qop == "auth-int":
-            a2 = "%s:%s:%s" % (data.method, self.uri, self.H(data.peek()))
+        if self.qop == 'auth-int':
+            a2 = f'{data.method}:{self.uri}:{self.H(data.peek())}'
         else:
-            a2 = '%s:%s' % (data.method, self.uri)
+            a2 = f'{data.method}:{self.uri}'
         return self.H(a2)
 
     def request_digest(self, pw, data):
@@ -170,10 +178,9 @@ class DigestAuth(object):  # {{{
         ha2 = self.H_A2(data)
         # Request-Digest -- RFC 2617 3.2.2.1
         if self.qop:
-            req = "%s:%s:%s:%s:%s" % (
-                self.nonce, self.nonce_count, self.cnonce, self.qop, ha2)
+            req = f'{self.nonce}:{self.nonce_count}:{self.cnonce}:{self.qop}:{ha2}'
         else:
-            req = "%s:%s" % (self.nonce, ha2)
+            req = f'{self.nonce}:{ha2}'
 
         # RFC 2617 3.2.2.2
         #
@@ -187,27 +194,25 @@ class DigestAuth(object):  # {{{
         # A1 = H( unq(username-value) ":" unq(realm-value) ":" passwd )
         #         ":" unq(nonce-value) ":" unq(cnonce-value)
         if self.algorithm == 'MD5-SESS':
-            ha1 = self.H('%s:%s:%s' % (ha1, self.nonce, self.cnonce))
+            ha1 = self.H(f'{ha1}:{self.nonce}:{self.cnonce}')
 
-        return self.H('%s:%s' % (ha1, req))
+        return self.H(f'{ha1}:{req}')
 
     def validate_request(self, pw, data, log=None):
         # We should also be checking for replay attacks by using nonce_count,
-        # however, various HTTP clients, most prominently Firefox dont
+        # however, various HTTP clients, most prominently Firefox don't
         # implement nonce-counts correctly, so we cannot do the check.
         # https://bugzil.la/114451
         path = parse_uri(self.uri.encode('utf-8'))[1]
         if path != data.path:
             if log is not None:
-                log.warn('Authorization URI mismatch: %s != %s from client: %s' % (
-                    data.path, path, data.remote_addr))
-            raise HTTPSimpleResponse(httplib.BAD_REQUEST, 'The uri in the Request Line and the Authorization header do not match')
+                log.warn(f'Authorization URI mismatch: {data.path} != {path} from client: {data.remote_addr}')
+            raise HTTPSimpleResponse(http_client.BAD_REQUEST, 'The uri in the Request Line and the Authorization header do not match')
         return self.response is not None and data.path == path and self.request_digest(pw, data) == self.response
 # }}}
 
 
-class AuthController(object):
-
+class AuthController:
     '''
     Implement Basic/Digest authentication for the Content server. Android browsers
     cannot handle HTTP AUTH when downloading files, as the download is handed
@@ -241,9 +246,9 @@ class AuthController(object):
         self.user_credentials, self.prefer_basic_auth = user_credentials, prefer_basic_auth
         self.ban_list = BanList(ban_time_in_minutes=ban_time_in_minutes, max_failures_before_ban=ban_after)
         self.log = log
-        self.secret = binascii.hexlify(os.urandom(random.randint(20, 30))).decode('ascii')
+        self.secret = as_hex_unicode(os.urandom(random.randint(20, 30)))
         self.max_age_seconds = max_age_seconds
-        self.key_order = '{%d}:{%d}:{%d}' % random.choice(tuple(permutations((0,1,2))))
+        self.key_order = '{%d}:{%d}:{%d}' % random.choice(tuple(permutations((0,1,2))))  # noqa: UP031
         self.realm = realm
         if '"' in realm:
             raise ValueError('Double-quotes are not allowed in the authentication realm')
@@ -266,7 +271,7 @@ class AuthController(object):
     def do_http_auth(self, data, endpoint):
         ban_key = data.remote_addr, data.forwarded_for
         if self.ban_list.is_banned(ban_key):
-            raise HTTPForbidden('Too many login attempts', log='Too many login attempts from: %s' % (ban_key if data.forwarded_for else data.remote_addr))
+            raise HTTPForbidden('Too many login attempts', log=f'Too many login attempts from: {ban_key if data.forwarded_for else data.remote_addr}')
         auth = data.inheaders.get('Authorization')
         nonce_is_stale = False
         log_msg = None
@@ -284,28 +289,27 @@ class AuthController(object):
                         if not nonce_is_stale:
                             data.username = da.username
                             return
-                log_msg = 'Failed login attempt from: %s' % data.remote_addr
+                log_msg = f'Failed login attempt from: {data.remote_addr}'
                 self.ban_list.failed(ban_key)
             elif self.prefer_basic_auth and scheme == 'basic':
                 try:
                     un, pw = base64_decode(rest.strip()).partition(':')[::2]
                 except ValueError:
-                    raise HTTPSimpleResponse(httplib.BAD_REQUEST, 'The username or password contained non-UTF8 encoded characters')
+                    raise HTTPSimpleResponse(http_client.BAD_REQUEST, 'The username or password contained non-UTF8 encoded characters')
                 if not un or not pw:
-                    raise HTTPSimpleResponse(httplib.BAD_REQUEST, 'The username or password was empty')
+                    raise HTTPSimpleResponse(http_client.BAD_REQUEST, 'The username or password was empty')
                 if self.check(un, pw):
                     data.username = un
                     return
-                log_msg = 'Failed login attempt from: %s' % data.remote_addr
+                log_msg = f'Failed login attempt from: {data.remote_addr}'
                 self.ban_list.failed(ban_key)
             else:
-                raise HTTPSimpleResponse(httplib.BAD_REQUEST, 'Unsupported authentication method')
+                raise HTTPSimpleResponse(http_client.BAD_REQUEST, 'Unsupported authentication method')
 
         if self.prefer_basic_auth:
-            raise HTTPAuthRequired('Basic realm="%s"' % self.realm, log=log_msg)
+            raise HTTPAuthRequired(f'Basic realm="{self.realm}"', log=log_msg)
 
-        s = 'Digest realm="%s", nonce="%s", algorithm="MD5", qop="auth"' % (
-            self.realm, synthesize_nonce(self.key_order, self.realm, self.secret))
+        s = f'Digest realm="{self.realm}", nonce="{synthesize_nonce(self.key_order, self.realm, self.secret)}", algorithm="MD5", qop="auth"'
         if nonce_is_stale:
             s += ', stale="true"'
         raise HTTPAuthRequired(s, log=log_msg)

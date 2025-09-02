@@ -1,13 +1,13 @@
-#!/usr/bin/env  python2
+#!/usr/bin/env python
+
+
 __license__   = 'GPL v3'
 __copyright__ = '2009, Kovid Goyal kovid@kovidgoyal.net'
 __docformat__ = 'restructuredtext en'
 
-from PyQt5.Qt import (
-    QDialog, pyqtSignal, Qt, QVBoxLayout, QLabel, QFont, QProgressBar,
-    QDialogButtonBox, QApplication, QFontMetrics, QHBoxLayout, QIcon)
+from qt.core import QApplication, QDialog, QDialogButtonBox, QFont, QFontMetrics, QHBoxLayout, QIcon, QLabel, QProgressBar, QSize, Qt, QVBoxLayout, pyqtSignal
 
-from calibre.gui2 import elided_text
+from calibre.gui2 import elided_text, question_dialog
 from calibre.gui2.progress_indicator import ProgressIndicator
 
 
@@ -15,24 +15,25 @@ class ProgressDialog(QDialog):
 
     canceled_signal = pyqtSignal()
 
-    def __init__(self, title, msg=u'\u00a0', min=0, max=99, parent=None, cancelable=True, icon=None):
+    def __init__(self, title, msg='\u00a0', min=0, max=99, parent=None, cancelable=True, icon=None, cancel_confirm_msg=''):
         QDialog.__init__(self, parent)
+        self.cancel_confirm_msg = cancel_confirm_msg
         if icon is None:
             self.l = l = QVBoxLayout(self)
         else:
             self.h = h = QHBoxLayout(self)
             self.icon = i = QLabel(self)
             if not isinstance(icon, QIcon):
-                icon = QIcon(I(icon))
+                icon = QIcon.ic(icon)
             i.setPixmap(icon.pixmap(64))
-            h.addWidget(i, alignment=Qt.AlignTop | Qt.AlignHCenter)
+            h.addWidget(i, alignment=Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
             self.l = l = QVBoxLayout()
             h.addLayout(l)
             self.setWindowIcon(icon)
 
         self.title_label = t = QLabel(title)
         self.setWindowTitle(title)
-        t.setStyleSheet('QLabel { font-weight: bold }'), t.setAlignment(Qt.AlignCenter), t.setTextFormat(Qt.PlainText)
+        t.setStyleSheet('QLabel { font-weight: bold }'), t.setAlignment(Qt.AlignmentFlag.AlignCenter), t.setTextFormat(Qt.TextFormat.PlainText)
         l.addWidget(t)
 
         self.bar = b = QProgressBar(self)
@@ -41,15 +42,15 @@ class ProgressDialog(QDialog):
 
         self.message = m = QLabel(self)
         fm = QFontMetrics(self.font())
-        m.setAlignment(Qt.AlignCenter), m.setMinimumWidth(fm.averageCharWidth() * 80), m.setTextFormat(Qt.PlainText)
+        m.setAlignment(Qt.AlignmentFlag.AlignCenter), m.setMinimumWidth(fm.averageCharWidth() * 80), m.setTextFormat(Qt.TextFormat.PlainText)
         l.addWidget(m)
         self.msg = msg
 
-        self.button_box = bb = QDialogButtonBox(QDialogButtonBox.Abort, self)
+        self.button_box = bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Abort, self)
         bb.rejected.connect(self._canceled)
         l.addWidget(bb)
 
-        self.setWindowModality(Qt.ApplicationModal)
+        self.setWindowModality(Qt.WindowModality.ApplicationModal)
         self.canceled = False
 
         if not cancelable:
@@ -63,14 +64,13 @@ class ProgressDialog(QDialog):
     def set_value(self, val):
         self.value = val
 
-    @dynamic_property
+    @property
     def value(self):
-        def fset(self, val):
-            return self.bar.setValue(val)
+        return self.bar.value()
 
-        def fget(self):
-            return self.bar.value()
-        return property(fget=fget, fset=fset)
+    @value.setter
+    def value(self, val):
+        self.bar.setValue(val)
 
     def set_min(self, min):
         self.min = min
@@ -78,44 +78,46 @@ class ProgressDialog(QDialog):
     def set_max(self, max):
         self.max = max
 
-    @dynamic_property
+    @property
     def max(self):
-        def fget(self):
-            return self.bar.maximum()
+        return self.bar.maximum()
 
-        def fset(self, val):
-            self.bar.setMaximum(val)
-        return property(fget=fget, fset=fset)
+    @max.setter
+    def max(self, val):
+        self.bar.setMaximum(val)
 
-    @dynamic_property
+    @property
     def min(self):
-        def fget(self):
-            return self.bar.minimum()
+        return self.bar.minimum()
 
-        def fset(self, val):
-            self.bar.setMinimum(val)
-        return property(fget=fget, fset=fset)
+    @min.setter
+    def min(self, val):
+        self.bar.setMinimum(val)
 
-    @dynamic_property
+    @property
     def title(self):
-        def fget(self):
-            return self.title_label.text()
+        return self.title_label.text()
 
-        def fset(self, val):
-            self.title_label.setText(unicode(val or ''))
-        return property(fget=fget, fset=fset)
+    @title.setter
+    def title(self, val):
+        self.title_label.setText(str(val or ''))
 
-    @dynamic_property
+    @property
     def msg(self):
-        def fget(self):
-            return self.message.text()
+        return self.message.text()
 
-        def fset(self, val):
-            val = unicode(val or '')
-            self.message.setText(elided_text(val, self.font(), self.message.minimumWidth()-10))
-        return property(fget=fget, fset=fset)
+    @msg.setter
+    def msg(self, val):
+        val = str(val or '')
+        self.message.setText(elided_text(val, self.font(), self.message.minimumWidth()-10))
 
     def _canceled(self, *args):
+        if self.cancel_confirm_msg:
+            if not question_dialog(
+                self, _('Are you sure?'), self.cancel_confirm_msg, override_icon='dialog_warning.png',
+                yes_text=_('Yes, abort'), no_text=_('No, keep copying')
+            ):
+                return
         self.canceled = True
         self.button_box.setDisabled(True)
         self.title = _('Aborting...')
@@ -127,7 +129,7 @@ class ProgressDialog(QDialog):
         QDialog.reject(self)
 
     def keyPressEvent(self, ev):
-        if ev.key() == Qt.Key_Escape:
+        if ev.key() == Qt.Key.Key_Escape:
             if self.cancelable:
                 self._canceled()
         else:
@@ -147,10 +149,10 @@ class BlockingBusy(QDialog):
         self.font.setPointSize(self.font.pointSize() + 8)
         self.msg.setFont(self.font)
         self.pi = ProgressIndicator(self)
-        self.pi.setDisplaySize(100)
-        self._layout.addWidget(self.pi, 0, Qt.AlignHCenter)
+        self.pi.setDisplaySize(QSize(100, 100))
+        self._layout.addWidget(self.pi, 0, Qt.AlignmentFlag.AlignHCenter)
         self._layout.addSpacing(15)
-        self._layout.addWidget(self.msg, 0, Qt.AlignHCenter)
+        self._layout.addWidget(self.msg, 0, Qt.AlignmentFlag.AlignHCenter)
         self.start()
         self.setWindowTitle(window_title)
         self.resize(self.sizeHint())
@@ -168,10 +170,11 @@ class BlockingBusy(QDialog):
     def reject(self):
         pass  # Cannot cancel this dialog
 
+
 if __name__ == '__main__':
-    from PyQt5.Qt import QTimer
+    from qt.core import QTimer
     app = QApplication([])
     d = ProgressDialog('A title', 'A message', icon='lt.png')
     d.show(), d.canceled_signal.connect(app.quit)
-    QTimer.singleShot(1000, lambda : (setattr(d, 'value', 10), setattr(d, 'msg', ('A message ' * 100))))
-    app.exec_()
+    QTimer.singleShot(1000, lambda: (setattr(d, 'value', 10), setattr(d, 'msg', ('A message ' * 100))))
+    app.exec()

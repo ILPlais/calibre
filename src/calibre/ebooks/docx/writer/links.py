@@ -1,16 +1,17 @@
-#!/usr/bin/env python2
-# vim:fileencoding=utf-8
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
+#!/usr/bin/env python
+
 
 __license__ = 'GPL v3'
 __copyright__ = '2015, Kovid Goyal <kovid at kovidgoyal.net>'
 
-import posixpath, re
+import posixpath
+import re
 from uuid import uuid4
-from urlparse import urlparse
 
+from calibre.ebooks.oeb.base import urlquote
 from calibre.utils.filenames import ascii_text
+from calibre.utils.localization import __
+from polyglot.urllib import urlparse
 
 
 def start_text(tag, prefix_len=0, top_level=True):
@@ -26,7 +27,7 @@ def start_text(tag, prefix_len=0, top_level=True):
     return ans
 
 
-class TOCItem(object):
+class TOCItem:
 
     def __init__(self, title, bmark, level):
         self.title, self.bmark, self.level = title, bmark, level
@@ -35,14 +36,14 @@ class TOCItem(object):
     def serialize(self, body, makeelement):
         p = makeelement(body, 'w:p', append=False)
         ppr = makeelement(p, 'w:pPr')
-        makeelement(ppr, 'w:pStyle', w_val="Normal")
+        makeelement(ppr, 'w:pStyle', w_val='Normal')
         makeelement(ppr, 'w:ind', w_left='0', w_firstLineChars='0', w_firstLine='0', w_leftChars=str(200 * self.level))
         if self.is_first:
             makeelement(ppr, 'w:pageBreakBefore', w_val='off')
             r = makeelement(p, 'w:r')
             makeelement(r, 'w:fldChar', w_fldCharType='begin')
             r = makeelement(p, 'w:r')
-            makeelement(r, 'w:instrText').text = ' TOC \h '
+            makeelement(r, 'w:instrText').text = r' TOC \h '
             r[0].set('{http://www.w3.org/XML/1998/namespace}space', 'preserve')
             r = makeelement(p, 'w:r')
             makeelement(r, 'w:fldChar', w_fldCharType='separate')
@@ -64,13 +65,13 @@ def sanitize_bookmark_name(base):
     return re.sub(r'[^0-9a-zA-Z]', '_', ascii_text(base))[:32].rstrip('_')
 
 
-class LinksManager(object):
+class LinksManager:
 
     def __init__(self, namespace, document_relationships, log):
         self.namespace = namespace
         self.log = log
         self.document_relationships = document_relationships
-        self.top_anchor = type('')(uuid4().hex)
+        self.top_anchor = str(uuid4().hex)
         self.anchor_map = {}
         self.used_bookmark_names = set()
         self.bmark_id = 0
@@ -83,7 +84,7 @@ class LinksManager(object):
         if key in self.anchor_map:
             return self.anchor_map[key]
         if anchor == self.top_anchor:
-            name = ('Top of %s' % posixpath.basename(current_item.href))
+            name = (f'Top of {posixpath.basename(current_item.href)}')
             self.document_hrefs.add(current_item.href)
         else:
             name = start_text(html_tag).strip() or anchor
@@ -91,7 +92,7 @@ class LinksManager(object):
         i, bname = 0, name
         while name in self.used_bookmark_names:
             i += 1
-            name  = bname + ('_%d' % i)
+            name  = bname + f'_{i}'
         self.anchor_map[key] = name
         self.used_bookmark_names.add(name)
         return name
@@ -118,6 +119,8 @@ class LinksManager(object):
 
         if not purl.scheme:
             href = item.abshref(href)
+            if href not in self.document_hrefs:
+                href = urlquote(href)
             if href in self.document_hrefs:
                 key = (href, purl.fragment or self.top_anchor)
                 if key in self.anchor_map:
@@ -126,7 +129,7 @@ class LinksManager(object):
                     bmark = self.anchor_map[(href, self.top_anchor)]
                 return make_link(parent, anchor=bmark, tooltip=tooltip)
             else:
-                self.log.warn('Ignoring internal hyperlink with href (%s) pointing to unknown destination' % url)
+                self.log.warn(f'Ignoring internal hyperlink with href ({url}) pointing to unknown destination')
         if purl.scheme in {'http', 'https', 'ftp'}:
             if url not in self.external_links:
                 self.external_links[url] = self.document_relationships.add_relationship(url, self.namespace.names['LINKS'], target_mode='External')
@@ -161,7 +164,7 @@ class LinksManager(object):
 
     def serialize_toc(self, body, primary_heading_style):
         pbb = body[0].xpath('//*[local-name()="pageBreakBefore"]')[0]
-        pbb.set('{%s}val' % self.namespace.namespaces['w'], 'on')
+        pbb.set('{{{}}}val'.format(self.namespace.namespaces['w']), 'on')
         for block in reversed(self.toc):
             block.serialize(body, self.namespace.makeelement)
         title = __('Table of Contents')

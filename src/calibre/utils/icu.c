@@ -1,5 +1,7 @@
 #include "icu_calibre_utils.h"
 
+#include <stdbool.h>
+
 #define UPPER_CASE 0
 #define LOWER_CASE 1
 #define TITLE_CASE 2
@@ -28,6 +30,7 @@ typedef struct {
     // Type-specific fields go here.
     UCollator *collator;
     USet *contractions;
+    UBreakIterator *word_iterator;
 
 } icu_Collator;
 
@@ -36,8 +39,10 @@ icu_Collator_dealloc(icu_Collator* self)
 {
     if (self->collator != NULL) ucol_close(self->collator);
     if (self->contractions != NULL) uset_close(self->contractions);
-    self->collator = NULL;
-    self->ob_type->tp_free((PyObject*)self);
+    if (self->word_iterator) ubrk_close(self->word_iterator);
+    self->collator = NULL; self->contractions = NULL;
+    self->word_iterator = NULL;
+    Py_TYPE(self)->tp_free((PyObject*)self);
 }
 
 static PyObject *
@@ -59,6 +64,7 @@ icu_Collator_new(PyTypeObject *type, PyObject *args, PyObject *kwds)
     if (self != NULL) {
         self->collator = collator;
         self->contractions = NULL;
+        self->word_iterator = NULL;
     }
 
     return (PyObject *)self;
@@ -92,11 +98,11 @@ icu_Collator_get_strength(icu_Collator *self, void *closure) {
 
 static int
 icu_Collator_set_strength(icu_Collator *self, PyObject *val, void *closure) {
-    if (!PyInt_Check(val)) {
+    if (PyLong_Check(val)) ucol_setStrength(self->collator, (int)PyLong_AsLong(val));
+    else {
         PyErr_SetString(PyExc_TypeError, "Strength must be an integer.");
         return -1;
     }
-    ucol_setStrength(self->collator, (int)PyInt_AS_LONG(val));
     return 0;
 }
 // }}}
@@ -112,6 +118,25 @@ static int
 icu_Collator_set_numeric(icu_Collator *self, PyObject *val, void *closure) {
     UErrorCode status = U_ZERO_ERROR;
     ucol_setAttribute(self->collator, UCOL_NUMERIC_COLLATION, (PyObject_IsTrue(val)) ? UCOL_ON : UCOL_OFF, &status);
+    return 0;
+}
+// }}}
+
+// Collator.numeric {{{
+static PyObject *
+icu_Collator_get_max_variable(icu_Collator *self, void *closure) {
+    return Py_BuildValue("i", ucol_getMaxVariable(self->collator));
+}
+
+static int
+icu_Collator_set_max_variable(icu_Collator *self, PyObject *val, void *closure) {
+    int group = PyLong_AsLong(val);
+    UErrorCode status = U_ZERO_ERROR;
+    ucol_setMaxVariable(self->collator, group, &status);
+    if (U_FAILURE(status)) {
+        PyErr_SetString(PyExc_ValueError, u_errorName(status));
+        return -1;
+    }
     return 0;
 }
 // }}}
@@ -189,36 +214,51 @@ end:
 } // }}}
 
 // Collator.find {{{
+
+static void
+create_word_iterator(icu_Collator *self) {
+    if (self->word_iterator) return;
+    UErrorCode status = U_ZERO_ERROR;
+    const char *loc = ucol_getLocaleByType(self->collator, ULOC_VALID_LOCALE, &status);
+    if (U_FAILURE(status) || !loc) {
+        PyErr_SetString(PyExc_ValueError, "Failed to get locale for collator");
+        return;
+    }
+    self->word_iterator = ubrk_open(UBRK_WORD, loc, NULL, -1, &status);
+    if (U_FAILURE(status) || !self->word_iterator) {
+        PyErr_SetString(PyExc_ValueError, "Failed to create word break iterator for collator");
+        return;
+    }
+}
+
 static PyObject *
 icu_Collator_find(icu_Collator *self, PyObject *args) {
-#if PY_VERSION_HEX >= 0x03030000
-#error Not implemented for python >= 3.3
-#endif
     PyObject *a_ = NULL, *b_ = NULL;
     UChar *a = NULL, *b = NULL;
     int32_t asz = 0, bsz = 0, pos = -1, length = -1;
     UErrorCode status = U_ZERO_ERROR;
     UStringSearch *search = NULL;
+    int whole_words = 0;
 
-    if (!PyArg_ParseTuple(args, "OO", &a_, &b_)) return NULL;
+    if (!PyArg_ParseTuple(args, "UU|p", &a_, &b_, &whole_words)) return NULL;
+    if (whole_words) create_word_iterator(self);
+    if (PyErr_Occurred()) return NULL;
 
     a = python_to_icu(a_, &asz);
     if (a == NULL) goto end;
     b = python_to_icu(b_, &bsz);
     if (b == NULL) goto end;
 
-    search = usearch_openFromCollator(a, asz, b, bsz, self->collator, NULL, &status);
+    search = usearch_openFromCollator(a, asz, b, bsz, self->collator, whole_words ? self->word_iterator : NULL, &status);
     if (U_SUCCESS(status)) {
         pos = usearch_first(search, &status);
         if (pos != USEARCH_DONE) {
             length = usearch_getMatchedLength(search);
-#ifdef Py_UNICODE_WIDE
             // We have to return number of unicode characters since the string
             // could contain surrogate pairs which are represented as a single
             // character in python wide builds
             length = u_countChar32(b + pos, length);
             pos = u_countChar32(b, pos);
-#endif
         } else pos = -1;
     }
 end:
@@ -227,6 +267,47 @@ end:
     if (b != NULL) free(b);
 
     return (PyErr_Occurred()) ? NULL : Py_BuildValue("ll", (long)pos, (long)length);
+} // }}}
+
+// Collator.find_all {{{
+static PyObject *
+icu_Collator_find_all(icu_Collator *self, PyObject *args) {
+    PyObject *a_ = NULL, *b_ = NULL, *callback;
+    UChar *a = NULL, *b = NULL;
+    int32_t asz = 0, bsz = 0, pos = -1, length = -1;
+    UErrorCode status = U_ZERO_ERROR;
+    UStringSearch *search = NULL;
+    int whole_words = 0;
+
+    if (!PyArg_ParseTuple(args, "UUO|p", &a_, &b_, &callback, &whole_words)) return NULL;
+    if (whole_words) create_word_iterator(self);
+    if (PyErr_Occurred()) return NULL;
+
+    a = python_to_icu(a_, &asz);
+    b = python_to_icu(b_, &bsz);
+    if (a && b) {
+        search = usearch_openFromCollator(a, asz, b, bsz, self->collator, whole_words ? self->word_iterator : NULL, &status);
+        if (search && U_SUCCESS(status)) {
+            pos = usearch_first(search, &status);
+            int32_t pos_for_codepoint_count = 0;
+            while (pos != USEARCH_DONE) {
+                u_countChar32(b + pos_for_codepoint_count, pos - pos_for_codepoint_count);
+                pos_for_codepoint_count = pos;
+                length = usearch_getMatchedLength(search);
+                length = u_countChar32(b + pos, length);
+                PyObject *ret = PyObject_CallFunction(callback, "ii", pos, length);
+                if (ret && ret == Py_None) pos = usearch_next(search, &status);
+                else pos = USEARCH_DONE;
+                Py_CLEAR(ret);
+            }
+        } else PyErr_SetString(PyExc_ValueError, u_errorName(status));
+    }
+    if (search != NULL) usearch_close(search);
+    if (a != NULL) free(a);
+    if (b != NULL) free(b);
+
+    if (PyErr_Occurred()) return NULL;
+    Py_RETURN_NONE;
 } // }}}
 
 // Collator.contains {{{
@@ -243,14 +324,14 @@ icu_Collator_contains(icu_Collator *self, PyObject *args) {
 
     a = python_to_icu(a_, &asz);
     if (a == NULL) goto end;
-    if (asz == 0) { found = TRUE; goto end; }
+    if (asz == 0) { found = true; goto end; }
     b = python_to_icu(b_, &bsz);
     if (b == NULL) goto end;
 
     search = usearch_openFromCollator(a, asz, b, bsz, self->collator, NULL, &status);
     if (U_SUCCESS(status)) {
         pos = usearch_first(search, &status);
-        if (pos != USEARCH_DONE) found = TRUE;
+        if (pos != USEARCH_DONE) found = true;
     }
 end:
     if (search != NULL) usearch_close(search);
@@ -293,7 +374,7 @@ icu_Collator_contractions(icu_Collator *self, PyObject *args) {
             if (pbuf == NULL) { Py_DECREF(ans); ans = NULL; goto end; }
             PyTuple_SetItem(ans, i, pbuf);
         } else {
-            // Ranges dont make sense for contractions, ignore them
+            // Ranges don't make sense for contractions, ignore them
             PyTuple_SetItem(ans, i, Py_None); Py_INCREF(Py_None);
         }
     }
@@ -349,7 +430,7 @@ icu_Collator_collation_order(icu_Collator *self, PyObject *a_) {
     order = ucol_next(iter, &status);
     len = ucol_getOffset(iter);
 end:
-    if (iter != NULL) ucol_closeElements(iter); iter = NULL;
+    if (iter != NULL) { ucol_closeElements(iter); iter = NULL; }
     if (a != NULL) free(a);
     if (PyErr_Occurred()) return NULL;
     return Py_BuildValue("ii", order, len);
@@ -380,6 +461,34 @@ icu_Collator_set_upper_first(icu_Collator *self, PyObject *val, void *closure) {
 }
 // }}}
 
+
+// Collator.get/set_attribute {{{
+static PyObject *
+icu_Collator_get_attribute(icu_Collator *self, PyObject *args) {
+    int k;
+    if (!PyArg_ParseTuple(args, "i", &k)) return NULL;
+    UErrorCode status = U_ZERO_ERROR;
+    long v = ucol_getAttribute(self->collator, k, &status);
+    if (U_FAILURE(status)) {
+        PyErr_SetString(PyExc_ValueError, u_errorName(status));
+        return NULL;
+    }
+    return PyLong_FromLong(v);
+}
+
+static PyObject *
+icu_Collator_set_attribute(icu_Collator *self, PyObject *args) {
+    int k, v;
+    if (!PyArg_ParseTuple(args, "ii", &k, &v)) return NULL;
+    UErrorCode status = U_ZERO_ERROR;
+    ucol_setAttribute(self->collator, k, v, &status);
+    if (U_FAILURE(status)) {
+        PyErr_SetString(PyExc_ValueError, u_errorName(status));
+        return NULL;
+    }
+    Py_RETURN_NONE;
+} // }}}
+
 static PyObject*
 icu_Collator_clone(icu_Collator *self, PyObject *args);
 
@@ -388,8 +497,20 @@ static PyMethodDef icu_Collator_methods[] = {
      "sort_key(unicode object) -> Return a sort key for the given object as a bytestring. The idea is that these bytestring will sort using the builtin cmp function, just like the original unicode strings would sort in the current locale with ICU."
     },
 
+    {"get_attribute", (PyCFunction)icu_Collator_get_attribute, METH_VARARGS,
+     "get_attribute(key) -> get the specified attribute on this collator."
+    },
+
+    {"set_attribute", (PyCFunction)icu_Collator_set_attribute, METH_VARARGS,
+     "set_attribute(key, val) -> set the specified attribute on this collator."
+    },
+
     {"strcmp", (PyCFunction)icu_Collator_strcmp, METH_VARARGS,
      "strcmp(unicode object, unicode object) -> strcmp(a, b) <=> cmp(sorty_key(a), sort_key(b)), but faster."
+    },
+
+    {"find_all", (PyCFunction)icu_Collator_find_all, METH_VARARGS,
+        "find(pattern, source, callback) -> reports the position and length of all occurrences of pattern in source to callback. Aborts if callback returns anything other than None."
     },
 
     {"find", (PyCFunction)icu_Collator_find, METH_VARARGS,
@@ -450,49 +571,54 @@ static PyGetSetDef  icu_Collator_getsetters[] = {
      (char *)"If True the collator sorts contiguous digits as numbers rather than strings, so 2 will sort before 10.",
      NULL},
 
+    {(char *)"max_variable",
+     (getter)icu_Collator_get_max_variable, (setter)icu_Collator_set_max_variable,
+     (char *)"The highest sorting character affected by alternate handling",
+     NULL},
+
+
     {NULL}  /* Sentinel */
 };
 
 static PyTypeObject icu_CollatorType = { // {{{
-    PyObject_HEAD_INIT(NULL)
-    0,                         /*ob_size*/
-    "icu.Collator",            /*tp_name*/
-    sizeof(icu_Collator),      /*tp_basicsize*/
-    0,                         /*tp_itemsize*/
-    (destructor)icu_Collator_dealloc, /*tp_dealloc*/
-    0,                         /*tp_print*/
-    0,                         /*tp_getattr*/
-    0,                         /*tp_setattr*/
-    0,                         /*tp_compare*/
-    0,                         /*tp_repr*/
-    0,                         /*tp_as_number*/
-    0,                         /*tp_as_sequence*/
-    0,                         /*tp_as_mapping*/
-    0,                         /*tp_hash */
-    0,                         /*tp_call*/
-    0,                         /*tp_str*/
-    0,                         /*tp_getattro*/
-    0,                         /*tp_setattro*/
-    0,                         /*tp_as_buffer*/
-    Py_TPFLAGS_DEFAULT|Py_TPFLAGS_BASETYPE,        /*tp_flags*/
-    "Collator",                  /* tp_doc */
-    0,		               /* tp_traverse */
-    0,		               /* tp_clear */
-    0,		               /* tp_richcompare */
-    0,		               /* tp_weaklistoffset */
-    0,		               /* tp_iter */
-    0,		               /* tp_iternext */
-    icu_Collator_methods,             /* tp_methods */
-    0,             /* tp_members */
-    icu_Collator_getsetters,                         /* tp_getset */
-    0,                         /* tp_base */
-    0,                         /* tp_dict */
-    0,                         /* tp_descr_get */
-    0,                         /* tp_descr_set */
-    0,                         /* tp_dictoffset */
-    0,      /* tp_init */
-    0,                         /* tp_alloc */
-    icu_Collator_new,                 /* tp_new */
+    PyVarObject_HEAD_INIT(NULL, 0)
+    /* tp_name           */ "icu.Collator",
+    /* tp_basicsize      */ sizeof(icu_Collator),
+    /* tp_itemsize       */ 0,
+    /* tp_dealloc        */ (destructor)icu_Collator_dealloc,
+    /* tp_print          */ 0,
+    /* tp_getattr        */ 0,
+    /* tp_setattr        */ 0,
+    /* tp_compare        */ 0,
+    /* tp_repr           */ 0,
+    /* tp_as_number      */ 0,
+    /* tp_as_sequence    */ 0,
+    /* tp_as_mapping     */ 0,
+    /* tp_hash           */ 0,
+    /* tp_call           */ 0,
+    /* tp_str            */ 0,
+    /* tp_getattro       */ 0,
+    /* tp_setattro       */ 0,
+    /* tp_as_buffer      */ 0,
+    /* tp_flags          */ Py_TPFLAGS_DEFAULT|Py_TPFLAGS_BASETYPE,
+    /* tp_doc            */ "Collator",
+    /* tp_traverse       */ 0,
+    /* tp_clear          */ 0,
+    /* tp_richcompare    */ 0,
+    /* tp_weaklistoffset */ 0,
+    /* tp_iter           */ 0,
+    /* tp_iternext       */ 0,
+    /* tp_methods        */ icu_Collator_methods,
+    /* tp_members        */ 0,
+    /* tp_getset         */ icu_Collator_getsetters,
+    /* tp_base           */ 0,
+    /* tp_dict           */ 0,
+    /* tp_descr_get      */ 0,
+    /* tp_descr_set      */ 0,
+    /* tp_dictoffset     */ 0,
+    /* tp_init           */ 0,
+    /* tp_alloc          */ 0,
+    /* tp_new            */ icu_Collator_new,
 }; // }}}
 
 // }}
@@ -503,10 +629,13 @@ icu_Collator_clone(icu_Collator *self, PyObject *args)
 {
     UCollator *collator;
     UErrorCode status = U_ZERO_ERROR;
-    int32_t bufsize = -1;
     icu_Collator *clone;
 
-    collator = ucol_safeClone(self->collator, NULL, &bufsize, &status);
+#if U_ICU_VERSION_MAJOR_NUM > 70
+    collator = ucol_clone(self->collator, &status);
+#else
+    collator = ucol_safeClone(self->collator, NULL, NULL, &status);
+#endif
 
     if (collator == NULL || U_FAILURE(status)) {
         PyErr_SetString(PyExc_Exception, "Failed to create collator.");
@@ -518,11 +647,208 @@ icu_Collator_clone(icu_Collator *self, PyObject *args)
 
     clone->collator = collator;
     clone->contractions = NULL;
+#if U_ICU_VERSION_MAJOR_NUM > 68
+    if (self->word_iterator) clone->word_iterator = ubrk_clone(self->word_iterator, &status);
+#else
+    if (self->word_iterator) clone->word_iterator = ubrk_safeClone(self->word_iterator, NULL, NULL, &status);
+#endif
+    else clone->word_iterator = NULL;
 
     return (PyObject*) clone;
 
 } // }}}
 
+// }}}
+
+// Transliterator object definition {{{
+typedef struct {
+    PyObject_HEAD
+    // Type-specific fields go here.
+    UTransliterator *transliterator;
+} icu_Transliterator;
+
+static void
+icu_Transliterator_dealloc(icu_Transliterator* self)
+{
+    if (self->transliterator != NULL) utrans_close(self->transliterator);
+    self->transliterator = NULL;
+    Py_TYPE(self)->tp_free((PyObject*)self);
+}
+
+static PyObject *
+icu_Transliterator_new(PyTypeObject *type, PyObject *args, PyObject *kwds)
+{
+    icu_Transliterator *self = NULL;
+    UErrorCode status = U_ZERO_ERROR;
+    PyObject *idp, *rulesp;
+    int forward = 1;
+
+    if (!PyArg_ParseTuple(args, "UU|p", &idp, &rulesp, &forward)) return NULL;
+    int32_t id_sz, rules_sz = 0;
+    UChar *id = python_to_icu(idp, &id_sz);
+    if (!id) return NULL;
+    UChar *rules = PyUnicode_GET_LENGTH(rulesp) > 0 ? python_to_icu(rulesp, &rules_sz) : NULL;
+    if (PyErr_Occurred()) { free(id); return NULL; }
+    UParseError pe;
+    UTransliterator* t = utrans_openU(id, id_sz, forward ? UTRANS_FORWARD : UTRANS_REVERSE, rules, rules_sz, &pe, &status);
+    free(id); free(rules); id = NULL; rules = NULL;
+    if (t == NULL || U_FAILURE(status)) {
+        PyObject *pre = icu_to_python(pe.preContext, u_strlen(pe.preContext)), *post = icu_to_python(pe.postContext, u_strlen(pe.postContext));
+        PyErr_Format(PyExc_ValueError, "Failed to compile Transliterator with error: %s line: %d offset: %d pre: %U post: %U", u_errorName(status), pe.line, pe.offset, pre, post);
+        Py_CLEAR(pre); Py_CLEAR(post);
+        if (t != NULL) utrans_close(t);
+        return NULL;
+    }
+    self = (icu_Transliterator *)type->tp_alloc(type, 0);
+    if (self != NULL) {
+        self->transliterator = t;
+    } else utrans_close(t);
+
+    return (PyObject *)self;
+}
+
+typedef struct Replaceable {
+    UChar *buf;
+    int32_t sz, capacity;
+} Replaceable;
+
+static int32_t replaceable_length(const UReplaceable* rep) {
+    const Replaceable* x = (const Replaceable*)rep;
+    return x->sz;
+}
+
+static UChar replaceable_charAt(const UReplaceable* rep, int32_t offset) {
+    const Replaceable* x = (const Replaceable*)rep;
+    if (offset >= x->sz || offset < 0) return 0xffff;
+    return x->buf[offset];
+}
+
+static UChar32 replaceable_char32At(const UReplaceable* rep, int32_t offset) {
+    const Replaceable* x = (const Replaceable*)rep;
+    if (offset >= x->sz || offset < 0) return 0xffff;
+    UChar32 c;
+    U16_GET_OR_FFFD(x->buf, 0, offset, x->sz, c);
+    return c;
+}
+
+static void replaceable_replace(UReplaceable* rep, int32_t start, int32_t limit, const UChar* text, int32_t repl_len) {
+    Replaceable* x = (Replaceable*)rep;
+    /* printf("start replace: start=%d limit=%d x->sz: %d text=%s repl_len=%d\n", start, limit, x->sz, PyUnicode_AsUTF8(icu_to_python(text, repl_len)), repl_len); */
+    const int32_t src_len = limit - start;
+    if (repl_len <= src_len) {
+        u_memcpy(x->buf + start, text, repl_len);
+        if (repl_len < src_len) {
+            u_memmove(x->buf + start + repl_len, x->buf + limit, x->sz - limit);
+            x->sz -= src_len - repl_len;
+        }
+    } else {
+        const int32_t sz = x->sz + (repl_len - src_len);
+        UChar *n = x->buf;
+        if (sz > x->capacity) n = realloc(x->buf, sizeof(UChar) * (sz + 256));
+        if (n) {
+            u_memmove(n + start + repl_len, n + limit, x->sz - limit);
+            u_memcpy(n + start, text, repl_len);
+            x->buf = n; x->sz = sz; x->capacity = sz + 256;
+        }
+    }
+    /* printf("end replace: %s\n", PyUnicode_AsUTF8(icu_to_python(x->buf, x->sz))); */
+}
+
+static void replaceable_copy(UReplaceable* rep, int32_t start, int32_t limit, int32_t dest) {
+    Replaceable* x = (Replaceable*)rep;
+    /* printf("start copy: start=%d limit=%d x->sz: %d dest=%d\n", start, limit, x->sz, dest); */
+    int32_t sz = x->sz + limit - start;
+    UChar *n = malloc((sz + 256) * sizeof(UChar));
+    if (n) {
+        u_memcpy(n, x->buf, dest);
+        u_memcpy(n + dest, x->buf + start, limit - start);
+        u_memcpy(n + dest + limit - start, x->buf + dest, x->sz - dest);
+        free(x->buf);
+        x->buf = n; x->sz = sz; x->capacity = sz + 256;
+    }
+    /* printf("end copy: %s\n", PyUnicode_AsUTF8(icu_to_python(x->buf, x->sz))); */
+}
+
+static void replaceable_extract(UReplaceable* rep, int32_t start, int32_t limit, UChar* dst) {
+    Replaceable* x = (Replaceable*)rep;
+    memcpy(dst, x->buf + start, sizeof(UChar) * (limit - start));
+}
+
+const static UReplaceableCallbacks replaceable_callbacks = {
+    .length = replaceable_length,
+    .charAt = replaceable_charAt,
+    .char32At = replaceable_char32At,
+    .replace = replaceable_replace,
+    .extract = replaceable_extract,
+    .copy = replaceable_copy,
+};
+
+static PyObject *
+icu_Transliterator_transliterate(icu_Transliterator *self, PyObject *input) {
+    Replaceable r;
+    UErrorCode status = U_ZERO_ERROR;
+    r.buf = python_to_icu(input, &r.sz);
+    if (r.buf == NULL) return NULL;
+    r.capacity = r.sz;
+    int32_t limit = r.sz;
+    utrans_trans(self->transliterator, (UReplaceable*)&r, &replaceable_callbacks, 0, &limit, &status);
+    PyObject *ans = NULL;
+    if (U_FAILURE(status)) {
+        PyErr_SetString(PyExc_ValueError, u_errorName(status));
+    } else ans = icu_to_python(r.buf, limit);
+    free(r.buf); r.buf = NULL;
+    return ans;
+}
+
+static PyMethodDef icu_Transliterator_methods[] = {
+    {"transliterate", (PyCFunction)icu_Transliterator_transliterate, METH_O,
+     "transliterate(text) -> Run the transliterator on the specified text"
+    },
+
+    {NULL}  /* Sentinel */
+};
+
+
+static PyTypeObject icu_TransliteratorType = { // {{{
+    PyVarObject_HEAD_INIT(NULL, 0)
+    /* tp_name           */ "icu.Transliterator",
+    /* tp_basicsize      */ sizeof(icu_Transliterator),
+    /* tp_itemsize       */ 0,
+    /* tp_dealloc        */ (destructor)icu_Transliterator_dealloc,
+    /* tp_print          */ 0,
+    /* tp_getattr        */ 0,
+    /* tp_setattr        */ 0,
+    /* tp_compare        */ 0,
+    /* tp_repr           */ 0,
+    /* tp_as_number      */ 0,
+    /* tp_as_sequence    */ 0,
+    /* tp_as_mapping     */ 0,
+    /* tp_hash           */ 0,
+    /* tp_call           */ 0,
+    /* tp_str            */ 0,
+    /* tp_getattro       */ 0,
+    /* tp_setattro       */ 0,
+    /* tp_as_buffer      */ 0,
+    /* tp_flags          */ Py_TPFLAGS_DEFAULT|Py_TPFLAGS_BASETYPE,
+    /* tp_doc            */ "Transliterator",
+    /* tp_traverse       */ 0,
+    /* tp_clear          */ 0,
+    /* tp_richcompare    */ 0,
+    /* tp_weaklistoffset */ 0,
+    /* tp_iter           */ 0,
+    /* tp_iternext       */ 0,
+    /* tp_methods        */ icu_Transliterator_methods,
+    /* tp_members        */ 0,
+    /* tp_getset         */ 0,
+    /* tp_base           */ 0,
+    /* tp_dict           */ 0,
+    /* tp_descr_get      */ 0,
+    /* tp_descr_set      */ 0,
+    /* tp_dictoffset     */ 0,
+    /* tp_init           */ 0,
+    /* tp_alloc          */ 0,
+    /* tp_new            */ icu_Transliterator_new,
+}; // }}}
 // }}}
 
 // BreakIterator object definition {{{
@@ -542,7 +868,7 @@ icu_BreakIterator_dealloc(icu_BreakIterator* self)
     if (self->break_iterator != NULL) ubrk_close(self->break_iterator);
     if (self->text != NULL) free(self->text);
     self->break_iterator = NULL; self->text = NULL;
-    self->ob_type->tp_free((PyObject*)self);
+    Py_TYPE(self)->tp_free((PyObject*)self);
 }
 
 
@@ -595,9 +921,6 @@ icu_BreakIterator_set_text(icu_BreakIterator *self, PyObject *input) {
 // BreakIterator.index {{{
 static PyObject *
 icu_BreakIterator_index(icu_BreakIterator *self, PyObject *token) {
-#if PY_VERSION_HEX >= 0x03030000
-#error Not implemented for python >= 3.3
-#endif
 
     UChar *buf = NULL, *needle = NULL;
     int32_t word_start = 0, p = 0, sz = 0, ans = -1, leading_hyphen = 0, trailing_hyphen = 0;
@@ -641,9 +964,7 @@ icu_BreakIterator_index(icu_BreakIterator *self, PyObject *token) {
         }
     }
     if (leading_hyphen && ans > -1) ans -= 1;
-#ifdef Py_UNICODE_WIDE
     if (ans > 0) ans = u_countChar32(self->text, ans);
-#endif
     Py_END_ALLOW_THREADS;
 
 end:
@@ -653,19 +974,54 @@ end:
 } // }}}
 
 // BreakIterator.split2 {{{
-static PyObject *
-icu_BreakIterator_split2(icu_BreakIterator *self, PyObject *args) {
-#if PY_VERSION_HEX >= 0x03030000
-#error Not implemented for python >= 3.3
-#endif
 
-    int32_t word_start = 0, p = 0, sz = 0, last_pos = 0, last_sz = 0;
-    int is_hyphen_sep = 0, leading_hyphen = 0, trailing_hyphen = 0;
-    UChar sep = 0;
-    PyObject *ans = NULL, *temp = NULL, *t = NULL;
+static inline void
+unicode_code_point_count(UChar **count_start, int32_t *last_count, int *last_count32, int32_t *word_start, int32_t *sz) {
+	int32_t chars_to_new_word_from_last_pos = *word_start - *last_count;
+	int32_t sz32 = u_countChar32(*count_start + chars_to_new_word_from_last_pos, *sz);
+	int32_t codepoints_to_new_word_from_last_pos = u_countChar32(*count_start, chars_to_new_word_from_last_pos);
+	*count_start += chars_to_new_word_from_last_pos + *sz;
+	*last_count += chars_to_new_word_from_last_pos + *sz;
+	*last_count32 += codepoints_to_new_word_from_last_pos;
+	*word_start = *last_count32;
+	*last_count32 += sz32;
+	*sz = sz32;
+}
 
-    ans = PyList_New(0);
-    if (ans == NULL) return PyErr_NoMemory();
+static int
+add_split_pos_callback(void *data, int32_t pos, int32_t sz) {
+	PyObject *ans = (PyObject*) data;
+	PyObject *t, *temp;
+	if (pos < 0) {
+		if (PyList_GET_SIZE(ans) > 0) {
+			t = PyLong_FromLong((long)sz);
+			if (t == NULL) return 0;
+			temp = PyList_GET_ITEM(ans, PyList_GET_SIZE(ans) - 1);
+			Py_DECREF(PyTuple_GET_ITEM(temp, 1));
+			PyTuple_SET_ITEM(temp, 1, t);
+		}
+	} else {
+		temp = Py_BuildValue("ll", (long)(pos), (long)sz);
+		if (temp == NULL) return 0;
+		if (PyList_Append(ans, temp) != 0) { Py_DECREF(temp); return 0; }
+		Py_DECREF(temp);
+	}
+	return 1;
+}
+
+static int
+count_words_callback(void *data, int32_t pos, int32_t sz) {
+	unsigned long *total = (unsigned long*)data;
+	if (pos >= 0) (*total)++;
+	return 1;
+}
+
+
+static inline void
+do_split(icu_BreakIterator *self, int(*callback)(void*, int32_t, int32_t), void *callback_data) {
+    int32_t word_start = 0, p = 0, sz = 0, last_pos = 0, last_sz = 0, last_count = 0, last_count32 = 0;
+    int is_hyphen_sep = 0, leading_hyphen = 0, trailing_hyphen = 0, found_one = 0;
+    UChar sep = 0, *count_start = self->text;
 
     p = ubrk_first(self->break_iterator);
     while (p != UBRK_DONE) {
@@ -688,33 +1044,37 @@ icu_BreakIterator_split2(icu_BreakIterator *self, PyObject *args) {
                 if (IS_HYPHEN_CHAR(sep)) trailing_hyphen = 1;
             }
             last_pos = p;
-#ifdef Py_UNICODE_WIDE
-            sz = u_countChar32(self->text + word_start, sz);
-            word_start = u_countChar32(self->text, word_start);
-#endif
-            if (is_hyphen_sep && PyList_GET_SIZE(ans) > 0) {
+			unicode_code_point_count(&count_start, &last_count, &last_count32, &word_start, &sz);
+            if (is_hyphen_sep && found_one) {
                 sz = last_sz + sz + trailing_hyphen;
                 last_sz = sz;
-                t = PyInt_FromLong((long)sz);
-                if (t == NULL) { Py_DECREF(ans); ans = NULL; break; }
-                temp = PyList_GET_ITEM(ans, PyList_GET_SIZE(ans) - 1);
-                Py_DECREF(PyTuple_GET_ITEM(temp, 1));
-                PyTuple_SET_ITEM(temp, 1, t);
+				if (!callback(callback_data, -1, sz)) break;
             } else {
+				found_one = 1;
                 sz += leading_hyphen + trailing_hyphen;
                 last_sz = sz;
-                temp = Py_BuildValue("ll", (long)(word_start - leading_hyphen), (long)sz);
-                if (temp == NULL) {
-                    Py_DECREF(ans); ans = NULL; break;
-                }
-                if (PyList_Append(ans, temp) != 0) {
-                    Py_DECREF(temp); Py_DECREF(ans); ans = NULL; break;
-                }
-                Py_DECREF(temp);
+				if (!callback(callback_data, word_start - leading_hyphen, sz)) break;
             }
         }
     }
 
+}
+
+static PyObject *
+icu_BreakIterator_count_words(icu_BreakIterator *self, PyObject *args) {
+	unsigned long ans = 0;
+	do_split(self, count_words_callback, &ans);
+	if (PyErr_Occurred()) return NULL;
+	return Py_BuildValue("k", ans);
+}
+
+static PyObject *
+icu_BreakIterator_split2(icu_BreakIterator *self, PyObject *args) {
+    PyObject *ans = NULL;
+    ans = PyList_New(0);
+    if (ans == NULL) return PyErr_NoMemory();
+	do_split(self, add_split_pos_callback, ans);
+	if (PyErr_Occurred()) { Py_DECREF(ans); ans = NULL; }
     return ans;
 
 } // }}}
@@ -728,6 +1088,10 @@ static PyMethodDef icu_BreakIterator_methods[] = {
      "split2() -> Split the current text into tokens, returning a list of 2-tuples of the form (position of token, length of token). The numbers are suitable for indexing python strings regardless of narrow/wide builds."
     },
 
+    {"count_words", (PyCFunction)icu_BreakIterator_count_words, METH_NOARGS,
+     "count_words() -> Split the current text into tokens as in split2() and count the number of tokens."
+    },
+
     {"index", (PyCFunction)icu_BreakIterator_index, METH_O,
      "index(token) -> Find the index of the first match for token. Useful to find, for example, words that could also be a part of a larger word. For example, index('i') in 'string i' will be 7 not 3. Returns -1 if not found."
     },
@@ -737,45 +1101,44 @@ static PyMethodDef icu_BreakIterator_methods[] = {
 
 
 static PyTypeObject icu_BreakIteratorType = { // {{{
-    PyObject_HEAD_INIT(NULL)
-    0,                         /*ob_size*/
-    "icu.BreakIterator",            /*tp_name*/
-    sizeof(icu_BreakIterator),      /*tp_basicsize*/
-    0,                         /*tp_itemsize*/
-    (destructor)icu_BreakIterator_dealloc, /*tp_dealloc*/
-    0,                         /*tp_print*/
-    0,                         /*tp_getattr*/
-    0,                         /*tp_setattr*/
-    0,                         /*tp_compare*/
-    0,                         /*tp_repr*/
-    0,                         /*tp_as_number*/
-    0,                         /*tp_as_sequence*/
-    0,                         /*tp_as_mapping*/
-    0,                         /*tp_hash */
-    0,                         /*tp_call*/
-    0,                         /*tp_str*/
-    0,                         /*tp_getattro*/
-    0,                         /*tp_setattro*/
-    0,                         /*tp_as_buffer*/
-    Py_TPFLAGS_DEFAULT|Py_TPFLAGS_BASETYPE,        /*tp_flags*/
-    "Break Iterator",                  /* tp_doc */
-    0,		               /* tp_traverse */
-    0,		               /* tp_clear */
-    0,		               /* tp_richcompare */
-    0,		               /* tp_weaklistoffset */
-    0,		               /* tp_iter */
-    0,		               /* tp_iternext */
-    icu_BreakIterator_methods,             /* tp_methods */
-    0,             /* tp_members */
-    0,                         /* tp_getset */
-    0,                         /* tp_base */
-    0,                         /* tp_dict */
-    0,                         /* tp_descr_get */
-    0,                         /* tp_descr_set */
-    0,                         /* tp_dictoffset */
-    0,      /* tp_init */
-    0,                         /* tp_alloc */
-    icu_BreakIterator_new,                 /* tp_new */
+    PyVarObject_HEAD_INIT(NULL, 0)
+    /* tp_name           */ "icu.BreakIterator",
+    /* tp_basicsize      */ sizeof(icu_BreakIterator),
+    /* tp_itemsize       */ 0,
+    /* tp_dealloc        */ (destructor)icu_BreakIterator_dealloc,
+    /* tp_print          */ 0,
+    /* tp_getattr        */ 0,
+    /* tp_setattr        */ 0,
+    /* tp_compare        */ 0,
+    /* tp_repr           */ 0,
+    /* tp_as_number      */ 0,
+    /* tp_as_sequence    */ 0,
+    /* tp_as_mapping     */ 0,
+    /* tp_hash           */ 0,
+    /* tp_call           */ 0,
+    /* tp_str            */ 0,
+    /* tp_getattro       */ 0,
+    /* tp_setattro       */ 0,
+    /* tp_as_buffer      */ 0,
+    /* tp_flags          */ Py_TPFLAGS_DEFAULT|Py_TPFLAGS_BASETYPE,
+    /* tp_doc            */ "Break Iterator",
+    /* tp_traverse       */ 0,
+    /* tp_clear          */ 0,
+    /* tp_richcompare    */ 0,
+    /* tp_weaklistoffset */ 0,
+    /* tp_iter           */ 0,
+    /* tp_iternext       */ 0,
+    /* tp_methods        */ icu_BreakIterator_methods,
+    /* tp_members        */ 0,
+    /* tp_getset         */ 0,
+    /* tp_base           */ 0,
+    /* tp_dict           */ 0,
+    /* tp_descr_get      */ 0,
+    /* tp_descr_set      */ 0,
+    /* tp_dictoffset     */ 0,
+    /* tp_init           */ 0,
+    /* tp_alloc          */ 0,
+    /* tp_new            */ icu_BreakIterator_new,
 }; // }}}
 
 // }}}
@@ -856,11 +1219,6 @@ end:
 // set_default_encoding {{{
 static PyObject *
 icu_set_default_encoding(PyObject *self, PyObject *args) {
-    char *encoding;
-    if (!PyArg_ParseTuple(args, "s:setdefaultencoding", &encoding))
-        return NULL;
-    if (PyUnicode_SetDefaultEncoding(encoding))
-        return NULL;
     Py_INCREF(Py_None);
     return Py_None;
 
@@ -873,9 +1231,16 @@ icu_set_filesystem_encoding(PyObject *self, PyObject *args) {
     char *encoding;
     if (!PyArg_ParseTuple(args, "s:setfilesystemencoding", &encoding))
         return NULL;
+#if PY_VERSION_HEX < 0x03012000
+    // The nitwits at Python deprecated this in 3.12 claiming we should use
+    // PyConfig.filesystem_encoding instead. But that can only be used if we
+    // control the interpreter, which we do not in Linux distro builds. Sigh.
+    // Well, if this causes issues we just continue to tell people not to use
+    // Linux distro builds. On frozen aka non-distro builds we set
+    // PyPreConfig.utf8_mode = 1 which supposedly sets this to utf-8 anyway.
     Py_FileSystemDefaultEncoding = strdup(encoding);
+#endif
     Py_RETURN_NONE;
-
 }
 // }}}
 
@@ -989,7 +1354,7 @@ icu_ord_string(PyObject *self, PyObject *input) {
     ans = PyTuple_New(sz);
     if (ans == NULL) goto end;
     for (i = 0; i < sz; i++) {
-        temp = PyInt_FromLong((long)input_buf[i]);
+        temp = PyLong_FromLong((long)input_buf[i]);
         if (temp == NULL) { Py_DECREF(ans); ans = NULL; PyErr_NoMemory(); goto end; }
         PyTuple_SET_ITEM(ans, i, temp);
     }
@@ -1115,26 +1480,24 @@ icu_string_length(PyObject *self, PyObject *src) {
 // utf16_length {{{
 static PyObject *
 icu_utf16_length(PyObject *self, PyObject *src) {
-#if PY_VERSION_HEX >= 0x03030000
-#error Not implemented for python >= 3.3
-#endif
+    Py_ssize_t sz = 0;
+    Py_ssize_t unit_length, i;
+    Py_UCS4 *data = NULL;
 
-    int32_t sz = 0;
-#ifdef Py_UNICODE_WIDE
-    int32_t i = 0, t = 0;
-    Py_UNICODE *data = NULL;
-#endif
+    if(PyUnicode_READY(src) != 0) { return NULL; }
 
-    if (!PyUnicode_Check(src)) { PyErr_SetString(PyExc_TypeError, "Must be a unicode object"); return NULL; }
-    sz = (int32_t)PyUnicode_GET_SIZE(src);
-#ifdef Py_UNICODE_WIDE
-    data = PyUnicode_AS_UNICODE(src);
-    for (i = 0; i < sz; i++) {
-        t += (data[i] > 0xffff) ? 2 : 1;
+    unit_length = sz = PyUnicode_GET_LENGTH(src);
+    // UCS8 or UCS16? length==utf16 length already. UCS32? count big code points.
+    if(PyUnicode_KIND(src) == PyUnicode_4BYTE_KIND) {
+        data = PyUnicode_4BYTE_DATA(src);
+        for(i = 0; i < unit_length; i++) {
+            if(data[i] > 0xffff) {
+                sz++;
+            }
+        }
     }
-    sz = t;
-#endif
-    return Py_BuildValue("l", (long)sz);
+
+    return Py_BuildValue("n", sz);
 } // }}}
 
 // Module initialization {{{
@@ -1148,7 +1511,7 @@ static PyMethodDef icu_methods[] = {
     },
 
     {"set_default_encoding", icu_set_default_encoding, METH_VARARGS,
-        "set_default_encoding(encoding) -> Set the default encoding for the python unicode implementation."
+        "set_default_encoding(encoding) -> Set the default encoding for the python unicode implementation. In Py3, this operation is a no-op"
     },
 
     {"set_filesystem_encoding", icu_set_filesystem_encoding, METH_VARARGS,
@@ -1198,25 +1561,16 @@ static PyMethodDef icu_methods[] = {
     {NULL}  /* Sentinel */
 };
 
-#define ADDUCONST(x) PyModule_AddIntConstant(m, #x, x)
-
-CALIBRE_MODINIT_FUNC
-initicu(void)
-{
-    PyObject* m;
+static int
+exec_module(PyObject *mod) {
     UVersionInfo ver, uver;
     UErrorCode status = U_ZERO_ERROR;
     char version[U_MAX_VERSION_STRING_LENGTH+1] = {0}, uversion[U_MAX_VERSION_STRING_LENGTH+5] = {0};
 
-    if (sizeof(Py_UNICODE) != 2 && sizeof(Py_UNICODE) != 4) {
-        PyErr_SetString(PyExc_RuntimeError, "This module only works on python versions <= 3.2");
-        return;
-    }
-
     u_init(&status);
     if (U_FAILURE(status)) {
-        PyErr_SetString(PyExc_RuntimeError, u_errorName(status));
-        return;
+        PyErr_Format(PyExc_RuntimeError, "u_init() failed with error: %s", u_errorName(status));
+        return -1;
     }
     u_getVersion(ver);
     u_versionToString(ver, version);
@@ -1224,21 +1578,22 @@ initicu(void)
     u_versionToString(uver, uversion);
 
     if (PyType_Ready(&icu_CollatorType) < 0)
-        return;
+        return -1;
     if (PyType_Ready(&icu_BreakIteratorType) < 0)
-        return;
+        return -1;
+    if (PyType_Ready(&icu_TransliteratorType) < 0)
+        return -1;
 
-    m = Py_InitModule3("icu", icu_methods,
-                       "Wrapper for the ICU internationalization library");
-
-    Py_INCREF(&icu_CollatorType); Py_INCREF(&icu_BreakIteratorType);
-    PyModule_AddObject(m, "Collator", (PyObject *)&icu_CollatorType);
-    PyModule_AddObject(m, "BreakIterator", (PyObject *)&icu_BreakIteratorType);
+    Py_INCREF(&icu_CollatorType); Py_INCREF(&icu_BreakIteratorType); Py_INCREF(&icu_TransliteratorType);
+    PyModule_AddObject(mod, "Collator", (PyObject *)&icu_CollatorType);
+    PyModule_AddObject(mod, "BreakIterator", (PyObject *)&icu_BreakIteratorType);
+    PyModule_AddObject(mod, "Transliterator", (PyObject *)&icu_TransliteratorType);
     // uint8_t must be the same size as char
-    PyModule_AddIntConstant(m, "ok", (U_SUCCESS(status) && sizeof(uint8_t) == sizeof(char)) ? 1 : 0);
-    PyModule_AddStringConstant(m, "icu_version", version);
-    PyModule_AddStringConstant(m, "unicode_version", uversion);
+    PyModule_AddIntConstant(mod, "ok", (U_SUCCESS(status) && sizeof(uint8_t) == sizeof(char)) ? 1 : 0);
+    PyModule_AddStringConstant(mod, "icu_version", version);
+    PyModule_AddStringConstant(mod, "unicode_version", uversion);
 
+#define ADDUCONST(x) PyModule_AddIntConstant(mod, #x, x)
     ADDUCONST(USET_SPAN_NOT_CONTAINED);
     ADDUCONST(USET_SPAN_CONTAINED);
     ADDUCONST(USET_SPAN_SIMPLE);
@@ -1255,6 +1610,19 @@ initicu(void)
     ADDUCONST(UCOL_NON_IGNORABLE);
     ADDUCONST(UCOL_LOWER_FIRST);
     ADDUCONST(UCOL_UPPER_FIRST);
+    ADDUCONST(UCOL_FRENCH_COLLATION);
+    ADDUCONST(UCOL_ALTERNATE_HANDLING);
+    ADDUCONST(UCOL_CASE_FIRST);
+    ADDUCONST(UCOL_CASE_LEVEL);
+    ADDUCONST(UCOL_NORMALIZATION_MODE);
+    ADDUCONST(UCOL_DECOMPOSITION_MODE);
+    ADDUCONST(UCOL_STRENGTH);
+    ADDUCONST(UCOL_NUMERIC_COLLATION);
+    ADDUCONST(UCOL_REORDER_CODE_SPACE);
+    ADDUCONST(UCOL_REORDER_CODE_PUNCTUATION);
+    ADDUCONST(UCOL_REORDER_CODE_SYMBOL);
+    ADDUCONST(UCOL_REORDER_CODE_CURRENCY);
+    ADDUCONST(UCOL_REORDER_CODE_DEFAULT);
 
     ADDUCONST(NFD);
     ADDUCONST(NFKD);
@@ -1270,5 +1638,19 @@ initicu(void)
     ADDUCONST(UBRK_LINE);
     ADDUCONST(UBRK_SENTENCE);
 
+	return 0;
 }
+
+static PyModuleDef_Slot slots[] = { {Py_mod_exec, exec_module}, {0, NULL} };
+
+static struct PyModuleDef module_def = {
+    .m_base     = PyModuleDef_HEAD_INIT,
+    .m_name     = "icu",
+    .m_doc      =  "Wrapper for the ICU internationalization library",
+    .m_methods  = icu_methods,
+    .m_slots    = slots,
+};
+
+CALIBRE_MODINIT_FUNC PyInit_icu(void) { return PyModuleDef_Init(&module_def); }
+
 // }}}

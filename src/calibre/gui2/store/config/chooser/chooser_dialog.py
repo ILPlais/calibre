@@ -1,12 +1,8 @@
-# -*- coding: utf-8 -*-
-
-from __future__ import (unicode_literals, division, absolute_import, print_function)
-
 __license__ = 'GPL 3'
 __copyright__ = '2011, John Schember <john@nachtimwald.com>'
 __docformat__ = 'restructuredtext en'
 
-from PyQt5.Qt import (QDialog, QDialogButtonBox, QVBoxLayout)
+from qt.core import QDialog, QDialogButtonBox, QVBoxLayout
 
 from calibre.gui2.store.config.chooser.chooser_widget import StoreChooserWidget
 
@@ -18,7 +14,7 @@ class StoreChooserDialog(QDialog):
 
         self.setWindowTitle(_('Choose stores'))
 
-        button_box = QDialogButtonBox(QDialogButtonBox.Close)
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         button_box.accepted.connect(self.accept)
         button_box.rejected.connect(self.reject)
         v = QVBoxLayout(self)

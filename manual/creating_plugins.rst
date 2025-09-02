@@ -30,17 +30,17 @@ and enter the following Python code into it:
     :lines: 10-
 
 That's all. To add this code to calibre as a plugin, simply run the following in
-the directory in which you created :file:`__init__.py`::
+the folder in which you created :file:`__init__.py`::
 
     calibre-customize -b .
 
 .. note::
     On macOS, the command line tools are inside the calibre bundle, for example,
     if you installed calibre in :file:`/Applications` the command line tools
-    are in :file:`/Applications/calibre.app/Contents/console.app/Contents/MacOS/`.
+    are in :file:`/Applications/calibre.app/Contents/MacOS/`.
 
 You can download the Hello World plugin from
-`helloworld_plugin.zip  <https://calibre-ebook.com/downloads/helloworld_plugin.zip>`_.
+:download_file:`helloworld_plugin.zip`.
 
 Every time you use calibre to convert a book, the plugin's :meth:`run` method will be called and the
 converted book will have its publisher set to "Hello World". This is a trivial plugin, lets move on to
@@ -54,7 +54,7 @@ This plugin will be spread over a few files (to keep the code clean). It will sh
 how to create elements in the calibre user interface and how to access
 and query the books database in calibre.
 
-You can download this plugin from `interface_demo_plugin.zip <https://calibre-ebook.com/downloads/interface_demo_plugin.zip>`_
+You can download this plugin from :download_file:`interface_demo_plugin.zip`
 
 .. _import_name_txt:
 
@@ -71,7 +71,7 @@ The first thing to note is that this ZIP file has a lot more files in it, explai
         The prefix ``calibre_plugins`` must always be present. ``some_name`` comes from the filename of the empty text file.
         ``some_module`` refers to  :file:`some_module.py` file inside the ZIP file. Note that this importing is just as
         powerful as regular Python imports. You can create packages and subpackages of .py modules inside the ZIP file,
-        just like you would normally (by defining __init__.py in each sub-directory), and everything should "just work".
+        just like you would normally (by defining __init__.py in each sub-folder), and everything should "just work".
 
         The name you use for ``some_name`` enters a global namespace shared by all plugins, **so make it as unique as possible**.
         But remember that it must be a valid Python identifier (only alphabets, numbers and the underscore).
@@ -138,15 +138,23 @@ Getting resources from the plugin ZIP file
 calibre's plugin loading system defines a couple of built-in functions that allow you to conveniently get files from the plugin ZIP file.
 
     **get_resources(name_or_list_of_names)**
-        This function should be called with a list of paths to files inside the ZIP file. For example to access the file icon.png in
-        the directory images in the ZIP file, you would use: ``images/icon.png``. Always use a forward slash as the path separator,
-        even on windows. When you pass in a single name, the function will return the raw bytes of that file or None if the name
-        was not found in the ZIP file. If you pass in more than one name then it returns a dict mapping the names to bytes.
-        If a name is not found, it will not be present in the returned dict.
+        This function should be called with a list of paths to files inside the
+        ZIP file. For example to access the file :file:`icon.png` in the folder
+        images in the ZIP file, you would use: ``images/icon.png``. Always use
+        a forward slash as the path separator, even on Windows. When you pass
+        in a single name, the function will return the raw bytes of that file
+        or None if the name was not found in the ZIP file. If you pass in more
+        than one name then it returns a dictionary mapping the names to bytes.  If a
+        name is not found, it will not be present in the returned dictionary.
 
-    **get_icons(name_or_list_of_names)**
-        A convenience wrapper for get_resources() that creates QIcon objects from the raw bytes returned by get_resources.
-        If a name is not found in the ZIP file the corresponding QIcon will be null.
+    **get_icons(name_or_list_of_names, plugin_name='')**
+        A wrapper for get_resources() that creates QIcon objects
+        from the raw bytes returned by get_resources. If a name is not found
+        in the ZIP file the corresponding QIcon will be null. In order to
+        support icon theme-ing, pass in the human friendly name of your plugin
+        as ``plugin_name``. If the user is using an icon theme with icons for
+        your plugin, they will be loaded preferentially.
+
 
 Enabling user configuration of your plugin
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -185,7 +193,7 @@ Edit book plugins
 
 Now let's change gears for a bit and look at creating a plugin to add tools to
 the calibre book editor. The plugin is available here:
-`editor_demo_plugin.zip  <https://calibre-ebook.com/downloads/editor_demo_plugin.zip>`_.
+:download_file:`editor_demo_plugin.zip`.
 
 The first step, as for all plugins is to create the
 import name empty txt file, as described :ref:`above <import_name_txt>`.
@@ -247,7 +255,6 @@ HTML/CSS/image files and has convenience methods for doing many useful things.
 The container object and various useful utility functions that can be reused in
 your plugin code are documented in :ref:`polish_api`.
 
-
 Adding translations to your plugin
 --------------------------------------
 
@@ -262,10 +269,10 @@ visible strings as translatable, by surrounding them in _(). For example::
 Then use some program to generate .po files from your plugin source code. There
 should be one .po file for every language you want to translate into. For
 example: de.po for German, fr.po for French and so on. You can use the
-`poedit <https://poedit.net/>`_ program for this.
+`Poedit <https://poedit.net/>`_ program for this.
 
 Send these .po files to your translators. Once you get them back, compile them
-into .mo files. You can again use poedit for that, or just do::
+into .mo files. You can again use Poedit for that, or just do::
 
     calibre-debug -c "from calibre.translations.msgfmt import main; main()" filename.po
 
@@ -278,12 +285,17 @@ typical User Interface plugin you would call it at the top of ``ui.py`` but not
 ``__init__.py``.
 
 You can test the translations of your plugins by changing the user interface
-language in calibre under :guilabel:`Preferences->Interface->Look & feel` or by running calibre like
-this::
+language in calibre under :guilabel:`Preferences->Interface->Look & feel` or by running calibre
+with the ``CALIBRE_OVERRIDE_LANG`` environment variable set. For example::
 
-    CALIBRE_OVERRIDE_LANG=de calibre
+    CALIBRE_OVERRIDE_LANG=de
 
 Replace ``de`` with the language code of the language you want to test.
+
+For translations with plurals, use the ``ngettext()`` function instead of
+``_()``. For example::
+
+    ngettext('Delete a book', 'Delete {} books', num_books).format(num_books)
 
 The plugin API
 --------------------------------
@@ -302,7 +314,7 @@ The first, most important step is to run calibre in debug mode. You can do this 
 
     calibre-debug -g
 
-Or from within calibre by right-clicking the :guilabel:`Preferences` button or using the `Ctrl+Shift+R` keyboard shortcut.
+Or from within calibre by right-clicking the :guilabel:`Preferences` button or using the :kbd:`Ctrl+Shift+R` keyboard shortcut.
 
 When running from the command line, debug output will be printed to the console, when running from within calibre the output will go to a txt file.
 
@@ -311,18 +323,17 @@ You can insert print statements anywhere in your plugin code, they will be outpu
 You can quickly test changes to your plugin by using the following command
 line::
 
-    calibre-debug -s; calibre-customize -b /path/to/your/plugin/directory; calibre
+    calibre-debug -s; calibre-customize -b /path/to/your/plugin/folder; calibre
 
 This will shutdown a running calibre, wait for the shutdown to complete, then update your plugin in calibre and relaunch calibre.
 
 More plugin examples
 ----------------------
 
-You can find a list of many, sophisticated calibre plugins `here <https://www.mobileread.com/forums/showthread.php?t=118764>`_.
+You can find a list of many sophisticated calibre plugins `here <https://www.mobileread.com/forums/showthread.php?t=118764>`_.
 
 Sharing your plugins with others
 ----------------------------------
 
 If you would like to share the plugins you have created with other users of calibre, post your plugin in a new thread in the
 `calibre plugins forum <https://www.mobileread.com/forums/forumdisplay.php?f=237>`_.
-

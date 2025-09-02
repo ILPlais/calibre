@@ -1,7 +1,5 @@
-#!/usr/bin/env python2
-# vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:fdm=marker:ai
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
+#!/usr/bin/env python
+
 
 __license__   = 'GPL v3'
 __copyright__ = '2012, Kovid Goyal <kovid at kovidgoyal.net>'
@@ -29,8 +27,8 @@ def synchronous(func):
 
 class MTPDeviceBase(DevicePlugin):
     name = 'MTP Device Interface'
-    gui_name = _('MTP Device')
-    icon = I('devices/tablet.png')
+    gui_name = _('MTP device')
+    icon = 'devices/tablet.png'
     description = _('Communicate with MTP devices')
     author = 'Kovid Goyal'
     version = (1, 0, 0)
@@ -64,5 +62,3 @@ class MTPDeviceBase(DevicePlugin):
 
     def is_customizable(self):
         return True
-
-

@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 __license__ = 'GPL v3'
 __copyright__ = '2008-2012, Darko Miletic <darko.miletic at gmail.com>'
 '''
@@ -5,8 +6,14 @@ arstechnica.com
 '''
 
 import re
+
 from calibre.web.feeds.news import BasicNewsRecipe
-from calibre.ebooks.BeautifulSoup import BeautifulSoup
+
+
+def classes(classes):
+    q = frozenset(classes.split(' '))
+    return dict(attrs={
+        'class': lambda x: x and frozenset(x.split()).intersection(q)})
 
 
 class ArsTechnica(BasicNewsRecipe):
@@ -21,88 +28,77 @@ class ArsTechnica(BasicNewsRecipe):
     encoding = 'utf-8'
     use_embedded_content = False
     remove_empty_feeds = True
+    ignore_duplicate_articles = {'url', 'title'}
+    masthead_url = 'https://upload.wikimedia.org/wikipedia/commons/5/51/Ars_Technica_logo_%282016%29.svg'
     extra_css             = '''
-    body {font-family: Arial,sans-serif}
-    .heading{font-family: "Times New Roman",serif}
-    .byline{font-weight: bold; line-height: 1em; font-size: 0.625em; text-decoration: none}
-    img{display: block}
-    .caption-text{font-size:small; font-style:italic}
-    .caption-byline{font-size:small; font-style:italic; font-weight:bold}
-    .video, .page-numbers, .story-sidebar { display: none }
-    .image { display: block }
+        body {font-family: Arial,sans-serif}
+        .heading{font-family: "Times New Roman",serif}
+        .byline{font-weight: bold; line-height: 1em; font-size: 0.625em; text-decoration: none}
+        img{display: block}
+        .caption-text{font-size:small; font-style:italic}
+        .caption-byline{font-size:small; font-style:italic; font-weight:bold}
+        .video, .page-numbers, .story-sidebar { display: none }
+        .image { display: block }
     '''
 
+    recipe_specific_options = {
+        'days': {
+            'short': 'Oldest article to download from this news source. In days ',
+            'long': 'For example, 0.5, gives you articles from the past 12 hours',
+            'default': str(oldest_article)
+        }
+    }
+
+    def __init__(self, *args, **kwargs):
+        BasicNewsRecipe.__init__(self, *args, **kwargs)
+        d = self.recipe_specific_options.get('days')
+        if d and isinstance(d, str):
+            self.oldest_article = float(d)
+
     keep_only_tags = [
-        dict(itemprop=['headline', 'description']), dict(attrs={'class': ['post-meta', 'article-guts', 'standalone']})
+        dict(itemprop=['article-header', 'article-body']),
+        classes('main post-meta article-guts standalone'),
     ]
 
     remove_tags = [
+        classes('xf_thread_iframe_wrapper topnav-sections nav-previous nav-next ars-gallery-caption-credit'
+                ' ars-gallery-caption-text ars-gallery-caption-arrow font-impact sr-only author-mini-bio'
+                ' taboola-container comments site-header site-footer video corner-info article-expander'
+                ' left-column related-stories article-social text-settings-dropdown-story intro-image'),
         dict(name=['object', 'link', 'embed', 'iframe', 'meta']),
-        dict(attrs={'class': ['video', 'corner-info', 'article-expander']}),
         dict(id=['social-left', 'article-footer-wrap']),
         dict(name='nav', attrs={'class': 'subheading'}),
     ]
     remove_attributes = ['lang', 'style']
 
-    # Feed are found here: http://arstechnica.com/rss-feeds/
+    # Feed are found here: [url]http://arstechnica.com/rss-feeds/[/url]
     feeds = [
-        ('Ars Technica', 'http://feeds.arstechnica.com/arstechnica/index'),
-        ('Features', 'http://feeds.arstechnica.com/arstechnica/features'),
-        ('Technology Lab', 'http://feeds.arstechnica.com/arstechnica/technology-lab'),
-        ('Gear &amp; Gadgets', 'http://feeds.arstechnica.com/arstechnica/gadgets'),
-        ('Ministry of Innovation', 'http://feeds.arstechnica.com/arstechnica/business'),
-        ('Risk Assessment', 'http://feeds.arstechnica.com/arstechnica/security'),
-        ('Law &amp; Disorder', 'http://feeds.arstechnica.com/arstechnica/tech-policy'),
-        ('Infinite Loop', 'http://feeds.arstechnica.com/arstechnica/apple'),
-        ('Opposable Thumbs', 'http://feeds.arstechnica.com/arstechnica/gaming'),
-        ('Scientific Method', 'http://feeds.arstechnica.com/arstechnica/science'),
-        ('The Multiverse', 'http://feeds.arstechnica.com/arstechnica/multiverse'),
-        ('Cars Technica', 'http://feeds.arstechnica.com/arstechnica/cars'),
-        ('Staff', 'http://feeds.arstechnica.com/arstechnica/staff-blogs'),
-        ('Open Source', 'http://feeds.arstechnica.com/arstechnica/open-source'),
-        ('microsoft', 'http://feeds.arstechnica.com/arstechnica/microsoft'),
-        ('software', 'http://feeds.arstechnica.com/arstechnica/software'),
-        ('telecom', 'http://feeds.arstechnica.com/arstechnica/telecom'),
-        ('Internet', 'http://feeds.arstechnica.com/arstechnica/web'),
+            ('Ars Technica', 'https://arstechnica.com/feed/'),
+            ('Features', 'https://arstechnica.com/features/feed/'),
+            ('Technology Lab', 'https://arstechnica.com/information-technology/feed/'),
+            ('Gear &amp; Gadgets', 'https://arstechnica.com/gadgets/feed/'),
+            ('Culture', 'https://arstechnica.com/cuture/feed/'),
+            ('Health', 'https://arstechnica.com/health/feed/'),
+            ('Policy', 'https://arstechnica.com/tech-policy/feed/'),
+            ('Security', 'https://arstechnica.com/security/feed/'),
+            ('Infinite Loop', 'https://arstechnica.com/tag/apple/feed/'),
+            ('Opposable Thumbs', 'https://arstechnica.com/gaming/feed/'),
+            ('Scientific Method', 'https://arstechnica.com/science/feed/'),
+            ('Cars Technica', 'https://arstechnica.com/cars/feed/'),
+            ('Staff', 'https://arstechnica.com/staff/feed/'),
+            ('AI', 'https://arstechnica.com/staff/ai/feed/'),
+            ('Space', 'https://arstechnica.com/space/feed/'),
     ]
 
-    def append_page(self, soup, appendtag, position):
-        pager = soup.find(attrs={'class': 'numbers'})
-        if pager:
-            nexttag = pager.find(attrs={'class': 'next'})
-            if nexttag:
-                nurl = nexttag.parent['href']
-                rawc = self.index_to_soup(nurl, True)
-                soup2 = BeautifulSoup(rawc, fromEncoding=self.encoding)
-                texttag = soup2.find(attrs={'class': 'article-guts'})
-                if texttag is not None:
-                    newpos = len(texttag.contents)
-                    self.append_page(soup2, texttag, newpos)
-                    texttag.extract()
-                    pager.extract()
-                    appendtag.insert(position, texttag)
+    recursions = 1
 
-    def preprocess_html(self, soup):
-        self.append_page(soup, soup.body, 3)
-        for item in soup.findAll('a'):
-            limg = item.find('img')
-            if item.string is not None:
-                str = item.string
-                item.replaceWith(str)
-            else:
-                if limg:
-                    item.name = 'div'
-                    item.attrs = []
-                else:
-                    str = self.tag_to_string(item)
-                    item.replaceWith(str)
-        for div in soup.findAll('div', attrs={'class':'image', 'style':lambda x: x and 'background-image' in x}):
-            url = re.search(r'''url\(['"]?([^'")]+)''', div['style'])
-            if url is not None:
-                div.name = 'img'
-                div['src'] = url.group(1)
-                div['style'] = ''
+    def is_link_wanted(self, url, tag):
+        return re.search(r'/[0-9]/$', url) is not None
+
+    def postprocess_html(self, soup, first_fetch):
+        if not first_fetch:
+            for x in soup.findAll(itemprop=['headline', 'description']):
+                x.extract()
+            for x in soup.findAll(**classes('post-meta')):
+                x.extract()
         return soup
-
-    def preprocess_raw_html(self, raw, url):
-        return '<html><head>' + raw[raw.find('</head>'):]

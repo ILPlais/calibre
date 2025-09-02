@@ -1,24 +1,28 @@
-#!/usr/bin/env python2
-# vim:fileencoding=utf-8
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
+#!/usr/bin/env python
+
 
 __license__ = 'GPL v3'
 __copyright__ = '2015, Kovid Goyal <kovid at kovidgoyal.net>'
 
-import posixpath, os, time, types
-from collections import namedtuple, defaultdict
+import os
+import posixpath
+import time
+import types
+from collections import defaultdict, namedtuple
 from itertools import chain
 
-from calibre import prepare_string_for_xml, force_unicode
-from calibre.ebooks.oeb.base import XPath, xml2text
-from calibre.ebooks.oeb.polish.container import OEB_DOCS, OEB_STYLES, OEB_FONTS
-from calibre.ebooks.oeb.polish.spell import get_all_words, count_all_chars
-from calibre.utils.icu import numeric_sort_key, safe_chr
-from calibre.utils.imghdr import identify
 from css_selectors import Select, SelectorError
 
-File = namedtuple('File', 'name dir basename size category')
+from calibre import force_unicode, prepare_string_for_xml
+from calibre.ebooks.oeb.base import XPath, xml2text
+from calibre.ebooks.oeb.polish.container import OEB_DOCS, OEB_STYLES
+from calibre.ebooks.oeb.polish.spell import count_all_chars, get_all_words
+from calibre.ebooks.oeb.polish.utils import OEB_FONTS
+from calibre.utils.icu import numeric_sort_key, safe_chr
+from calibre.utils.imghdr import identify
+from polyglot.builtins import iteritems
+
+File = namedtuple('File', 'name dir basename size category word_count')
 
 
 def get_category(name, mt):
@@ -32,7 +36,7 @@ def get_category(name, mt):
     elif mt in OEB_DOCS:
         category = 'text'
     ext = name.rpartition('.')[-1].lower()
-    if ext in {'ttf', 'otf', 'woff'}:
+    if ext in {'ttf', 'otf', 'woff', 'woff2'}:
         # Probably wrong mimetype in the OPF
         category = 'font'
     elif ext == 'opf':
@@ -60,9 +64,10 @@ def safe_img_data(container, name, mt):
 
 
 def files_data(container, *args):
-    for name, path in container.name_path_map.iteritems():
+    fwc = file_words_counts or {}
+    for name, path in iteritems(container.name_path_map):
         yield File(name, posixpath.dirname(name), posixpath.basename(name), safe_size(container, name),
-                   get_category(name, container.mime_map.get(name, '')))
+                   get_category(name, container.mime_map.get(name, '')), fwc.get(name, -1))
 
 
 Image = namedtuple('Image', 'name mime_type usage size basename id width height')
@@ -88,7 +93,7 @@ def safe_href_to_name(container, href, base):
 def images_data(container, *args):
     image_usage = defaultdict(set)
     link_sources = OEB_STYLES | OEB_DOCS
-    for name, mt in container.mime_map.iteritems():
+    for name, mt in iteritems(container.mime_map):
         if mt in link_sources:
             for href, line_number, offset in container.iterlinks(name):
                 target = safe_href_to_name(container, href, name)
@@ -98,7 +103,7 @@ def images_data(container, *args):
                         image_usage[target].add(LinkLocation(name, line_number, href))
 
     image_data = []
-    for name, mt in container.mime_map.iteritems():
+    for name, mt in iteritems(container.mime_map):
         if mt.startswith('image/') and container.exists(name):
             image_data.append(Image(name, mt, sort_locations(container, image_usage.get(name, set())), safe_size(container, name),
                                     posixpath.basename(name), len(image_data), *safe_img_data(container, name, mt)))
@@ -158,20 +163,20 @@ def links_data(container, *args):
     links = []
     anchor_pat = XPath('//*[@id or @name]')
     link_pat = XPath('//h:a[@href]')
-    for name, mt in container.mime_map.iteritems():
+    for name, mt in iteritems(container.mime_map):
         if mt in OEB_DOCS:
             root = container.parsed(name)
             anchor_map[name] = create_anchor_map(root, anchor_pat, name)
             for a in link_pat(root):
                 href = a.get('href')
                 text = description_for_anchor(a)
+                location = LinkLocation(name, a.sourceline, href)
                 if href:
                     base, frag = href.partition('#')[0::2]
                     if frag and not base:
                         dest = name
                     else:
                         dest = safe_href_to_name(container, href, name)
-                    location = LinkLocation(name, a.sourceline, href)
                     links.append((base, frag, dest, location, text))
                 else:
                     links.append(('', '', None, location, text))
@@ -198,9 +203,12 @@ def links_data(container, *args):
 Word = namedtuple('Word', 'id word locale usage')
 
 
+file_words_counts = None
+
+
 def words_data(container, book_locale, *args):
-    count, words = get_all_words(container, book_locale, get_word_count=True)
-    return (count, tuple(Word(i, word, locale, v) for i, ((word, locale), v) in enumerate(words.iteritems())))
+    count, words = get_all_words(container, book_locale, get_word_count=True, file_words_counts=file_words_counts)
+    return (count, tuple(Word(i, word, locale, v) for i, ((word, locale), v) in enumerate(iteritems(words))))
 
 
 Char = namedtuple('Char', 'id char codepoint usage count')
@@ -213,7 +221,7 @@ def chars_data(container, book_locale, *args):
     def sort_key(name):
         return nmap.get(name, len(nmap)), numeric_sort_key(name)
 
-    for i, (codepoint, usage) in enumerate(cc.chars.iteritems()):
+    for i, (codepoint, usage) in enumerate(iteritems(cc.chars)):
         yield Char(i, safe_chr(codepoint), codepoint, sorted(usage, key=sort_key), cc.counter[codepoint])
 
 
@@ -230,7 +238,7 @@ ClassElement = namedtuple('ClassElement', 'name line_number text_on_line tag mat
 
 def css_data(container, book_locale, result_data, *args):
     import tinycss
-    from tinycss.css21 import RuleSet, ImportRule
+    from tinycss.css21 import ImportRule, RuleSet
 
     def css_rules(file_name, rules, sourceline=0):
         ans = []
@@ -252,7 +260,7 @@ def css_data(container, book_locale, result_data, *args):
     spine_names = {name for name, is_linear in container.spine_names}
     style_path, link_path = XPath('//h:style'), XPath('//h:link/@href')
 
-    for name, mt in container.mime_map.iteritems():
+    for name, mt in iteritems(container.mime_map):
         if mt in OEB_STYLES:
             importable_sheets[name] = css_rules(name, parser.parse_stylesheet(container.raw_data(name)).rules)
         elif mt in OEB_DOCS and name in spine_names:
@@ -262,7 +270,7 @@ def css_data(container, book_locale, result_data, *args):
                     html_sheets[name].append(
                         css_rules(name, parser.parse_stylesheet(force_unicode(style.text, 'utf-8')).rules, style.sourceline - 1))
 
-    rule_map = defaultdict(lambda : defaultdict(list))
+    rule_map = defaultdict(lambda: defaultdict(list))
 
     def rules_in_sheet(sheet):
         for rule in sheet:
@@ -271,8 +279,7 @@ def css_data(container, book_locale, result_data, *args):
             else:  # @import rule
                 isheet = importable_sheets.get(rule)
                 if isheet is not None:
-                    for irule in rules_in_sheet(isheet):
-                        yield irule
+                    yield from rules_in_sheet(isheet)
 
     def sheets_for_html(name, root):
         for href in link_path(root):
@@ -288,9 +295,9 @@ def css_data(container, book_locale, result_data, *args):
         if ans is None:
             tag = elem.tag.rpartition('}')[-1]
             if elem.attrib:
-                attribs = ' '.join('%s="%s"' % (k, prepare_string_for_xml(elem.get(k, ''), True)) for k in elem.keys())
-                return '<%s %s>' % (tag, attribs)
-            ans = tt_cache[elem] = '<%s>' % tag
+                attribs = ' '.join('{}="{}"'.format(k, prepare_string_for_xml(elem.get(k, ''), True)) for k in elem.keys())
+                return f'<{tag} {attribs}>'
+            ans = tt_cache[elem] = f'<{tag}>'
 
     def matches_for_selector(selector, select, class_map, rule):
         lsel = selector.lower()
@@ -298,18 +305,29 @@ def css_data(container, book_locale, result_data, *args):
             matches = tuple(select(selector))
         except SelectorError:
             return ()
-        for elem in matches:
-            for cls in elem.get('class', '').split():
-                if '.' + cls.lower() in lsel:
-                    class_map[cls][elem].append(rule)
+        seen = set()
+
+        def get_elem_and_ancestors(elem):
+            p = elem
+            while p is not None:
+                if p not in seen:
+                    yield p
+                    seen.add(p)
+                p = p.getparent()
+
+        for e in matches:
+            for elem in get_elem_and_ancestors(e):
+                for cls in elem.get('class', '').split():
+                    if '.' + cls.lower() in lsel:
+                        class_map[cls][elem].append(rule)
 
         return (MatchLocation(tag_text(elem), elem.sourceline) for elem in matches)
 
-    class_map = defaultdict(lambda : defaultdict(list))
+    class_map = defaultdict(lambda: defaultdict(list))
 
-    for name, inline_sheets in html_sheets.iteritems():
+    for name, inline_sheets in iteritems(html_sheets):
         root = container.parsed(name)
-        cmap = defaultdict(lambda : defaultdict(list))
+        cmap = defaultdict(lambda: defaultdict(list))
         for elem in root.xpath('//*[@class]'):
             for cls in elem.get('class', '').split():
                 cmap[cls][elem] = []
@@ -317,21 +335,21 @@ def css_data(container, book_locale, result_data, *args):
         for sheet in chain(sheets_for_html(name, root), inline_sheets):
             for rule in rules_in_sheet(sheet):
                 rule_map[rule][name].extend(matches_for_selector(rule.selector, select, cmap, rule))
-        for cls, elem_map in cmap.iteritems():
+        for cls, elem_map in iteritems(cmap):
             class_elements = class_map[cls][name]
-            for elem, usage in elem_map.iteritems():
+            for elem, usage in iteritems(elem_map):
                 class_elements.append(
                     ClassElement(name, elem.sourceline, elem.get('class'), tag_text(elem), tuple(usage)))
 
     result_data['classes'] = ans = []
-    for cls, name_map in class_map.iteritems():
-        la = tuple(ClassFileMatch(name, tuple(class_elements), numeric_sort_key(name)) for name, class_elements in name_map.iteritems() if class_elements)
+    for cls, name_map in iteritems(class_map):
+        la = tuple(ClassFileMatch(name, tuple(class_elements), numeric_sort_key(name)) for name, class_elements in iteritems(name_map) if class_elements)
         num_of_matches = sum(sum(len(ce.matched_rules) for ce in cfm.class_elements) for cfm in la)
         ans.append(ClassEntry(cls, num_of_matches, la, numeric_sort_key(cls)))
 
     ans = []
-    for rule, loc_map in rule_map.iteritems():
-        la = tuple(CSSFileMatch(name, tuple(locations), numeric_sort_key(name)) for name, locations in loc_map.iteritems() if locations)
+    for rule, loc_map in iteritems(rule_map):
+        la = tuple(CSSFileMatch(name, tuple(locations), numeric_sort_key(name)) for name, locations in iteritems(loc_map) if locations)
         count = sum(len(fm.locations) for fm in la)
         ans.append(CSSEntry(rule, count, la, numeric_sort_key(rule.selector)))
 
@@ -339,12 +357,24 @@ def css_data(container, book_locale, result_data, *args):
 
 
 def gather_data(container, book_locale):
+    global file_words_counts
     timing = {}
     data = {}
-    for x in 'files chars images links words css'.split():
+    file_words_counts = {}
+    for x in 'chars images links words css files'.split():
         st = time.time()
         data[x] = globals()[x + '_data'](container, book_locale, data)
         if isinstance(data[x], types.GeneratorType):
             data[x] = tuple(data[x])
         timing[x] = time.time() - st
+    file_words_counts = None
     return data, timing
+
+
+def debug_data_gather():
+    import sys
+
+    from calibre.gui2.tweak_book import dictionaries
+    from calibre.gui2.tweak_book.boss import get_container
+    c = get_container(sys.argv[-1])
+    gather_data(c, dictionaries.default_locale)

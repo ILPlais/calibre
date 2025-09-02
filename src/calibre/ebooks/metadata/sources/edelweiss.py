@@ -1,15 +1,19 @@
-#!/usr/bin/env python2
+#!/usr/bin/env python
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:fdm=marker:ai
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
+from __future__ import absolute_import, division, print_function, unicode_literals
 
 __license__   = 'GPL v3'
 __copyright__ = '2013, Kovid Goyal <kovid at kovidgoyal.net>'
 __docformat__ = 'restructuredtext en'
 
-import time, re
+import re
+import time
 from threading import Thread
-from Queue import Queue, Empty
+
+try:
+    from queue import Empty, Queue
+except ImportError:
+    from Queue import Empty, Queue
 
 from calibre import as_unicode, random_user_agent
 from calibre.ebooks.metadata import check_isbn
@@ -31,7 +35,7 @@ def parse_html(raw):
 
 def astext(node):
     from lxml import etree
-    return etree.tostring(node, method='text', encoding=unicode,
+    return etree.tostring(node, method='text', encoding='unicode',
                           with_tail=False).strip()
 
 
@@ -50,7 +54,7 @@ class Worker(Thread):  # {{{
         'sku={0}&idPrefix=content_1_{0}&mode=0'.format(self.sku))
         try:
             raw = self.br.open_novisit(url, timeout=self.timeout).read()
-        except:
+        except Exception:
             self.log.exception('Failed to load comments page: %r'%url)
             return
 
@@ -59,7 +63,7 @@ class Worker(Thread):  # {{{
             mi.source_relevance = self.relevance
             self.plugin.clean_downloaded_metadata(mi)
             self.result_queue.put(mi)
-        except:
+        except Exception:
             self.log.exception('Failed to parse details for sku: %s'%self.sku)
 
     def parse(self, raw):
@@ -104,19 +108,20 @@ class Worker(Thread):  # {{{
 
     def render_comments(self, desc):
         from lxml import etree
+
         from calibre.library.comments import sanitize_comments_html
         for c in desc.xpath('descendant::noscript'):
             c.getparent().remove(c)
         for a in desc.xpath('descendant::a[@href]'):
             del a.attrib['href']
             a.tag = 'span'
-        desc = etree.tostring(desc, method='html', encoding=unicode).strip()
+        desc = etree.tostring(desc, method='html', encoding='unicode').strip()
 
         # remove all attributes from tags
         desc = re.sub(r'<([a-zA-Z0-9]+)\s[^>]+>', r'<\1>', desc)
         # Collapse whitespace
-        # desc = re.sub('\n+', '\n', desc)
-        # desc = re.sub(' +', ' ', desc)
+        # desc = re.sub(r'\n+', '\n', desc)
+        # desc = re.sub(r' +', ' ', desc)
         # Remove comments
         desc = re.sub(r'(?s)<!--.*?-->', '', desc)
         return sanitize_comments_html(desc)
@@ -124,8 +129,9 @@ class Worker(Thread):  # {{{
 
 
 def get_basic_data(browser, log, *skus):
-    from calibre.utils.date import parse_only_date
     from mechanize import Request
+
+    from calibre.utils.date import parse_only_date
     zeroes = ','.join('0' for sku in skus)
     data = {
             'skus': ','.join(skus),
@@ -137,7 +143,7 @@ def get_basic_data(browser, log, *skus):
             'orderID': '0',
             'mailingID': '',
             'tContentWidth': '926',
-            'originalOrder': ','.join(str(i) for i in range(len(skus))),
+            'originalOrder': ','.join(type('')(i) for i in range(len(skus))),
             'selectedOrderID': '0',
             'selectedSortColumn': '0',
             'listType': '1',
@@ -160,7 +166,7 @@ def get_basic_data(browser, log, *skus):
             tags = []
         rating = 0
         for bar in row.xpath('descendant::*[contains(@class, "bgdColorCommunity")]/@style'):
-            m = re.search('width: (\d+)px;.*max-width: (\d+)px', bar)
+            m = re.search(r'width: (\d+)px;.*max-width: (\d+)px', bar)
             if m is not None:
                 rating = float(m.group(1)) / float(m.group(2))
                 break
@@ -231,7 +237,10 @@ class Edelweiss(Source):
     # }}}
 
     def create_query(self, log, title=None, authors=None, identifiers={}):
-        from urllib import urlencode
+        try:
+            from urllib.parse import urlencode
+        except ImportError:
+            from urllib import urlencode
         import time
         BASE_URL = ('https://www.edelweiss.plus/GetTreelineControl.aspx?'
         'controlName=/uc/listviews/controls/ListView_data.ascx&itemID=0&resultType=32&dashboardType=8&itemType=1&dataType=products&keywordSearch&')
@@ -250,7 +259,7 @@ class Edelweiss(Source):
             return None
         params = {
             'q': (' '.join(keywords)).encode('utf-8'),
-            '_': str(int(time.time()))
+            '_': type('')(int(time.time()))
         }
         return BASE_URL+urlencode(params)
 
@@ -283,7 +292,7 @@ class Edelweiss(Source):
             except Exception as e:
                 log.exception('Failed to make identify query: %r'%query)
                 return as_unicode(e)
-            items = re.search('window[.]items\s*=\s*(.+?);', raw)
+            items = re.search(r'window[.]items\s*=\s*(.+?);', raw)
             if items is None:
                 log.error('Failed to get list of matching items')
                 log.debug('Response text:')
@@ -366,36 +375,35 @@ class Edelweiss(Source):
         try:
             cdata = br.open_novisit(cached_url, timeout=timeout).read()
             result_queue.put((self, cdata))
-        except:
+        except Exception:
             log.exception('Failed to download cover from:', cached_url)
     # }}}
 
 
 if __name__ == '__main__':
-    from calibre.ebooks.metadata.sources.test import (
-        test_identify_plugin, title_test, authors_test, comments_test, pubdate_test)
+    from calibre.ebooks.metadata.sources.test import authors_test, comments_test, pubdate_test, test_identify_plugin, title_test
     tests = [
         (  # A title and author search
-         {'title': 'The Husband\'s Secret', 'authors':['Liane Moriarty']},
-         [title_test('The Husband\'s Secret', exact=True),
-                authors_test(['Liane Moriarty'])]
+         {'title': "The Husband's Secret", 'authors':['Liane Moriarty']},
+         [title_test("The Husband's Secret", exact=True),
+          authors_test(['Liane Moriarty'])]
         ),
 
         (  # An isbn present in edelweiss
          {'identifiers':{'isbn': '9780312621360'}, },
          [title_test('Flame: A Sky Chasers Novel', exact=True),
-                authors_test(['Amy Kathleen Ryan'])]
+          authors_test(['Amy Kathleen Ryan'])]
         ),
 
         # Multiple authors and two part title and no general description
         ({'identifiers':{'edelweiss':'0321180607'}},
-        [title_test(
-        "XQuery From the Experts: A Guide to the W3C XML Query Language"
-        , exact=True), authors_test([
+        [title_test('XQuery From the Experts: A Guide to the W3C XML Query Language', exact=True),
+         authors_test([
             'Howard Katz', 'Don Chamberlin', 'Denise Draper', 'Mary Fernandez',
             'Michael Kay', 'Jonathan Robie', 'Michael Rys', 'Jerome Simeon',
-            'Jim Tivy', 'Philip Wadler']), pubdate_test(2003, 8, 22),
-            comments_test('Jérôme Siméon'), lambda mi: bool(mi.comments and 'No title summary' not in mi.comments)
+            'Jim Tivy', 'Philip Wadler']),
+         pubdate_test(2003, 8, 22),
+         comments_test('Jérôme Siméon'), lambda mi: bool(mi.comments and 'No title summary' not in mi.comments)
         ]),
     ]
     start, stop = 0, len(tests)

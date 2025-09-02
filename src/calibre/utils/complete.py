@@ -1,6 +1,5 @@
-#!/usr/bin/env python2
-# vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
-from __future__ import with_statement
+#!/usr/bin/env python
+
 
 __license__   = 'GPL v3'
 __copyright__ = '2009, Kovid Goyal <kovid@kovidgoyal.net>'
@@ -12,46 +11,13 @@ BASH completion for calibre commands that are too complex for simple
 completion.
 '''
 
-import sys, os, shlex, glob, re
+import glob
+import os
+import re
+import shlex
+import sys
 
-
-def prints(*args, **kwargs):
-    '''
-    Print unicode arguments safely by encoding them to preferred_encoding
-    Has the same signature as the print function from Python 3, except for the
-    additional keyword argument safe_encode, which if set to True will cause the
-    function to use repr when encoding fails.
-    '''
-    file = kwargs.get('file', sys.stdout)
-    sep  = kwargs.get('sep', ' ')
-    end  = kwargs.get('end', '\n')
-    enc = 'utf-8'
-    safe_encode = kwargs.get('safe_encode', False)
-    for i, arg in enumerate(args):
-        if isinstance(arg, unicode):
-            try:
-                arg = arg.encode(enc)
-            except UnicodeEncodeError:
-                if not safe_encode:
-                    raise
-                arg = repr(arg)
-        if not isinstance(arg, str):
-            try:
-                arg = str(arg)
-            except ValueError:
-                arg = unicode(arg)
-            if isinstance(arg, unicode):
-                try:
-                    arg = arg.encode(enc)
-                except UnicodeEncodeError:
-                    if not safe_encode:
-                        raise
-                    arg = repr(arg)
-
-        file.write(arg)
-        if i != len(args)-1:
-            file.write(sep)
-    file.write(end)
+prints = print
 
 
 def split(src):
@@ -93,15 +59,15 @@ def get_opts_from_parser(parser, prefix):
 
 
 def send(ans):
-    pat = re.compile('([^0-9a-zA-Z_./-])')
+    pat = re.compile(r'([^0-9a-zA-Z_./-])')
     for x in sorted(set(ans)):
-        x = pat.sub(lambda m : '\\'+m.group(1), x)
+        x = pat.sub(lambda m: '\\'+m.group(1), x)
         if x.endswith('\\ '):
             x = x[:-2]+' '
         prints(x)
 
 
-class EbookConvert(object):
+class EbookConvert:
 
     def __init__(self, comp_line, pos):
         words = split(comp_line[:pos])
@@ -115,7 +81,7 @@ class EbookConvert(object):
         self.previous = words[-2 if prefix else -1]
         from calibre.utils.serialize import msgpack_loads
         self.cache = msgpack_loads(open(os.path.join(sys.resources_location,
-            'ebook-convert-complete.calibre_msgpack'), 'rb').read())
+            'ebook-convert-complete.calibre_msgpack'), 'rb').read(), use_list=False)
         self.complete(wc)
 
     def complete(self, wc):
@@ -141,7 +107,7 @@ class EbookConvert(object):
                     try:
                         parser, _ = create_option_parser(self.words[:3], log)
                         ans += list(get_opts_from_parser(parser, self.prefix))
-                    except:
+                    except Exception:
                         pass
             if self.previous.startswith('-'):
                 ans += list(files_and_dirs(self.prefix, None))

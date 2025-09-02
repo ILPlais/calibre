@@ -1,5 +1,3 @@
-from __future__ import with_statement
-from __future__ import print_function
 __license__   = 'GPL v3'
 __copyright__ = '2008, Kovid Goyal kovid@kovidgoyal.net'
 __docformat__ = 'restructuredtext en'
@@ -7,16 +5,33 @@ __docformat__ = 'restructuredtext en'
 '''
 Manage application-wide preferences.
 '''
-import os, cPickle, base64, datetime, json, plistlib
-from copy import deepcopy
-import optparse
 
-from calibre.constants import (config_dir, CONFIG_DIR_MODE, __appname__,
-        get_version, __author__, DEBUG, iswindows)
-from calibre.utils.lock import ExclusiveFile
-from calibre.utils.config_base import (make_config_dir, Option, OptionValues,
-        OptionSet, ConfigInterface, Config, prefs, StringConfig, ConfigProxy,
-        read_raw_tweaks, read_tweaks, write_tweaks, tweaks, plugin_dir)
+import optparse
+import os
+from copy import deepcopy
+
+from calibre.constants import CONFIG_DIR_MODE, __appname__, __author__, config_dir, get_version, iswindows
+from calibre.utils.config_base import (
+    Config,
+    ConfigInterface,
+    ConfigProxy,
+    Option,
+    OptionSet,
+    OptionValues,
+    StringConfig,
+    commit_data,
+    from_json,
+    json_dumps,
+    json_loads,
+    make_config_dir,
+    plugin_dir,
+    prefs,
+    read_data,
+    to_json,
+    tweaks,
+)
+from calibre.utils.localization import _
+from polyglot.builtins import native_string_type, string_or_bytes
 
 # optparse uses gettext.gettext instead of _ from builtins, so we
 # monkey patch it.
@@ -24,9 +39,8 @@ optparse._ = _
 
 if False:
     # Make pyflakes happy
-    Config, ConfigProxy, Option, OptionValues, StringConfig
-    OptionSet, ConfigInterface, read_tweaks, write_tweaks
-    read_raw_tweaks, tweaks, plugin_dir, prefs
+    Config, ConfigProxy, Option, OptionValues, StringConfig, OptionSet
+    ConfigInterface, tweaks, plugin_dir, prefs, from_json, to_json, make_config_dir
 
 
 def check_config_write_access():
@@ -45,23 +59,21 @@ class CustomHelpFormatter(optparse.IndentedHelpFormatter):
 
     def format_heading(self, heading):
         from calibre.utils.terminal import colored
-        return "%*s%s:\n" % (self.current_indent, '',
-                                 colored(heading, fg='blue', bold=True))
+        return  ' '*self.current_indent + '{}:\n'.format(colored(heading, fg='blue', bold=True))
 
     def format_option(self, option):
         import textwrap
+
         from calibre.utils.terminal import colored
 
         result = []
         opts = self.option_strings[option]
         opt_width = self.help_position - self.current_indent - 2
         if len(opts) > opt_width:
-            opts = "%*s%s\n" % (self.current_indent, "",
-                                    colored(opts, fg='green'))
+            opts = ' '*self.current_indent + '{}\n'.format(colored(opts, fg='green'))
             indent_first = self.help_position
         else:                       # start help on same line as opts
-            opts = "%*s%-*s  " % (self.current_indent, "", opt_width +
-                    len(colored('', fg='green')), colored(opts, fg='green'))
+            opts = ' '*self.current_indent + '%-*s  ' % (opt_width+len(colored('', fg='green')), colored(opts, fg='green'))  # noqa: UP031
             indent_first = 0
         result.append(opts)
         if option.help:
@@ -70,12 +82,11 @@ class CustomHelpFormatter(optparse.IndentedHelpFormatter):
 
             for line in help_text:
                 help_lines.extend(textwrap.wrap(line, self.help_width))
-            result.append("%*s%s\n" % (indent_first, "", help_lines[0]))
-            result.extend(["%*s%s\n" % (self.help_position, "", line)
-                           for line in help_lines[1:]])
-        elif opts[-1] != "\n":
-            result.append("\n")
-        return "".join(result)+'\n'
+            result.append(' '*indent_first + f'{help_lines[0]}\n')
+            result.extend(' '*self.help_position + f'{line}\n' for line in help_lines[1:])
+        elif opts[-1] != '\n':
+            result.append('\n')
+        return ''.join(result)+'\n'
 
 
 class OptionParser(optparse.OptionParser):
@@ -88,6 +99,7 @@ class OptionParser(optparse.OptionParser):
                  conflict_handler='resolve',
                  **kwds):
         import textwrap
+
         from calibre.utils.terminal import colored
 
         usage = textwrap.dedent(usage)
@@ -95,17 +107,17 @@ class OptionParser(optparse.OptionParser):
             epilog = _('Created by ')+colored(__author__, fg='cyan')
         usage += '\n\n'+_('''Whenever you pass arguments to %prog that have spaces in them, '''
                           '''enclose the arguments in quotation marks. For example: "{}"''').format(
-                               "C:\\some path with spaces" if iswindows else '/some path/with spaces') +'\n'
+                               'C:\\some path with spaces' if iswindows else '/some path/with spaces') +'\n'
         if version is None:
-            version = '%%prog (%s %s)'%(__appname__, get_version())
+            version = f'%prog ({__appname__} {get_version()})'
         optparse.OptionParser.__init__(self, usage=usage, version=version, epilog=epilog,
                                formatter=CustomHelpFormatter(),
                                conflict_handler=conflict_handler, **kwds)
         self.gui_mode = gui_mode
         if False:
             # Translatable string from optparse
-            _("Options")
-            _("show this help message and exit")
+            _('Options')
+            _('show this help message and exit')
             _("show program's version number and exit")
 
     def print_usage(self, file=None):
@@ -161,11 +173,11 @@ class OptionParser(optparse.OptionParser):
 
     def options_iter(self):
         for opt in self.option_list:
-            if str(opt).strip():
+            if native_string_type(opt).strip():
                 yield opt
         for gr in self.option_groups:
             for opt in gr.option_list:
-                if str(opt).strip():
+                if native_string_type(opt).strip():
                     yield opt
 
     def option_by_dest(self, dest):
@@ -188,8 +200,9 @@ class OptionParser(optparse.OptionParser):
                 upper.__dict__[dest] = lower.__dict__[dest]
 
     def add_option_group(self, *args, **kwargs):
-        if isinstance(args[0], type(u'')):
-            args = [optparse.OptionGroup(self, *args, **kwargs)] + list(args[1:])
+        if isinstance(args[0], string_or_bytes):
+            args = list(args)
+            args[0] = native_string_type(args[0])
         return optparse.OptionParser.add_option_group(self, *args, **kwargs)
 
 
@@ -197,38 +210,61 @@ class DynamicConfig(dict):
     '''
     A replacement for QSettings that supports dynamic config keys.
     Returns `None` if a config key is not found. Note that the config
-    data is stored in a non human readable pickle file, so only use this
-    class for preferences that you don't intend to have the users edit directly.
+    data is stored in a JSON file.
     '''
 
     def __init__(self, name='dynamic'):
         dict.__init__(self, {})
         self.name = name
         self.defaults = {}
-        self.file_path = os.path.join(config_dir, name+'.pickle')
         self.refresh()
 
+    @property
+    def file_path(self):
+        return os.path.join(config_dir, self.name+'.pickle.json')
+
     def decouple(self, prefix):
-        self.file_path = os.path.join(os.path.dirname(self.file_path), prefix + os.path.basename(self.file_path))
+        self.name = prefix + self.name
         self.refresh()
+
+    def read_old_serialized_representation(self):
+        from calibre.utils.serialize import pickle_loads
+        from calibre.utils.shared_file import share_open
+        path = self.file_path.rpartition('.')[0]
+        try:
+            with share_open(path, 'rb') as f:
+                raw = f.read()
+        except OSError:
+            raw = b''
+        try:
+            d = pickle_loads(raw).copy()
+        except Exception:
+            d = {}
+        return d
 
     def refresh(self, clear_current=True):
         d = {}
-        if os.path.exists(self.file_path):
-            with ExclusiveFile(self.file_path) as f:
-                raw = f.read()
-                try:
-                    d = cPickle.loads(raw) if raw.strip() else {}
-                except SystemError:
-                    pass
-                except:
-                    print('WARNING: Failed to unpickle stored config object, ignoring')
-                    if DEBUG:
-                        import traceback
-                        traceback.print_exc()
-                    d = {}
+        migrate = False
         if clear_current:
             self.clear()
+        try:
+            raw = read_data(self.file_path)
+        except FileNotFoundError:
+            d = self.read_old_serialized_representation()
+            migrate = bool(d)
+        else:
+            if raw:
+                try:
+                    d = json_loads(raw)
+                except Exception as err:
+                    print(f'Failed to de-serialize JSON representation of stored dynamic data for {self.name} with error: {err}')
+            else:
+                d = self.read_old_serialized_representation()
+                migrate = bool(d)
+        if migrate and d:
+            raw = json_dumps(d, ignore_unserializable=True)
+            commit_data(self.file_path, raw)
+
         self.update(d)
 
     def __getitem__(self, key):
@@ -251,26 +287,21 @@ class DynamicConfig(dict):
         self.__setitem__(key, val)
 
     def commit(self):
-        if hasattr(self, 'file_path') and self.file_path:
-            if not os.path.exists(self.file_path):
-                make_config_dir()
-            with ExclusiveFile(self.file_path) as f:
-                raw = cPickle.dumps(self, -1)
-                f.seek(0)
-                f.truncate()
-                f.write(raw)
+        if not getattr(self, 'name', None):
+            return
+        raw = json_dumps(self)
+        commit_data(self.file_path, raw)
 
 
 dynamic = DynamicConfig()
 
 
 class XMLConfig(dict):
-
     '''
     Similar to :class:`DynamicConfig`, except that it uses an XML storage
     backend instead of a pickle file.
 
-    See `https://docs.python.org/dev/library/plistlib.html`_ for the supported
+    See `https://docs.python.org/library/plistlib.html`_ for the supported
     data types.
     '''
 
@@ -291,20 +322,22 @@ class XMLConfig(dict):
     def mtime(self):
         try:
             return os.path.getmtime(self.file_path)
-        except EnvironmentError:
+        except OSError:
             return 0
 
     def touch(self):
         try:
             os.utime(self.file_path, None)
-        except EnvironmentError:
+        except OSError:
             pass
 
     def raw_to_object(self, raw):
-        return plistlib.readPlistFromString(raw)
+        from polyglot.plistlib import loads
+        return loads(raw)
 
     def to_raw(self):
-        return plistlib.writePlistToString(self)
+        from polyglot.plistlib import dumps
+        return dumps(self)
 
     def decouple(self, prefix):
         self.file_path = os.path.join(os.path.dirname(self.file_path), prefix + os.path.basename(self.file_path))
@@ -312,42 +345,39 @@ class XMLConfig(dict):
 
     def refresh(self, clear_current=True):
         d = {}
-        if os.path.exists(self.file_path):
-            with ExclusiveFile(self.file_path) as f:
-                raw = f.read()
-                try:
-                    d = self.raw_to_object(raw) if raw.strip() else {}
-                except SystemError:
-                    pass
-                except:
-                    import traceback
-                    traceback.print_exc()
-                    d = {}
+        try:
+            raw = read_data(self.file_path)
+        except FileNotFoundError:
+            pass
+        else:
+            try:
+                d = self.raw_to_object(raw) if raw.strip() else {}
+            except SystemError:
+                pass
+            except Exception:
+                import traceback
+                traceback.print_exc()
+                d = {}
         if clear_current:
             self.clear()
         self.update(d)
 
+    def has_key(self, key):
+        return dict.__contains__(self, key)
+
     def __getitem__(self, key):
         try:
-            ans = dict.__getitem__(self, key)
-            if isinstance(ans, plistlib.Data):
-                ans = ans.data
-            return ans
+            return dict.__getitem__(self, key)
         except KeyError:
             return self.defaults.get(key, None)
 
     def get(self, key, default=None):
         try:
-            ans = dict.__getitem__(self, key)
-            if isinstance(ans, plistlib.Data):
-                ans = ans.data
-            return ans
+            return dict.__getitem__(self, key)
         except KeyError:
             return self.defaults.get(key, default)
 
     def __setitem__(self, key, val):
-        if isinstance(val, (bytes, str)):
-            val = plistlib.Data(val)
         dict.__setitem__(self, key, val)
         self.commit()
 
@@ -365,15 +395,11 @@ class XMLConfig(dict):
     def commit(self):
         if self.no_commit:
             return
-        if hasattr(self, 'file_path') and self.file_path:
+        if getattr(self, 'file_path', None):
             dpath = os.path.dirname(self.file_path)
             if not os.path.exists(dpath):
                 os.makedirs(dpath, mode=CONFIG_DIR_MODE)
-            with ExclusiveFile(self.file_path) as f:
-                raw = self.to_raw()
-                f.seek(0)
-                f.truncate()
-                f.write(raw)
+            commit_data(self.file_path, self.to_raw())
 
     def __enter__(self):
         self.no_commit = True
@@ -383,36 +409,15 @@ class XMLConfig(dict):
         self.commit()
 
 
-def to_json(obj):
-    if isinstance(obj, bytearray):
-        return {'__class__': 'bytearray',
-                '__value__': base64.standard_b64encode(bytes(obj))}
-    if isinstance(obj, datetime.datetime):
-        from calibre.utils.date import isoformat
-        return {'__class__': 'datetime.datetime',
-                '__value__': isoformat(obj, as_utc=True)}
-    raise TypeError(repr(obj) + ' is not JSON serializable')
-
-
-def from_json(obj):
-    if '__class__' in obj:
-        if obj['__class__'] == 'bytearray':
-            return bytearray(base64.standard_b64decode(obj['__value__']))
-        if obj['__class__'] == 'datetime.datetime':
-            from calibre.utils.iso8601 import parse_iso8601
-            return parse_iso8601(obj['__value__'], assume_utc=True)
-    return obj
-
-
 class JSONConfig(XMLConfig):
 
     EXTENSION = '.json'
 
     def raw_to_object(self, raw):
-        return json.loads(raw.decode('utf-8'), object_hook=from_json)
+        return json_loads(raw)
 
     def to_raw(self):
-        return json.dumps(self, indent=2, default=to_json)
+        return json_dumps(self)
 
     def __getitem__(self, key):
         try:

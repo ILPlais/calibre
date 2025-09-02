@@ -1,12 +1,10 @@
-#!/usr/bin/env python2
-# vim:fileencoding=utf-8
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
+#!/usr/bin/env python
+
 
 __license__ = 'GPL v3'
 __copyright__ = '2014, Kovid Goyal <kovid at kovidgoyal.net>'
 
-from struct import unpack_from, error
+from struct import error, unpack_from
 
 from calibre.utils.imghdr import what
 
@@ -15,7 +13,7 @@ def find_imgtype(data):
     return what(None, data) or 'unknown'
 
 
-class Container(object):
+class Container:
 
     def __init__(self, data):
         self.is_image_container = False
@@ -46,5 +44,3 @@ class Container(object):
             if imgtype != 'unknown':
                 return data, imgtype
         return None, None
-
-

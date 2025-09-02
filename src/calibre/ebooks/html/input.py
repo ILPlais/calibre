@@ -1,7 +1,5 @@
-#!/usr/bin/env python2
-# vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
-from __future__ import with_statement
-from __future__ import print_function
+#!/usr/bin/env python
+
 
 __license__   = 'GPL v3'
 __copyright__ = '2009, Kovid Goyal <kovid@kovidgoyal.net>'
@@ -12,17 +10,20 @@ __docformat__ = 'restructuredtext en'
 Input plugin for HTML or OPF ebooks.
 '''
 
-import os, re, sys,  errno as gerrno
-from urlparse import urlparse, urlunparse
+import errno as gerrno
+import os
+import re
+import sys
 
-from calibre.ebooks.oeb.base import urlunquote
-from calibre.ebooks.chardet import detect_xml_encoding
+from calibre import replace_entities, unicode_path
 from calibre.constants import iswindows
-from calibre import unicode_path, as_unicode, replace_entities
+from calibre.ebooks.chardet import detect_xml_encoding
+from calibre.ebooks.oeb.base import urlunquote
+from calibre.utils.filenames import case_ignoring_open_file
+from polyglot.urllib import urlparse, urlunparse
 
 
-class Link(object):
-
+class Link:
     '''
     Represents a link in a HTML file.
     '''
@@ -43,10 +44,10 @@ class Link(object):
     def __init__(self, url, base):
         '''
         :param url:  The url this link points to. Must be an unquoted unicode string.
-        :param base: The base directory that relative URLs are with respect to.
+        :param base: The base folder that relative URLs are with respect to.
                      Must be a unicode string.
         '''
-        assert isinstance(url, unicode) and isinstance(base, unicode)
+        assert isinstance(url, str) and isinstance(base, str)
         self.url         = url
         self.parsed_url  = urlparse(self.url)
         self.is_local    = self.parsed_url.scheme in ('', 'file')
@@ -65,7 +66,7 @@ class Link(object):
         return self.path == getattr(other, 'path', other)
 
     def __str__(self):
-        return u'Link: %s --> %s'%(self.url, self.path)
+        return f'Link: {self.url} --> {self.path}'
 
 
 class IgnoreFile(Exception):
@@ -76,8 +77,7 @@ class IgnoreFile(Exception):
         self.errno = errno
 
 
-class HTMLFile(object):
-
+class HTMLFile:
     '''
     Contains basic information about an HTML file. This
     includes a list of links to other files as well as
@@ -88,45 +88,50 @@ class HTMLFile(object):
     '''
 
     HTML_PAT  = re.compile(r'<\s*html', re.IGNORECASE)
-    TITLE_PAT = re.compile('<title>([^<>]+)</title>', re.IGNORECASE)
+    HTML_PAT_BIN  = re.compile(br'<\s*html', re.IGNORECASE)
+    TITLE_PAT = re.compile(r'<title>([^<>]+)</title>', re.IGNORECASE)
     LINK_PAT  = re.compile(
     r'<\s*a\s+.*?href\s*=\s*(?:(?:"(?P<url1>[^"]+)")|(?:\'(?P<url2>[^\']+)\')|(?P<url3>[^\s>]+))',
     re.DOTALL|re.IGNORECASE)
 
-    def __init__(self, path_to_html_file, level, encoding, verbose, referrer=None):
+    def __init__(self, path_to_html_file, level, encoding, verbose, referrer=None, correct_case_mismatches=False):
         '''
         :param level: The level of this file. Should be 0 for the root file.
         :param encoding: Use `encoding` to decode HTML.
         :param referrer: The :class:`HTMLFile` that first refers to this file.
         '''
         self.path     = unicode_path(path_to_html_file, abs=True)
-        self.title    = os.path.splitext(os.path.basename(self.path))[0]
-        self.base     = os.path.dirname(self.path)
         self.level    = level
         self.referrer = referrer
         self.links    = []
 
         try:
-            with open(self.path, 'rb') as f:
+            with (case_ignoring_open_file if correct_case_mismatches else open)(self.path, 'rb') as f:
+                self.path = f.name
+                self.base = os.path.dirname(self.path)
+                self.title = os.path.splitext(os.path.basename(self.path))[0]
                 src = header = f.read(4096)
                 encoding = detect_xml_encoding(src)[1]
                 if encoding:
                     try:
-                        header = header.decode(encoding)
+                        header = header.decode(encoding, errors='replace')
                     except ValueError:
                         pass
-                self.is_binary = level > 0 and not bool(self.HTML_PAT.search(header))
+                self.is_binary = False
+                if level > 0:
+                    pat = self.HTML_PAT_BIN if isinstance(header, bytes) else self.HTML_PAT
+                    self.is_binary = not bool(pat.search(header))
                 if not self.is_binary:
                     src += f.read()
-        except IOError as err:
-            msg = 'Could not read from file: %s with error: %s'%(self.path, as_unicode(err))
+        except OSError as err:
+            msg = f'Could not read from file: {self.path} with error: {err}'
             if level == 0:
-                raise IOError(msg)
+                raise OSError(msg)
             raise IgnoreFile(msg, err.errno)
 
         if not src:
             if level == 0:
-                raise ValueError('The file %s is empty'%self.path)
+                raise ValueError(f'The file {self.path} is empty')
             self.is_binary = True
 
         if not self.is_binary:
@@ -144,8 +149,11 @@ class HTMLFile(object):
     def __eq__(self, other):
         return self.path == getattr(other, 'path', other)
 
+    def __hash__(self):
+        return hash(self.path)
+
     def __str__(self):
-        return u'HTMLFile:%d:%s:%s'%(self.level, 'b' if self.is_binary else 'a', self.path)
+        return f"HTMLFile:{self.level}:{'b' if self.is_binary else 'a'}:{self.path!r}"
 
     def __repr__(self):
         return str(self)
@@ -161,7 +169,7 @@ class HTMLFile(object):
             try:
                 link = self.resolve(url)
             except ValueError:
-                # Unparseable URL, ignore
+                # Unparsable URL, ignore
                 continue
             if link not in self.links:
                 self.links.append(link)
@@ -170,26 +178,70 @@ class HTMLFile(object):
         return Link(url, self.base)
 
 
-def depth_first(root, flat, visited=set([])):
+def depth_first(root, flat):
     yield root
+    visited = set()
     visited.add(root)
-    for link in root.links:
-        if link.path is not None and link not in visited:
-            try:
-                index = flat.index(link)
-            except ValueError:  # Can happen if max_levels is used
-                continue
-            hf = flat[index]
-            if hf not in visited:
-                yield hf
-                visited.add(hf)
-                for hf in depth_first(hf, flat, visited):
-                    if hf not in visited:
-                        yield hf
-                        visited.add(hf)
+    from collections import deque
+    stack = deque()
+
+    def add_links_from(item):
+        for link in reversed(item.links):
+            if link.path is not None and link not in visited:
+                stack.appendleft(link)
+
+    add_links_from(root)
+    while stack:
+        link = stack.popleft()
+        try:
+            index = flat.index(link)
+        except ValueError:  # Can happen if max_levels is used
+            continue
+        hf = flat[index]
+        if hf not in visited:
+            yield hf
+            visited.add(hf)
+            add_links_from(hf)
 
 
-def traverse(path_to_html_file, max_levels=sys.maxint, verbose=0, encoding=None):
+def find_tests():
+    import unittest
+
+    class HF:
+        def __init__(self, path):
+            self.path = path
+            self.links = []
+
+        def a(self, hf):
+            self.links.append(hf)
+            return hf
+
+        def __eq__(self, other):
+            return self.path == getattr(other, 'path', other)
+
+        def __hash__(self):
+            return hash(self.path)
+
+        def __repr__(self):
+            return self.path
+
+    class TestHTMLInput(unittest.TestCase):
+
+        def test_depth_first(self):
+            root = HF('root')
+            a = root.a(HF('a'))
+            a1 = a.a(HF('a1'))
+            x = a1.a(HF('x'))
+            a2 = a.a(HF('a2'))
+            b = root.a(HF('b'))
+            b1 = b.a(HF('b1'))
+            flat = root, a, b, a1, a2, b1, x
+            self.assertEqual(tuple(depth_first(flat[0], flat)), (root, a, a1, x, a2, b, b1))
+
+    return unittest.defaultTestLoader.loadTestsFromTestCase(TestHTMLInput)
+
+
+def traverse(path_to_html_file, max_levels=sys.maxsize, verbose=0, encoding=None, correct_case_mismatches=False):
     '''
     Recursively traverse all links in the HTML file.
 
@@ -202,7 +254,8 @@ def traverse(path_to_html_file, max_levels=sys.maxint, verbose=0, encoding=None)
     '''
     assert max_levels >= 0
     level = 0
-    flat =  [HTMLFile(path_to_html_file, level, encoding, verbose)]
+    flat = [HTMLFile(path_to_html_file, level, encoding, verbose, correct_case_mismatches=correct_case_mismatches)]
+    seen = {flat[0].path}
     next_level = list(flat)
     while level < max_levels and len(next_level) > 0:
         level += 1
@@ -210,12 +263,15 @@ def traverse(path_to_html_file, max_levels=sys.maxint, verbose=0, encoding=None)
         for hf in next_level:
             rejects = []
             for link in hf.links:
-                if link.path is None or link.path in flat:
+                if link.path is None or link.path in seen:
                     continue
                 try:
-                    nf = HTMLFile(link.path, level, encoding, verbose, referrer=hf)
+                    nf = HTMLFile(link.path, level, encoding, verbose, referrer=hf, correct_case_mismatches=correct_case_mismatches)
+                    if nf.path in seen:
+                        continue
+                    seen.add(nf.path)
                     if nf.is_binary:
-                        raise IgnoreFile('%s is a binary file'%nf.path, -1)
+                        raise IgnoreFile(f'{nf.path} is a binary file', -1)
                     nl.append(nf)
                     flat.append(nf)
                 except IgnoreFile as err:
@@ -226,12 +282,7 @@ def traverse(path_to_html_file, max_levels=sys.maxint, verbose=0, encoding=None)
                 hf.links.remove(link)
 
         next_level = list(nl)
-    orec = sys.getrecursionlimit()
-    sys.setrecursionlimit(500000)
-    try:
-        return flat, list(depth_first(flat[0], flat))
-    finally:
-        sys.setrecursionlimit(orec)
+    return flat, list(depth_first(flat[0], flat))
 
 
 def get_filelist(htmlfile, dir, opts, log):
@@ -241,13 +292,10 @@ def get_filelist(htmlfile, dir, opts, log):
     '''
     log.info('Building file list...')
     filelist = traverse(htmlfile, max_levels=int(opts.max_levels),
-                        verbose=opts.verbose,
+                        verbose=opts.verbose, correct_case_mismatches=getattr(opts, 'correct_case_mismatches', False),
                         encoding=opts.input_encoding)[0 if opts.breadth_first else 1]
     if opts.verbose:
         log.debug('\tFound files...')
         for f in filelist:
             log.debug('\t\t', f)
     return filelist
-
-
-

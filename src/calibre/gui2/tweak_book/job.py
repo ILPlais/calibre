@@ -1,16 +1,14 @@
-#!/usr/bin/env python2
-# vim:fileencoding=utf-8
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
+#!/usr/bin/env python
+
 
 __license__ = 'GPL v3'
 __copyright__ = '2013, Kovid Goyal <kovid at kovidgoyal.net>'
 
 import time
-from threading import Thread
 from functools import partial
+from threading import Thread
 
-from PyQt5.Qt import (QWidget, QVBoxLayout, QLabel, Qt, QPainter, QBrush, QRect, QApplication, QCursor)
+from qt.core import QApplication, QBrush, QCursor, QLabel, QPainter, QRect, Qt, QVBoxLayout, QWidget
 
 from calibre.gui2 import Dispatcher
 from calibre.gui2.progress_indicator import ProgressIndicator
@@ -33,7 +31,7 @@ class LongJob(Thread):
         st = time.time()
         try:
             self.result = self.function(*self.args, **self.kwargs)
-        except:
+        except Exception:
             import traceback
             self.traceback = traceback.format_exc()
         self.time_taken = time.time() - st
@@ -51,24 +49,24 @@ class BlockingJob(QWidget):
         self.setLayout(l)
         l.addStretch(10)
         self.pi = ProgressIndicator(self, 128)
-        l.addWidget(self.pi, alignment=Qt.AlignHCenter)
+        l.addWidget(self.pi, alignment=Qt.AlignmentFlag.AlignHCenter)
         self.dummy = QLabel('<h2>\xa0')
         l.addSpacing(10)
-        l.addWidget(self.dummy, alignment=Qt.AlignHCenter)
+        l.addWidget(self.dummy, alignment=Qt.AlignmentFlag.AlignHCenter)
         l.addStretch(10)
         self.setVisible(False)
         self.text = ''
-        self.setFocusPolicy(Qt.NoFocus)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
 
     def start(self):
         self.setGeometry(0, 0, self.parent().width(), self.parent().height())
         self.setVisible(True)
-        # Prevent any actions from being triggerred by key presses
+        # Prevent any actions from being triggered by key presses
         self.parent().setEnabled(False)
-        self.raise_()
-        self.setFocus(Qt.OtherFocusReason)
+        self.raise_and_focus()
+        self.setFocus(Qt.FocusReason.OtherFocusReason)
         self.pi.startAnimation()
-        QApplication.setOverrideCursor(QCursor(Qt.WaitCursor))
+        QApplication.setOverrideCursor(QCursor(Qt.CursorShape.WaitCursor))
 
     def stop(self):
         QApplication.restoreOverrideCursor()
@@ -78,7 +76,7 @@ class BlockingJob(QWidget):
         # The following line is needed on OS X, because of this bug:
         # https://bugreports.qt-project.org/browse/QTBUG-34371 it causes
         # keyboard events to no longer work
-        self.parent().setFocus(Qt.OtherFocusReason)
+        self.parent().setFocus(Qt.FocusReason.OtherFocusReason)
 
     def job_done(self, callback, job):
         del job.callback
@@ -98,9 +96,9 @@ class BlockingJob(QWidget):
         f.setBold(True)
         f.setPointSize(20)
         p.setFont(f)
-        p.setPen(Qt.SolidLine)
+        p.setPen(Qt.PenStyle.SolidLine)
         r = QRect(0, self.dummy.geometry().top() + 10, self.geometry().width(), 150)
-        p.drawText(r, Qt.AlignHCenter | Qt.AlignTop | Qt.TextSingleLine, self.text)
+        p.drawText(r, Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop | Qt.TextFlag.TextSingleLine, self.text)
         p.end()
 
     def set_msg(self, text):

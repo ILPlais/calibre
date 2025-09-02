@@ -1,35 +1,53 @@
-#!/usr/bin/env python2
-# vim:fileencoding=utf-8
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
+#!/usr/bin/env python
+
 
 __license__ = 'GPL v3'
 __copyright__ = '2015, Kovid Goyal <kovid at kovidgoyal.net>'
 
-import os, uuid
-from threading import Thread
+import os
+import uuid
+from contextlib import suppress
 from functools import partial
+from threading import Thread
 
-from PyQt5.Qt import (
-    QStackedLayout, QVBoxLayout, QWidget, QLabel, Qt,
-    QListWidget, QSize, pyqtSignal, QListWidgetItem, QIcon, QByteArray,
-    QBuffer, QPixmap, QAction, QKeySequence)
+from qt.core import (
+    QAction,
+    QBuffer,
+    QByteArray,
+    QDialogButtonBox,
+    QIcon,
+    QInputDialog,
+    QIODevice,
+    QKeySequence,
+    QLabel,
+    QListWidget,
+    QListWidgetItem,
+    QPixmap,
+    QSize,
+    QStackedLayout,
+    Qt,
+    QVBoxLayout,
+    QWidget,
+    pyqtSignal,
+)
 
 from calibre import as_unicode
-from calibre.constants import iswindows, isosx
-from calibre.gui2 import error_dialog, choose_files, choose_images, elided_text, sanitize_env_vars, Application, choose_osx_app
-from calibre.gui2.widgets2 import Dialog
+from calibre.constants import ismacos, iswindows
+from calibre.gui2 import Application, choose_files, choose_images, choose_osx_app, elided_text, error_dialog, sanitize_env_vars
 from calibre.gui2.progress_indicator import ProgressIndicator
+from calibre.gui2.widgets2 import Dialog
 from calibre.utils.config import JSONConfig
 from calibre.utils.icu import numeric_sort_key as sort_key
+from calibre.utils.resources import get_image_path as I
+from polyglot.builtins import iteritems, string_or_bytes
 
-ENTRY_ROLE = Qt.UserRole
+ENTRY_ROLE = Qt.ItemDataRole.UserRole
 
 
 def pixmap_to_data(pixmap):
     ba = QByteArray()
     buf = QBuffer(ba)
-    buf.open(QBuffer.WriteOnly)
+    buf.open(QIODevice.OpenModeFlag.WriteOnly)
     pixmap.save(buf, 'PNG')
     return bytearray(ba.data())
 
@@ -44,8 +62,8 @@ def run_program(entry, path, parent):
     except Exception as err:
         return error_dialog(
             parent, _('Failed to run'), _(
-            'Failed to run program, click "Show Details" for more information'),
-            det_msg='Command line: %r\n%s' %(cmdline, as_unicode(err)))
+            'Failed to run program, click "Show details" for more information'),
+            det_msg=f'Command line: {cmdline!r}\n{as_unicode(err)}')
     t = Thread(name='WaitProgram', target=process.wait)
     t.daemon = True
     t.start()
@@ -55,41 +73,62 @@ def entry_to_icon_text(entry, only_text=False):
     if only_text:
         return entry.get('name', entry.get('Name')) or _('Unknown')
     data = entry.get('icon_data')
-    if data is None:
-        icon = QIcon(I('blank.png'))
+    if isinstance(data, str):
+        with suppress(Exception):
+            from base64 import standard_b64decode
+            data = bytearray(standard_b64decode(data))
+    if not isinstance(data, (bytearray, bytes)):
+        icon = QIcon.ic('blank.png')
     else:
         pmap = QPixmap()
         pmap.loadFromData(bytes(data))
-        icon = QIcon(pmap)
+        if pmap.isNull():
+            icon = QIcon.ic('blank.png')
+        else:
+            icon = QIcon(pmap)
     return icon, entry.get('name', entry.get('Name')) or _('Unknown')
 
 
 if iswindows:
     # Windows {{{
+    import subprocess
+
+    from calibre.utils.open_with.windows import load_icon_for_cmdline, load_icon_resource
     from calibre.utils.winreg.default_programs import find_programs, friendly_app_name
-    from calibre.utils.open_with.windows import load_icon_resource
-    from win32process import CreateProcess, STARTUPINFO
-    from win32event import WaitForInputIdle
-    import win32con
+    from calibre_extensions import winutil
     oprefs = JSONConfig('windows_open_with')
 
     def entry_sort_key(entry):
         return sort_key(entry.get('name') or '')
 
+    def icon_for_entry(entry, delete_icon_resource=False, as_data=False):
+        res = entry.pop('icon_resource', None) if delete_icon_resource else entry.get('icon_resource')
+        if res is None:
+            return load_icon_for_cmdline(entry['cmdline'], as_data=as_data)
+        try:
+            return load_icon_resource(res, as_data=as_data)
+        except Exception:
+            import traceback
+            traceback.print_exc()
+        return load_icon_for_cmdline(entry['cmdline'], as_data=as_data)
+
     def finalize_entry(entry):
         try:
-            data = load_icon_resource(entry.pop('icon_resource', None), as_data=True)
+            data = icon_for_entry(entry, delete_icon_resource=True, as_data=True)
         except Exception:
             data = None
             import traceback
             traceback.print_exc()
-        if data:
+        if isinstance(data, (bytes, bytearray)) or data is None:
             entry['icon_data'] = data
         return entry
 
+    def change_name_in_entry(entry, newname):
+        entry['name'] = newname
+
     def entry_to_item(entry, parent):
         try:
-            icon = load_icon_resource(entry.get('icon_resource'))
+            icon = icon_for_entry(entry)
         except Exception:
             icon = None
             import traceback
@@ -104,7 +143,7 @@ if iswindows:
         ans = choose_files(
             parent, 'choose-open-with-program-manually-win',
             _('Choose a program to open %s files') % filetype.upper(),
-            filters=[(_('Executable files'), ['exe', 'bat', 'com'])], select_only_single_file=True)
+            filters=[(_('Executable files'), ['exe', 'bat', 'com', 'cmd'])], select_only_single_file=True)
         if ans:
             ans = os.path.abspath(ans[0])
             if not os.access(ans, os.X_OK):
@@ -113,7 +152,7 @@ if iswindows:
                 return
             qans = ans.replace('"', r'\"')
             name = friendly_app_name(exe=ans) or os.path.splitext(os.path.basename(ans))[0]
-            return {'cmdline':'"%s" "%%1"' % qans, 'name':name, 'icon_resource':ans + ',0'}
+            return {'cmdline':f'"{qans}" "%1"', 'name':name}
 
     def entry_to_cmdline(entry, path):
         cmdline = entry['cmdline']
@@ -122,36 +161,44 @@ if iswindows:
 
     del run_program
 
-    def run_program(entry, path, parent):  # noqa
+    def run_program(entry, path, parent):
+        import re
         cmdline = entry_to_cmdline(entry, path)
-        print('Running Open With commandline:', repr(entry['cmdline']), ' |==> ', repr(cmdline))
+        flags = subprocess.CREATE_DEFAULT_ERROR_MODE | subprocess.CREATE_NEW_PROCESS_GROUP
+        if re.match(r'"[^"]+?(.bat|.cmd|.com)"', cmdline, flags=re.I):
+            flags |= subprocess.CREATE_NO_WINDOW
+            console = ' (console)'
+        else:
+            flags |= subprocess.DETACHED_PROCESS
+            console = ''
+        print(f'Running Open With commandline{console}:', repr(entry['cmdline']), ' |==> ', repr(cmdline))
         try:
             with sanitize_env_vars():
-                process_handle, thread_handle, process_id, thread_id = CreateProcess(
-                    None, cmdline, None, None, False, win32con.CREATE_DEFAULT_ERROR_MODE | win32con.CREATE_NEW_PROCESS_GROUP | win32con.DETACHED_PROCESS,
-                    None, None, STARTUPINFO())
-            WaitForInputIdle(process_handle, 2000)
+                winutil.run_cmdline(cmdline, flags, 2000)
         except Exception as err:
             return error_dialog(
                 parent, _('Failed to run'), _(
-                'Failed to run program, click "Show Details" for more information'),
-                det_msg='Command line: %r\n%s' %(cmdline, as_unicode(err)))
+                'Failed to run program, click "Show details" for more information'),
+                det_msg=f'Command line: {cmdline!r}\n{as_unicode(err)}')
     # }}}
 
-elif isosx:
+elif ismacos:
     # macOS {{{
     oprefs = JSONConfig('osx_open_with')
-    from calibre.utils.open_with.osx import find_programs, get_icon, entry_to_cmdline, get_bundle_data
+    from calibre.utils.open_with.osx import entry_to_cmdline, find_programs, get_bundle_data, get_icon
 
     def entry_sort_key(entry):
         return sort_key(entry.get('name') or '')
 
     def finalize_entry(entry):
-        entry['extensions'] = tuple(entry['extensions'])
+        entry['extensions'] = tuple(entry.get('extensions', ()))
         data = get_icon(entry.pop('icon_file', None), as_data=True, pixmap_to_data=pixmap_to_data)
         if data:
             entry['icon_data'] = data
         return entry
+
+    def change_name_in_entry(entry, newname):
+        entry['name'] = newname
 
     def entry_to_item(entry, parent):
         icon = get_icon(entry.get('icon_file'), as_data=False)
@@ -170,8 +217,9 @@ elif isosx:
             if os.path.isdir(ans):
                 app = get_bundle_data(ans)
                 if app is None:
-                    return error_dialog(parent, _('Invalid Application'), _(
+                    error_dialog(parent, _('Invalid application'), _(
                         '%s is not a valid macOS application bundle.') % ans, show=True)
+                    return
                 return app
             if not os.access(ans, os.X_OK):
                 error_dialog(parent, _('Cannot execute'), _(
@@ -185,11 +233,14 @@ elif isosx:
 else:
     # XDG {{{
     oprefs = JSONConfig('xdg_open_with')
-    from calibre.utils.open_with.linux import entry_to_cmdline, find_programs, entry_sort_key
+    from calibre.utils.open_with.linux import entry_sort_key, entry_to_cmdline, find_programs
+
+    def change_name_in_entry(entry, newname):
+        entry['Name'] = newname
 
     def entry_to_item(entry, parent):
         icon_path = entry.get('Icon') or I('blank.png')
-        if not isinstance(icon_path, basestring):
+        if not isinstance(icon_path, string_or_bytes):
             icon_path = I('blank.png')
         ans = QListWidgetItem(QIcon(icon_path), entry.get('Name') or _('Unknown'), parent)
         ans.setData(ENTRY_ROLE, entry)
@@ -235,7 +286,7 @@ class ChooseProgram(Dialog):  # {{{
         self.programs = self.find_error = self.selected_entry = None
         self.select_manually = False
         Dialog.__init__(self, _('Choose a program'), 'choose-open-with-program-dialog', parent=parent, prefs=prefs)
-        self.found.connect(self.programs_found, type=Qt.QueuedConnection)
+        self.found.connect(self.programs_found, type=Qt.ConnectionType.QueuedConnection)
         self.pi.startAnimation()
         t = Thread(target=self.find_programs)
         t.daemon = True
@@ -246,11 +297,11 @@ class ChooseProgram(Dialog):  # {{{
         self.w = w = QWidget(self)
         self.w.l = l = QVBoxLayout(w)
         self.pi = pi = ProgressIndicator(self, 256)
-        l.addStretch(1), l.addWidget(pi, alignment=Qt.AlignHCenter), l.addSpacing(10)
+        l.addStretch(1), l.addWidget(pi, alignment=Qt.AlignmentFlag.AlignHCenter), l.addSpacing(10)
         w.la = la = QLabel(_('Gathering data, please wait...'))
         f = la.font()
         f.setBold(True), f.setPointSize(28), la.setFont(f)
-        l.addWidget(la, alignment=Qt.AlignHCenter), l.addStretch(1)
+        l.addWidget(la, alignment=Qt.AlignmentFlag.AlignHCenter), l.addStretch(1)
         s.addWidget(w)
 
         self.w2 = w = QWidget(self)
@@ -265,7 +316,7 @@ class ChooseProgram(Dialog):  # {{{
         l.addWidget(la), l.addWidget(pl)
         la.setBuddy(pl)
 
-        b = self.bb.addButton(_('&Browse computer for program'), self.bb.ActionRole)
+        b = self.bb.addButton(_('&Browse computer for program'), QDialogButtonBox.ButtonRole.ActionRole)
         b.clicked.connect(self.manual)
         l.addWidget(self.bb)
 
@@ -312,11 +363,11 @@ def choose_program(file_type='jpeg', parent=None, prefs=oprefs):
     oft = file_type = file_type.lower()
     file_type = {'cover_image':'jpeg'}.get(oft, oft)
     d = ChooseProgram(file_type, parent, prefs)
-    d.exec_()
+    d.exec()
     entry = choose_manually(file_type, parent) if d.select_manually else d.selected_entry
     if entry is not None:
         entry = finalize_entry(entry)
-        entry['uuid'] = type('')(uuid.uuid4())
+        entry['uuid'] = str(uuid.uuid4())
         entries = oprefs['entries']
         if oft not in entries:
             entries[oft] = []
@@ -334,7 +385,7 @@ def populate_menu(menu, connect_action, file_type):
         text = elided_text(text, pos='right')
         sa = registered_shortcuts.get(entry['uuid'])
         if sa is not None:
-            text += '\t' + sa.shortcut().toString(QKeySequence.NativeText)
+            text += '\t' + sa.shortcut().toString(QKeySequence.SequenceFormat.NativeText)
         ac = menu.addAction(icon, text)
         connect_action(ac, entry)
     return menu
@@ -346,7 +397,7 @@ class EditPrograms(Dialog):  # {{{
 
     def __init__(self, file_type='jpeg', parent=None):
         self.file_type = file_type.lower()
-        Dialog.__init__(self, _('Edit the applications for %s files') % file_type.upper(), 'edit-open-with-programs', parent=parent)
+        Dialog.__init__(self, _('Edit the applications used for %s files') % file_type.upper(), 'edit-open-with-programs', parent=parent)
 
     def setup_ui(self):
         self.l = l = QVBoxLayout(self)
@@ -354,11 +405,13 @@ class EditPrograms(Dialog):  # {{{
         pl.setIconSize(QSize(48, 48)), pl.setSpacing(5)
         l.addWidget(pl)
 
-        self.bb.clear(), self.bb.setStandardButtons(self.bb.Close)
-        self.rb = b = self.bb.addButton(_('&Remove'), self.bb.ActionRole)
-        b.clicked.connect(self.remove), b.setIcon(QIcon(I('list_remove.png')))
-        self.cb = b = self.bb.addButton(_('Change &icon'), self.bb.ActionRole)
-        b.clicked.connect(self.change_icon), b.setIcon(QIcon(I('icon_choose.png')))
+        self.bb.clear(), self.bb.setStandardButtons(QDialogButtonBox.StandardButton.Close)
+        self.rb = b = self.bb.addButton(_('&Remove'), QDialogButtonBox.ButtonRole.ActionRole)
+        b.clicked.connect(self.remove), b.setIcon(QIcon.ic('list_remove.png'))
+        self.cb = b = self.bb.addButton(_('Change &icon'), QDialogButtonBox.ButtonRole.ActionRole)
+        b.clicked.connect(self.change_icon), b.setIcon(QIcon.ic('icon_choose.png'))
+        self.cb = b = self.bb.addButton(_('Change &name'), QDialogButtonBox.ButtonRole.ActionRole)
+        b.clicked.connect(self.change_name), b.setIcon(QIcon.ic('modified.png'))
         l.addWidget(self.bb)
 
         self.populate()
@@ -391,6 +444,20 @@ class EditPrograms(Dialog):  # {{{
                 self.update_stored_config()
                 ci.setIcon(ic)
 
+    def change_name(self):
+        ci = self.plist.currentItem()
+        if ci is None:
+            return error_dialog(self, _('No selection'), _(
+                'No application selected'), show=True)
+        name = ci.data(Qt.ItemDataRole.DisplayRole)
+        name, ok = QInputDialog.getText(self, _('Enter new name'), _('New name for {}').format(name), text=name)
+        if ok and name:
+            entry = ci.data(ENTRY_ROLE)
+            change_name_in_entry(entry, name)
+            ci.setData(ENTRY_ROLE, entry)
+            self.update_stored_config()
+            ci.setData(Qt.ItemDataRole.DisplayRole, name)
+
     def remove(self):
         ci = self.plist.currentItem()
         if ci is None:
@@ -402,14 +469,14 @@ class EditPrograms(Dialog):  # {{{
         register_keyboard_shortcuts(finalize=True)
 
     def update_stored_config(self):
-        entries = [self.plist.item(i).data(ENTRY_ROLE) for i in xrange(self.plist.count())]
+        entries = [self.plist.item(i).data(ENTRY_ROLE) for i in range(self.plist.count())]
         oprefs['entries'][self.file_type] = entries
         oprefs['entries'] = oprefs['entries']
 
 
 def edit_programs(file_type, parent):
     d = EditPrograms(file_type, parent)
-    d.exec_()
+    d.exec()
 # }}}
 
 
@@ -422,12 +489,12 @@ def register_keyboard_shortcuts(gui=None, finalize=False):
         gui = get_gui()
     if gui is None:
         return
-    for unique_name, action in registered_shortcuts.iteritems():
+    for unique_name, action in iteritems(registered_shortcuts):
         gui.keyboard.unregister_shortcut(unique_name)
         gui.removeAction(action)
     registered_shortcuts.clear()
 
-    for filetype, applications in oprefs['entries'].iteritems():
+    for filetype, applications in iteritems(oprefs['entries']):
         for application in applications:
             text = entry_to_icon_text(application, only_text=True)
             t = _('cover image') if filetype.upper() == 'COVER_IMAGE' else filetype.upper()
@@ -436,7 +503,7 @@ def register_keyboard_shortcuts(gui=None, finalize=False):
             unique_name = application['uuid']
             func = partial(gui.open_with_action_triggerred, filetype, application)
             ac.triggered.connect(func)
-            gui.keyboard.register_shortcut(unique_name, name, action=ac, group=_('Open With'))
+            gui.keyboard.register_shortcut(unique_name, name, action=ac, group=_('Open with'))
             gui.addAction(ac)
             registered_shortcuts[unique_name] = ac
     if finalize:

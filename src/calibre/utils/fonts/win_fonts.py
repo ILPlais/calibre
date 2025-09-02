@@ -1,22 +1,23 @@
-#!/usr/bin/env python2
-# vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:fdm=marker:ai
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
+#!/usr/bin/env python
+
 
 __license__   = 'GPL v3'
 __copyright__ = '2012, Kovid Goyal <kovid at kovidgoyal.net>'
 __docformat__ = 'restructuredtext en'
 
-import os, sys, atexit
+import atexit
+import os
+import sys
 from itertools import product
 
-from calibre import prints, isbytestring
-from calibre.constants import plugins, filesystem_encoding
-from calibre.utils.fonts.utils import (is_truetype_font, get_font_names,
-        get_font_characteristics)
+from calibre import isbytestring, prints
+from calibre.constants import filesystem_encoding
+from calibre.utils.fonts.utils import get_font_characteristics, get_font_names, is_truetype_font
+from calibre.utils.resources import get_path as P
+from polyglot.builtins import iteritems
 
 
-class WinFonts(object):
+class WinFonts:
 
     def __init__(self, winfonts):
         self.w = winfonts
@@ -26,7 +27,7 @@ class WinFonts(object):
 
         for f in ('Serif', 'Sans', 'Mono'):
             base = 'fonts/liberation/Liberation%s-%s.ttf'
-            self.app_font_families['Liberation %s'%f] = m = {}
+            self.app_font_families[f'Liberation {f}'] = m = {}
             for weight, is_italic in product((self.w.FW_NORMAL, self.w.FW_BOLD), (False, True)):
                 name = {(self.w.FW_NORMAL, False):'Regular',
                         (self.w.FW_NORMAL, True):'Italic',
@@ -58,7 +59,7 @@ class WinFonts(object):
         return ft
 
     def fonts_for_family(self, family, normalize=True):
-        family = type(u'')(family)
+        family = str(family)
         ans = {}
         for weight, is_italic in product((self.w.FW_NORMAL, self.w.FW_BOLD), (False, True)):
             if family in self.app_font_families:
@@ -71,27 +72,25 @@ class WinFonts(object):
                 try:
                     data = self.w.font_data(family, is_italic, weight)
                 except Exception as e:
-                    prints('Failed to get font data for font: %s [%s] with error: %s'%
-                            (family, self.get_normalized_name(is_italic, weight), e))
+                    prints(f'Failed to get font data for font: {family} [{self.get_normalized_name(is_italic, weight)}] with error: {e}')
                     continue
 
             ok, sig = is_truetype_font(data)
             if not ok:
-                prints('Not a supported font, sfnt_version: %r'%sig)
+                prints(f'Not a supported font, sfnt_version: {sig!r}')
                 continue
             ext = 'otf' if sig == b'OTTO' else 'ttf'
 
             try:
                 weight, is_italic, is_bold, is_regular = get_font_characteristics(data)[:4]
             except Exception as e:
-                prints('Failed to get font characteristic for font: %s [%s]'
-                        ' with error: %s'%(family,
-                            self.get_normalized_name(is_italic, weight), e))
+                prints(f'Failed to get font characteristic for font: {family} [{self.get_normalized_name(is_italic, weight)}]'
+                        f' with error: {e}')
                 continue
 
             try:
                 family_name, sub_family_name, full_name = get_font_names(data)
-            except:
+            except Exception:
                 pass
 
             if normalize:
@@ -113,7 +112,7 @@ class WinFonts(object):
                 try:
                     sub_family_name.encode('ascii')
                     subf = sub_family_name
-                except:
+                except Exception:
                     subf = ''
 
                 name = family + ((' ' + subf) if subf else '')
@@ -140,16 +139,15 @@ class WinFonts(object):
 
 
 def load_winfonts():
-    w, err = plugins['winfonts']
-    if w is None:
-        raise RuntimeError('Failed to load the winfonts module: %s'%err)
-    return WinFonts(w)
+    from calibre_extensions import winfonts
+    return WinFonts(winfonts)
 
 
 def test_ttf_reading():
-    for f in sys.argv[1:]:
-        raw = open(f).read()
-        print (os.path.basename(f))
+    for arg in sys.argv[1:]:
+        with open(arg, 'rb') as f:
+            raw = f.read()
+        print(os.path.basename(arg))
         get_font_characteristics(raw)
         print()
 
@@ -165,15 +163,16 @@ def test():
     else:
         w = load_winfonts()
 
-    print (w.w)
+    print(w.w)
     families = w.font_families()
-    print (families)
+    print(families)
 
     for family in families:
         prints(family + ':')
-        for font, data in w.fonts_for_family(family).iteritems():
+        for font, data in iteritems(w.fonts_for_family(family)):
             prints('  ', font, data[0], data[1], len(data[2]))
-        print ()
+        print()
+
 
 if __name__ == '__main__':
     test()

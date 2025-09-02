@@ -1,27 +1,26 @@
-#!/usr/bin/env python2
-# vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
+#!/usr/bin/env python
+
 
 __license__   = 'GPL v3'
 __copyright__ = '2011, Kovid Goyal <kovid@kovidgoyal.net>'
 __docformat__ = 'restructuredtext en'
 
-import random, time
-from cStringIO import StringIO
+import io
+import random
+import time
 from struct import pack
 
 from calibre.ebooks import normalize
-from calibre.ebooks.mobi.writer2.serializer import Serializer
 from calibre.ebooks.compression.palmdoc import compress_doc
 from calibre.ebooks.mobi.langcodes import iana2mobi
-from calibre.utils.filenames import ascii_filename
-from calibre.ebooks.mobi.writer2 import (PALMDOC, UNCOMPRESSED)
-from calibre.ebooks.mobi.utils import (encint, encode_trailing_data,
-        align_block, detect_periodical, RECORD_SIZE, create_text_record)
+from calibre.ebooks.mobi.utils import RECORD_SIZE, align_block, create_text_record, detect_periodical, encint, encode_trailing_data
+from calibre.ebooks.mobi.writer2 import PALMDOC, UNCOMPRESSED
 from calibre.ebooks.mobi.writer2.indexer import Indexer
+from calibre.ebooks.mobi.writer2.serializer import Serializer
+from calibre.utils.filenames import ascii_filename
+from polyglot.builtins import iteritems
 
-# Disabled as I dont care about uncrossable breaks
+# Disabled as I don't care about uncrossable breaks
 WRITE_UNCROSSABLE_BREAKS = False
 NULL_INDEX = 0xffffffff
 
@@ -36,7 +35,7 @@ def fcis(text_length):
     return fcis
 
 
-class MobiWriter(object):
+class MobiWriter:
 
     def __init__(self, opts, resources, kf8, write_page_breaks_after_item=True):
         self.opts = opts
@@ -52,7 +51,7 @@ class MobiWriter(object):
         self.log = oeb.log
         pt = None
         if oeb.metadata.publication_type:
-            x = unicode(oeb.metadata.publication_type[0]).split(':')
+            x = str(oeb.metadata.publication_type[0]).split(':')
             if len(x) > 1:
                 pt = x[1].lower()
         self.publication_type = pt
@@ -101,11 +100,11 @@ class MobiWriter(object):
                     len(self.records[self.last_text_record_idx]),
                     self.masthead_offset, self.is_periodical,
                     self.opts, self.oeb)
-        except:
+        except Exception:
             self.log.exception('Failed to generate MOBI index:')
         else:
             self.primary_index_record_idx = len(self.records)
-            for i in xrange(self.last_text_record_idx + 1):
+            for i in range(self.last_text_record_idx + 1):
                 if i == 0:
                     continue
                 tbs = self.indexer.get_trailing_byte_sequence(i)
@@ -124,12 +123,12 @@ class MobiWriter(object):
 
         breaks = self.serializer.breaks
 
-        for i in xrange(1, self.last_text_record_idx+1):
+        for i in range(1, self.last_text_record_idx+1):
             offset = i * RECORD_SIZE
             pbreak = 0
             running = offset
 
-            buf = StringIO()
+            buf = io.BytesIO()
 
             while breaks and (breaks[0] - offset) < RECORD_SIZE:
                 pbreak = (breaks.pop(0) - running) >> 3
@@ -162,7 +161,7 @@ class MobiWriter(object):
                 write_page_breaks_after_item=self.write_page_breaks_after_item)
         text = self.serializer()
         self.text_length = len(text)
-        text = StringIO(text)
+        text = io.BytesIO(text)
         nrecords = 0
         records_size = 0
 
@@ -227,7 +226,7 @@ class MobiWriter(object):
         # EOF record
         self.records.append(b'\xE9\x8E\x0D\x0A')
 
-        record0 = StringIO()
+        record0 = io.BytesIO()
         # The MOBI Header
         record0.write(pack(b'>HHIHHHH',
             self.compression,  # compression type # compression type
@@ -239,7 +238,7 @@ class MobiWriter(object):
             0  # Unused
         ))  # 0 - 15 (0x0 - 0xf)
         uid = random.randint(0, 0xffffffff)
-        title = normalize(unicode(metadata.title[0])).encode('utf-8')
+        title = normalize(str(metadata.title[0])).encode('utf-8')
 
         # 0x0 - 0x3
         record0.write(b'MOBI')
@@ -375,9 +374,8 @@ class MobiWriter(object):
     # }}}
 
     def generate_joint_record0(self):  # {{{
-        from calibre.ebooks.mobi.writer8.mobi import (MOBIHeader,
-                HEADER_FIELDS)
         from calibre.ebooks.mobi.writer8.exth import build_exth
+        from calibre.ebooks.mobi.writer8.mobi import HEADER_FIELDS, MOBIHeader
 
         # Insert resource records
         first_image_record = None
@@ -425,10 +423,10 @@ class MobiWriter(object):
             extra_data_flags |= 0b10
         header_fields['extra_data_flags'] = extra_data_flags
 
-        for k, v in {'last_text_record':'last_text_record_idx',
+        for k, v in iteritems({'last_text_record':'last_text_record_idx',
                 'first_non_text_record':'first_non_text_record_idx',
                 'ncx_index':'primary_index_record_idx',
-                }.iteritems():
+                }):
             header_fields[k] = getattr(self, v)
         if header_fields['ncx_index'] is None:
             header_fields['ncx_index'] = NULL_INDEX
@@ -459,8 +457,11 @@ class MobiWriter(object):
         '''
         Write the PalmDB header
         '''
-        title = ascii_filename(unicode(self.oeb.metadata.title[0])).replace(
-                ' ', '_')[:31]
+        title = ascii_filename(str(self.oeb.metadata.title[0])).replace(
+                ' ', '_')
+        if not isinstance(title, bytes):
+            title = title.encode('ascii')
+        title = title[:31]
         title = title + (b'\0' * (32 - len(title)))
         now = int(time.time())
         nrecords = len(self.records)
@@ -476,5 +477,3 @@ class MobiWriter(object):
     def write_content(self):
         for record in self.records:
             self.write(record)
-
-

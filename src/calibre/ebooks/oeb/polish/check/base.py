@@ -1,21 +1,19 @@
-#!/usr/bin/env python2
-# vim:fileencoding=utf-8
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
+#!/usr/bin/env python
+
 
 __license__ = 'GPL v3'
 __copyright__ = '2013, Kovid Goyal <kovid at kovidgoyal.net>'
 
-from multiprocessing.pool import ThreadPool
-from functools import partial
 from contextlib import closing
+from functools import partial
+from multiprocessing.pool import ThreadPool
 
 from calibre import detect_ncpus as cpu_count
 
-DEBUG, INFO, WARN, ERROR, CRITICAL = xrange(5)
+DEBUG, INFO, WARN, ERROR, CRITICAL = range(5)
 
 
-class BaseError(object):
+class BaseError:
 
     HELP = ''
     INDIVIDUAL_FIX = ''
@@ -29,7 +27,7 @@ class BaseError(object):
         self.all_locations = None
 
     def __str__(self):
-        return '%s:%s (%s, %s):%s' % (self.__class__.__name__, self.name, self.line, self.col, self.msg)
+        return f'{self.__class__.__name__}:{self.name} ({self.line}, {self.col}):{self.msg}'
 
     __repr__ = __str__
 
@@ -38,7 +36,7 @@ def worker(func, args):
     try:
         result = func(*args)
         tb = None
-    except:
+    except Exception:
         result = None
         import traceback
         tb = traceback.format_exc()
@@ -52,7 +50,6 @@ def run_checkers(func, args_list):
     with closing(pool):
         for result, tb in pool.map(partial(worker, func), args_list):
             if tb is not None:
-                raise Exception('Failed to run worker: \n%s' % tb)
+                raise Exception(f'Failed to run worker: \n{tb}')
             ans.extend(result)
     return ans
-

@@ -1,32 +1,32 @@
-#!/usr/bin/env python2
-# vim:fileencoding=utf-8
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
+#!/usr/bin/env python
+
 
 __license__ = 'GPL v3'
 __copyright__ = '2013, Kovid Goyal <kovid at kovidgoyal.net>'
 
-import os, sys, shutil
+import os
+import shutil
+import sys
 
 from lxml import etree
 
-from calibre import walk, guess_type
-from calibre.ebooks.metadata import string_to_authors, authors_to_sort_string
-from calibre.ebooks.metadata.book.base import Metadata
+from calibre import guess_type, walk
 from calibre.ebooks.docx import InvalidDOCX
 from calibre.ebooks.docx.names import DOCXNamespace
+from calibre.ebooks.metadata import authors_to_sort_string, string_to_authors
+from calibre.ebooks.metadata.book.base import Metadata
 from calibre.ptempfile import PersistentTemporaryDirectory
 from calibre.utils.localization import canonicalize_lang
 from calibre.utils.logging import default_log
+from calibre.utils.xml_parse import safe_xml_fromstring
 from calibre.utils.zipfile import ZipFile
-from calibre.ebooks.oeb.parse_utils import RECOVER_PARSER
 
 
-def fromstring(raw, parser=RECOVER_PARSER):
-    return etree.fromstring(raw, parser=parser)
+def fromstring(raw, parser=None):
+    return safe_xml_fromstring(raw)
+
 
 # Read metadata {{{
-
 
 def read_doc_props(raw, mi, XPath):
     root = fromstring(raw)
@@ -56,7 +56,7 @@ def read_doc_props(raw, mi, XPath):
 
     desc = XPath('//dc:description')(root)
     if desc:
-        raw = etree.tostring(desc[0], method='text', encoding=unicode)
+        raw = etree.tostring(desc[0], method='text', encoding='unicode')
         raw = raw.replace('_x000d_', '')  # Word 2007 mangles newlines in the summary
         mi.comments = raw.strip()
 
@@ -87,7 +87,7 @@ def read_default_style_language(raw, mi, XPath):
 # }}}
 
 
-class DOCX(object):
+class DOCX:
 
     def __init__(self, path_or_stream, log=None, extract=True):
         self.docx_is_transitional = True
@@ -111,7 +111,7 @@ class DOCX(object):
         try:
             zf = ZipFile(stream)
             zf.extractall(self.tdir)
-        except:
+        except Exception:
             self.log.exception('DOCX appears to be invalid ZIP file, trying a'
                     ' more forgiving ZIP parser')
             from calibre.utils.localunzip import extractall
@@ -137,7 +137,7 @@ class DOCX(object):
         try:
             raw = self.read('[Content_Types].xml')
         except KeyError:
-            raise InvalidDOCX('The file %s docx file has no [Content_Types].xml' % self.name)
+            raise InvalidDOCX(f'The file {self.name} docx file has no [Content_Types].xml')
         root = fromstring(raw)
         self.content_types = {}
         self.default_content_types = {}
@@ -159,7 +159,7 @@ class DOCX(object):
         try:
             raw = self.read('_rels/.rels')
         except KeyError:
-            raise InvalidDOCX('The file %s docx file has no _rels/.rels' % self.name)
+            raise InvalidDOCX(f'The file {self.name} docx file has no _rels/.rels')
         root = fromstring(raw)
         self.relationships = {}
         self.relationships_rmap = {}
@@ -177,7 +177,7 @@ class DOCX(object):
         if name is None:
             names = tuple(n for n in self.names if n == 'document.xml' or n.endswith('/document.xml'))
             if not names:
-                raise InvalidDOCX('The file %s docx file has no main document' % self.name)
+                raise InvalidDOCX(f'The file {self.name} docx file has no main document')
             name = names[0]
         return name
 
@@ -260,9 +260,10 @@ class DOCX(object):
         else:
             try:
                 shutil.rmtree(self.tdir)
-            except EnvironmentError:
+            except OSError:
                 pass
+
 
 if __name__ == '__main__':
     d = DOCX(sys.argv[-1], extract=False)
-    print (d.metadata)
+    print(d.metadata)

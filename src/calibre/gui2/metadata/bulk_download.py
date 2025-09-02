@@ -1,23 +1,24 @@
-#!/usr/bin/env python2
-# vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
+#!/usr/bin/env python
+
 
 __license__   = 'GPL v3'
 __copyright__ = '2011, Kovid Goyal <kovid@kovidgoyal.net>'
 __docformat__ = 'restructuredtext en'
 
-import os, time, shutil
+import os
+import shutil
+import time
 from threading import Thread
 
-from PyQt5.Qt import (QIcon, QDialog,
-        QDialogButtonBox, QLabel, QGridLayout, Qt)
+from qt.core import QDialog, QDialogButtonBox, QGridLayout, QIcon, QLabel, Qt
 
-from calibre.gui2.threaded_jobs import ThreadedJob
 from calibre.ebooks.metadata.opf2 import metadata_to_opf
-from calibre.utils.ipc.simple_worker import fork_job, WorkerError
-from calibre.ptempfile import (PersistentTemporaryDirectory,
-        PersistentTemporaryFile)
+from calibre.gui2.threaded_jobs import ThreadedJob
+from calibre.ptempfile import PersistentTemporaryDirectory, PersistentTemporaryFile
+from calibre.startup import connect_lambda
+from calibre.utils.ipc.simple_worker import WorkerError, fork_job
+from calibre.utils.localization import ngettext
+from polyglot.builtins import iteritems
 
 # Start download {{{
 
@@ -56,13 +57,13 @@ class ConfirmDialog(QDialog):
     def __init__(self, ids, parent):
         QDialog.__init__(self, parent)
         self.setWindowTitle(_('Schedule download?'))
-        self.setWindowIcon(QIcon(I('download-metadata.png')))
+        self.setWindowIcon(QIcon.ic('download-metadata.png'))
 
         l = self.l = QGridLayout()
         self.setLayout(l)
 
         i = QLabel(self)
-        i.setPixmap(QIcon(I('download-metadata.png')).pixmap(128, 128))
+        i.setPixmap(QIcon.ic('download-metadata.png').pixmap(128, 128))
         l.addWidget(i, 0, 0)
         t = ngettext(
             'The download of metadata for the <b>selected book</b> will run in the background. Proceed?',
@@ -83,29 +84,29 @@ class ConfirmDialog(QDialog):
         l.setColumnStretch(1, 100)
 
         self.identify = self.covers = True
-        self.bb = QDialogButtonBox(QDialogButtonBox.Cancel)
+        self.bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel)
         self.bb.rejected.connect(self.reject)
         b = self.bb.addButton(_('Download only &metadata'),
-                self.bb.AcceptRole)
+                QDialogButtonBox.ButtonRole.AcceptRole)
         b.clicked.connect(self.only_metadata)
-        b.setIcon(QIcon(I('edit_input.png')))
+        b.setIcon(QIcon.ic('edit_input.png'))
         b = self.bb.addButton(_('Download only &covers'),
-                self.bb.AcceptRole)
+                QDialogButtonBox.ButtonRole.AcceptRole)
         b.clicked.connect(self.only_covers)
-        b.setIcon(QIcon(I('default_cover.png')))
-        b = self.b = self.bb.addButton(_('&Configure download'), self.bb.ActionRole)
-        b.setIcon(QIcon(I('config.png')))
+        b.setIcon(QIcon.ic('default_cover.png'))
+        b = self.b = self.bb.addButton(_('&Configure download'), QDialogButtonBox.ButtonRole.ActionRole)
+        b.setIcon(QIcon.ic('config.png'))
         connect_lambda(b.clicked, self, lambda self: show_config(self))
         l.addWidget(self.bb, 1, 0, 1, 2)
         b = self.bb.addButton(_('Download &both'),
-                self.bb.AcceptRole)
+                QDialogButtonBox.ButtonRole.AcceptRole)
         b.clicked.connect(self.accept)
         b.setDefault(True)
         b.setAutoDefault(True)
-        b.setIcon(QIcon(I('ok.png')))
+        b.setIcon(QIcon.ic('ok.png'))
 
         self.resize(self.sizeHint())
-        b.setFocus(Qt.OtherFocusReason)
+        b.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def only_metadata(self):
         self.covers = False
@@ -128,9 +129,9 @@ def split_jobs(ids, batch_size=100):
 
 def start_download(gui, ids, callback, ensure_fields=None):
     d = ConfirmDialog(ids, gui)
-    ret = d.exec_()
+    ret = d.exec()
     d.b.clicked.disconnect()
-    if ret != d.Accepted:
+    if ret != QDialog.DialogCode.Accepted:
         return
     tf = PersistentTemporaryFile('_metadata_bulk.log')
     tf.close()
@@ -165,7 +166,7 @@ def get_job_details(job):
             all_failed, det_msg, lm_map)
 
 
-class HeartBeat(object):
+class HeartBeat:
     CHECK_INTERVAL = 300  # seconds
     ''' Check that the file count in tdir changes every five minutes '''
 
@@ -198,14 +199,14 @@ class Notifier(Thread):
         while self.keep_going:
             try:
                 names = os.listdir(self.tdir)
-            except:
+            except Exception:
                 pass
             else:
                 for x in names:
                     if x.endswith('.log'):
                         try:
                             book_id = int(x.partition('.')[0])
-                        except:
+                        except Exception:
                             continue
                         if book_id not in self.seen and book_id in self.title_map:
                             self.seen.add(book_id)
@@ -244,7 +245,7 @@ def download(all_ids, tf, db, do_identify, covers, ensure_fields,
                 title_map[i] = metadata[i].title
                 lm_map[i] = metadata[i].last_modified
             metadata = {i:metadata_to_opf(mi, default_lang='und') for i, mi in
-                    metadata.iteritems()}
+                    iteritems(metadata)}
             try:
                 ret = fork_job('calibre.ebooks.metadata.sources.worker', 'main',
                         (do_identify, covers, metadata, ensure_fields, tdir),
@@ -263,16 +264,16 @@ def download(all_ids, tf, db, do_identify, covers, ensure_fields,
             failed_covers = failed_covers.union(fcovs)
             ans = ans.union(set(ids) - fids)
             for book_id in ids:
-                lp = os.path.join(tdir, '%d.log'%book_id)
+                lp = os.path.join(tdir, f'{book_id}.log')
                 if os.path.exists(lp):
                     with open(tf, 'ab') as dest, open(lp, 'rb') as src:
-                        dest.write(('\n'+'#'*20 + ' Log for %s '%title_map[book_id] +
+                        dest.write(('\n'+'#'*20 + f' Log for {title_map[book_id]} ' +
                             '#'*20+'\n').encode('utf-8'))
                         shutil.copyfileobj(src, dest)
 
         if abort.is_set():
             aborted = True
-        log('Download complete, with %d failures'%len(failed_ids))
+        log(f'Download complete, with {len(failed_ids)} failures')
         return (aborted, ans, tdir, tf, failed_ids, failed_covers, title_map,
                 lm_map, all_failed)
     finally:

@@ -1,27 +1,29 @@
-#!/usr/bin/env python2
-# vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
-from __future__ import with_statement
-from __future__ import print_function
+#!/usr/bin/env python
+
 
 __license__   = 'GPL v3'
 __copyright__ = '2009, Kovid Goyal <kovid@kovidgoyal.net>'
 __docformat__ = 'restructuredtext en'
 
-import sys, os, re
-from xml.sax.saxutils import escape
+import os
+import re
+import sys
+from contextlib import suppress
 from string import Formatter
+from xml.sax.saxutils import escape
 
-from lxml import etree
-
-from calibre import guess_type, strftime
+from calibre import guess_type, prepare_string_for_xml
 from calibre.constants import iswindows
-from calibre.ebooks.BeautifulSoup import BeautifulSoup
-from calibre.ebooks.oeb.base import XPath, XHTML_NS, XHTML, xml2text, urldefrag, urlnormalize
-from calibre.library.comments import comments_to_html, markdown
-from calibre.utils.date import is_date_undefined, as_local_time
-from calibre.utils.icu import sort_key
 from calibre.ebooks.chardet import strip_encoding_declarations
 from calibre.ebooks.metadata import fmt_sidx, rating_to_stars
+from calibre.ebooks.metadata.sources.identify import urls_from_identifiers
+from calibre.ebooks.oeb.base import XHTML, XHTML_NS, XPath, urldefrag, urlnormalize, xml2text
+from calibre.library.comments import comments_to_html, markdown
+from calibre.utils.config import tweaks
+from calibre.utils.date import as_local_time, format_date, is_date_undefined
+from calibre.utils.icu import sort_key
+from calibre.utils.localization import ngettext
+from calibre.utils.resources import get_path as P
 
 JACKET_XPATH = '//h:meta[@name="calibre-content" and @content="jacket"]'
 
@@ -35,7 +37,7 @@ class SafeFormatter(Formatter):
             return ''
 
 
-class Base(object):
+class Base:
 
     def remove_images(self, item, limit=1):
         path = XPath('//h:img[@src]')
@@ -71,7 +73,7 @@ class RemoveFirstImage(Base):
                     raw = xml2text(body[0]).strip()
                     imgs = XPath('//h:img|//svg:svg')(item.data)
                     if not raw and not imgs:
-                        self.log('Removing %s as it has no content'%item.href)
+                        self.log(f'Removing {item.href} as it has no content')
                         self.oeb.manifest.remove(item)
                         deleted_item = item
                 break
@@ -104,30 +106,35 @@ class Jacket(Base):
         self.log('Inserting metadata into book...')
 
         try:
-            tags = map(unicode, self.oeb.metadata.subject)
-        except:
+            tags = list(map(str, self.oeb.metadata.subject))
+        except Exception:
             tags = []
 
         try:
-            comments = unicode(self.oeb.metadata.description[0])
-        except:
+            comments = str(self.oeb.metadata.description[0])
+        except Exception:
             comments = ''
 
         try:
-            title = unicode(self.oeb.metadata.title[0])
-        except:
+            title = str(self.oeb.metadata.title[0])
+        except Exception:
             title = _('Unknown')
 
+        try:
+            authors = list(map(str, self.oeb.metadata.creator))
+        except Exception:
+            authors = [_('Unknown')]
+
         root = render_jacket(mi, self.opts.output_profile,
-                alt_title=title, alt_tags=tags,
-                alt_comments=comments, rescale_fonts=True)
+                alt_title=title, alt_tags=tags, alt_authors=authors,
+                alt_comments=comments, rescale_fonts=True, smarten_punctuation=self.opts.smarten_punctuation)
         id, href = self.oeb.manifest.generate('calibre_jacket', 'jacket.xhtml')
 
         jacket = self.oeb.manifest.add(id, href, guess_type(href)[0], data=root)
         self.oeb.spine.insert(0, jacket, True)
         self.oeb.inserted_metadata_jacket = jacket
         for img, path in referenced_images(root):
-            self.oeb.log('Embedding referenced image %s into jacket' % path)
+            self.oeb.log(f'Embedding referenced image {path} into jacket')
             ext = path.rpartition('.')[-1].lower()
             item_id, href = self.oeb.manifest.generate('jacket_image', 'jacket_img.'+ext)
             with open(path, 'rb') as f:
@@ -138,7 +145,7 @@ class Jacket(Base):
     def remove_existing_jacket(self):
         for x in self.oeb.spine[:4]:
             if XPath(JACKET_XPATH)(x.data):
-                self.remove_images(x, limit=sys.maxint)
+                self.remove_images(x, limit=sys.maxsize)
                 self.oeb.manifest.remove(x)
                 self.log('Removed existing jacket')
                 break
@@ -153,25 +160,25 @@ class Jacket(Base):
         if opts.insert_metadata:
             self.insert_metadata(metadata)
 
-# Render Jacket {{{
 
+# Render Jacket {{{
 
 def get_rating(rating, rchar, e_rchar):
     ans = ''
     try:
         num = float(rating)/2
-    except:
+    except Exception:
         return ans
     num = max(0, num)
     num = min(num, 5)
     if num < 1:
         return ans
 
-    ans = ("%s%s") % (rchar * int(num), e_rchar * (5 - int(num)))
+    ans = (f'{rchar * int(num)}{e_rchar * (5 - int(num))}')
     return ans
 
 
-class Series(unicode):
+class Series(str):
 
     def __new__(self, series, series_index):
         if series and series_index is not None:
@@ -180,28 +187,101 @@ class Series(unicode):
             combined = _('{1} of <em>{0}</em>').format(
                 escape(series), escape(fmt_sidx(series_index, use_roman=False)))
         else:
-            combined = roman = escape(series or u'')
-        s = unicode.__new__(self, combined)
+            combined = roman = escape(series or '')
+        s = str.__new__(self, combined)
         s.roman = roman
-        s.name = escape(series or u'')
+        s.name = escape(series or '')
         s.number = escape(fmt_sidx(series_index or 1.0, use_roman=False))
         s.roman_number = escape(fmt_sidx(series_index or 1.0, use_roman=True))
         return s
 
 
-class Tags(unicode):
+class Timestamp:
+
+    def __init__(self, dt, render_template):
+        self.dt = as_local_time(dt)
+        self.is_date_undefined = dt is None or is_date_undefined(dt)
+        self.default_render = '' if self.is_date_undefined else escape(format_date(self.dt, render_template))
+
+    def __repr__(self):
+        return self.default_render
+    __str__ = __repr__
+
+    def __bool__(self):
+        return bool(self.default_render)
+
+    def __getattr__(self, template):
+        with suppress(Exception):
+            if not self.is_date_undefined:
+                return escape(format_date(self.dt, template))
+        return ''
+
+
+class Tags(str):
 
     def __new__(self, tags, output_profile):
         tags = [escape(x) for x in tags or ()]
-        t = unicode.__new__(self, ', '.join(tags))
+        t = str.__new__(self, ', '.join(tags))
         t.alphabetical = ', '.join(sorted(tags, key=sort_key))
         t.tags_list = tags
         return t
 
 
+def postprocess_jacket(root, output_profile, has_data):
+    # Post-process the generated html to strip out empty header items
+
+    def extract(tag):
+        parent = tag.getparent()
+        idx = parent.index(tag)
+        parent.remove(tag)
+        if tag.tail:
+            if idx == 0:
+                parent.text = (parent.text or '') + tag.tail
+            else:
+                if idx >= len(parent):
+                    idx = -1
+                parent[-1].tail = (parent[-1].tail or '') + tag.tail
+
+    def extract_class(cls):
+        for tag in root.xpath('//*[@class="_"]'.replace('_', cls)):
+            extract(tag)
+
+    for key in 'series rating tags'.split():
+        if not has_data[key]:
+            extract_class('cbj_' + key)
+    if not has_data['pubdate']:
+        extract_class('cbj_pubdata')
+    if output_profile.short_name != 'kindle':
+        extract_class('cbj_kindle_banner_hr')
+
+
+class Attributes:
+
+    def __getattr__(self, name):
+        return 'none'
+
+
+class Identifiers:
+
+    def __init__(self, idents):
+        self.identifiers = idents or {}
+        self.display = Attributes()
+        for k in self.identifiers:
+            setattr(self.display, k, 'initial')
+        links = []
+        for x in urls_from_identifiers(self.identifiers):
+            name, id_typ, id_val, url = (prepare_string_for_xml(e, True) for e in x)
+            links.append(f'<a href="{url}" title="{id_typ}:{id_val}">{name}</a>')
+        self.links = ', '.join(links)
+        self.display.links = 'initial' if self.links else 'none'
+
+    def __getattr__(self, name):
+        return self.identifiers.get(name, '')
+
+
 def render_jacket(mi, output_profile,
         alt_title=_('Unknown'), alt_tags=[], alt_comments='',
-        alt_publisher=(''), rescale_fonts=False):
+        alt_publisher='', rescale_fonts=False, alt_authors=None, smarten_punctuation=False):
     css = P('jacket/stylesheet.css', data=True).decode('utf-8')
     template = P('jacket/template.xhtml', data=True).decode('utf-8')
 
@@ -209,27 +289,26 @@ def render_jacket(mi, output_profile,
     css = re.sub(r'/\*.*?\*/', '', css, flags=re.DOTALL)
 
     try:
-        title_str = mi.title if mi.title else alt_title
-    except:
+        title_str = alt_title if mi.is_null('title') else mi.title
+    except Exception:
         title_str = _('Unknown')
     title_str = escape(title_str)
-    title = '<span class="title">%s</span>' % title_str
+    title = f'<span class="title">{title_str}</span>'
 
     series = Series(mi.series, mi.series_index)
     try:
-        publisher = mi.publisher if mi.publisher else alt_publisher
-    except:
+        publisher = mi.publisher if not mi.is_null('publisher') else alt_publisher
+    except Exception:
         publisher = ''
     publisher = escape(publisher)
 
-    try:
-        if is_date_undefined(mi.pubdate):
-            pubdate = ''
-        else:
-            dt = as_local_time(mi.pubdate)
-            pubdate = strftime(u'%Y', dt.timetuple())
-    except:
-        pubdate = ''
+    pubdate = timestamp = None
+    with suppress(Exception):
+        if not is_date_undefined(mi.pubdate):
+            pubdate = mi.pubdate
+    with suppress(Exception):
+        if not is_date_undefined(mi.timestamp):
+            timestamp = mi.timestamp
 
     rating = get_rating(mi.rating, output_profile.ratings_char, output_profile.empty_ratings_char)
 
@@ -237,31 +316,40 @@ def render_jacket(mi, output_profile,
 
     comments = mi.comments if mi.comments else alt_comments
     comments = comments.strip()
-    orig_comments = comments
     if comments:
         comments = comments_to_html(comments)
 
+    orig = mi.authors
+    if mi.is_null('authors'):
+        mi.authors = list(alt_authors or (_('Unknown'),))
     try:
         author = mi.format_authors()
-    except:
+    except Exception:
         author = ''
+    mi.authors = orig
     author = escape(author)
+    has_data = {}
 
     def generate_html(comments):
-        args = dict(xmlns=XHTML_NS,
-                    title_str=title_str,
-                    css=css,
-                    title=title,
-                    author=author,
-                    publisher=publisher,
-                    pubdate_label=_('Published'), pubdate=pubdate,
-                    series_label=_('Series'), series=series,
-                    rating_label=_('Rating'), rating=rating,
-                    tags_label=_('Tags'), tags=tags,
-                    comments=comments,
-                    footer='',
-                    searchable_tags=' '.join(escape(t)+'ttt' for t in tags.tags_list),
-                    )
+        display = Attributes()
+        args = {
+            'xmlns': XHTML_NS,
+            'title_str': title_str,
+            'identifiers': Identifiers(mi.identifiers),
+            'css': css,
+            'title': title,
+            'author': author,
+            'publisher': publisher, 'publisher_label': _('Publisher'),
+            'pubdate_label': _('Published'), 'pubdate': Timestamp(pubdate, tweaks['gui_pubdate_display_format']),
+            'series_label': ngettext('Series', 'Series', 1), 'series': series,
+            'rating_label': _('Rating'), 'rating': rating,
+            'tags_label': _('Tags'), 'tags': tags,
+            'timestamp': Timestamp(timestamp, tweaks['gui_timestamp_display_format']), 'timestamp_label': _('Date'),
+            'comments': comments,
+            'footer': '',
+            'display': display,
+            'searchable_tags': ' '.join(escape(t)+'ttt' for t in tags.tags_list),
+        }
         for key in mi.custom_field_keys():
             m = mi.get_user_metadata(key, False) or {}
             try:
@@ -272,78 +360,69 @@ def render_jacket(mi, output_profile,
                     args[dkey] = Series(mi.get(key), mi.get(key + '_index'))
                 elif dt == 'rating':
                     args[dkey] = rating_to_stars(mi.get(key), m.get('display', {}).get('allow_half_stars', False))
+                elif dt == 'datetime':
+                    args[dkey] = Timestamp(mi.get(key), m.get('display', {}).get('date_format','dd MMM yyyy'))
                 elif dt == 'comments':
                     val = val or ''
-                    display = m.get('display', {})
-                    ctype = display.get('interpret_as') or 'html'
+                    ctype = m.get('display', {}).get('interpret_as') or 'html'
                     if ctype == 'long-text':
-                        val = '<pre style="white-space:pre-wrap">%s</pre>' % escape(val)
+                        val = f'<pre style="white-space:pre-wrap">{escape(val)}</pre>'
                     elif ctype == 'short-text':
-                        val = '<span>%s</span>' % escape(val)
+                        val = f'<span>{escape(val)}</span>'
                     elif ctype == 'markdown':
                         val = markdown(val)
                     else:
                         val = comments_to_html(val)
                     args[dkey] = val
+                elif dt == 'composite':
+                    val = val or ''
+                    # if the column is marked as containing html, use it
+                    # unchanged. Otherwise treat it as a comment.
+                    if not m.get('display', {}).get('contains_html', False):
+                        val = comments_to_html(val)
+                    args[dkey] = val
                 else:
                     args[dkey] = escape(val)
                 args[dkey+'_label'] = escape(display_name)
+                setattr(display, dkey, 'none' if mi.is_null(key) else 'initial')
             except Exception:
                 # if the val (custom column contents) is None, don't add to args
                 pass
 
         if False:
-            print("Custom column values available in jacket template:")
+            print('Custom column values available in jacket template:')
             for key in args.keys():
                 if key.startswith('_') and not key.endswith('_label'):
-                    print(" %s: %s" % ('#' + key[1:], args[key]))
+                    print(' {}: {}'.format('#' + key[1:], args[key]))
 
         # Used in the comment describing use of custom columns in templates
         # Don't change this unless you also change it in template.xhtml
         args['_genre_label'] = args.get('_genre_label', '{_genre_label}')
         args['_genre'] = args.get('_genre', '{_genre}')
+        has_data['series'] = bool(series)
+        has_data['tags'] = bool(tags)
+        has_data['rating'] = bool(rating)
+        has_data['pubdate'] = bool(pubdate)
+        has_data['timestamp'] = bool(timestamp)
+        has_data['publisher'] = bool(publisher)
+        for k, v in has_data.items():
+            setattr(display, k, 'initial' if v else 'none')
+        display.title = 'initial'
+        if mi.identifiers:
+            display.identifiers = 'initial'
 
         formatter = SafeFormatter()
         generated_html = formatter.format(template, **args)
 
-        # Post-process the generated html to strip out empty header items
+        return strip_encoding_declarations(generated_html)
 
-        soup = BeautifulSoup(generated_html)
-        if not series:
-            series_tag = soup.find(attrs={'class':'cbj_series'})
-            if series_tag is not None:
-                series_tag.extract()
-        if not rating:
-            rating_tag = soup.find(attrs={'class':'cbj_rating'})
-            if rating_tag is not None:
-                rating_tag.extract()
-        if not tags:
-            tags_tag = soup.find(attrs={'class':'cbj_tags'})
-            if tags_tag is not None:
-                tags_tag.extract()
-        if not pubdate:
-            pubdate_tag = soup.find(attrs={'class':'cbj_pubdata'})
-            if pubdate_tag is not None:
-                pubdate_tag.extract()
-        if output_profile.short_name != 'kindle':
-            hr_tag = soup.find('hr', attrs={'class':'cbj_kindle_banner_hr'})
-            if hr_tag is not None:
-                hr_tag.extract()
+    from calibre.ebooks.oeb.polish.parsing import parse
+    raw = generate_html(comments)
+    if smarten_punctuation:
+        from calibre.ebooks.conversion.preprocess import smarten_punctuation as sp
+        raw = sp(raw)
+    root = parse(raw, line_numbers=False, force_html5_parse=True)
 
-        return strip_encoding_declarations(
-                soup.renderContents('utf-8').decode('utf-8'))
-
-    from calibre.ebooks.oeb.base import RECOVER_PARSER
-
-    try:
-        root = etree.fromstring(generate_html(comments), parser=RECOVER_PARSER)
-    except:
-        try:
-            root = etree.fromstring(generate_html(escape(orig_comments)),
-                parser=RECOVER_PARSER)
-        except:
-            root = etree.fromstring(generate_html(''),
-                parser=RECOVER_PARSER)
     if rescale_fonts:
         # We ensure that the conversion pipeline will set the font sizes for
         # text in the jacket to the same size as the font sizes for the rest of
@@ -352,14 +431,15 @@ def render_jacket(mi, output_profile,
         # the same as for text in the main book. So text with size x em will
         # be rescaled to the same value in both the jacket and the main content.
         #
-        # We cannot use calibre_rescale_100 on the body tag as that will just
+        # We cannot use data-calibre-rescale 100 on the body tag as that will just
         # give the body tag a font size of 1em, which is useless.
         for body in root.xpath('//*[local-name()="body"]'):
             fw = body.makeelement(XHTML('div'))
-            fw.set('class', 'calibre_rescale_100')
+            fw.set('data-calibre-rescale', '100')
             for child in body:
                 fw.append(child)
             body.append(fw)
+    postprocess_jacket(root, output_profile, has_data)
     from calibre.ebooks.oeb.polish.pretty import pretty_html_tree
     pretty_html_tree(None, root)
     return root

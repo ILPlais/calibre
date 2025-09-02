@@ -1,22 +1,20 @@
-#!/usr/bin/env python2
-# vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
-
-__license__   = 'GPL v3'
-__copyright__ = '2010, Kovid Goyal <kovid@kovidgoyal.net>'
-__docformat__ = 'restructuredtext en'
-
-import textwrap, re
-
-from PyQt5.Qt import QAbstractTableModel, QFont, Qt
+#!/usr/bin/env python
+# License: GPLv3 Copyright: 2010, Kovid Goyal <kovid at kovidgoyal.net>
 
 
-from calibre.gui2.preferences import ConfigWidgetBase, test_widget, \
-        AbortCommit
+import re
+import textwrap
+
+from qt.core import QAbstractItemView, QAbstractTableModel, QFont, Qt
+
+from calibre.gui2 import gprefs
+from calibre.gui2.preferences import AbortCommit, ConfigWidgetBase, test_widget
 from calibre.gui2.preferences.email_ui import Ui_Form
+from calibre.startup import connect_lambda
 from calibre.utils.config import ConfigProxy
 from calibre.utils.icu import numeric_sort_key
-from calibre.gui2 import gprefs
 from calibre.utils.smtp import config as smtp_prefs
+from polyglot.builtins import as_unicode
 
 
 class EmailAccounts(QAbstractTableModel):  # {{{
@@ -28,14 +26,14 @@ class EmailAccounts(QAbstractTableModel):  # {{{
         self.aliases = aliases
         self.tags = tags
         self.sorted_on = (0, True)
-        self.account_order = self.accounts.keys()
+        self.account_order = list(self.accounts)
         self.do_sort()
-        self.headers  = map(unicode, [_('Email'), _('Formats'), _('Subject'),
-            _('Auto send'), _('Alias'), _('Auto send only tags')])
+        self.headers  = [_('Email'), _('Formats'), _('Subject'),
+            _('Auto send'), _('Alias'), _('Auto send only tags')]
         self.default_font = QFont()
         self.default_font.setBold(True)
         self.default_font = (self.default_font)
-        self.tooltips =[None] + list(map(unicode, map(textwrap.fill,
+        self.tooltips =[None] + list(map(textwrap.fill,
             [_('Formats to email. The first matching format will be sent.'),
              _('Subject of the email to use when sending. When left blank '
                'the title will be used for the subject. Also, the same '
@@ -49,7 +47,7 @@ class EmailAccounts(QAbstractTableModel):  # {{{
                ' this email address. All news downloads have their title as a'
                ' tag, so you can use this to easily control which news downloads'
                ' are sent to this email address.')
-             ])))
+             ]))
 
     def do_sort(self):
         col = self.sorted_on[0]
@@ -64,7 +62,7 @@ class EmailAccounts(QAbstractTableModel):  # {{{
                 return numeric_sort_key(self.subjects.get(account_key) or '')
         elif col == 3:
             def key(account_key):
-                return numeric_sort_key(type(u'')(self.accounts[account_key][0]) or '')
+                return numeric_sort_key(as_unicode(self.accounts[account_key][0]) or '')
         elif col == 4:
             def key(account_key):
                 return numeric_sort_key(self.aliases.get(account_key) or '')
@@ -73,8 +71,8 @@ class EmailAccounts(QAbstractTableModel):  # {{{
                 return numeric_sort_key(self.tags.get(account_key) or '')
         self.account_order.sort(key=key, reverse=not self.sorted_on[1])
 
-    def sort(self, column, order=Qt.AscendingOrder):
-        nsort = (column, order == Qt.AscendingOrder)
+    def sort(self, column, order=Qt.SortOrder.AscendingOrder):
+        nsort = (column, order == Qt.SortOrder.AscendingOrder)
         if nsort != self.sorted_on:
             self.sorted_on = nsort
             self.beginResetModel()
@@ -90,7 +88,7 @@ class EmailAccounts(QAbstractTableModel):  # {{{
         return len(self.headers)
 
     def headerData(self, section, orientation, role):
-        if role == Qt.DisplayRole and orientation == Qt.Horizontal:
+        if role == Qt.ItemDataRole.DisplayRole and orientation == Qt.Orientation.Horizontal:
             return self.headers[section]
         return None
 
@@ -101,14 +99,14 @@ class EmailAccounts(QAbstractTableModel):  # {{{
         account = self.account_order[row]
         if account not in self.accounts:
             return None
-        if role == Qt.UserRole:
+        if role == Qt.ItemDataRole.UserRole:
             return (account, self.accounts[account])
-        if role == Qt.ToolTipRole:
+        if role == Qt.ItemDataRole.ToolTipRole:
             return self.tooltips[col]
-        if role in [Qt.DisplayRole, Qt.EditRole]:
+        if role in [Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.EditRole]:
             if col == 0:
                 return (account)
-            if col ==  1:
+            if col == 1:
                 return ', '.join(x.strip() for x in (self.accounts[account][0] or '').split(','))
             if col == 2:
                 return (self.subjects.get(account, ''))
@@ -116,17 +114,17 @@ class EmailAccounts(QAbstractTableModel):  # {{{
                 return (self.aliases.get(account, ''))
             if col == 5:
                 return (self.tags.get(account, ''))
-        if role == Qt.FontRole and self.accounts[account][2]:
+        if role == Qt.ItemDataRole.FontRole and self.accounts[account][2]:
             return self.default_font
-        if role == Qt.CheckStateRole and col == 3:
-            return (Qt.Checked if self.accounts[account][1] else Qt.Unchecked)
+        if role == Qt.ItemDataRole.CheckStateRole and col == 3:
+            return (Qt.CheckState.Checked if self.accounts[account][1] else Qt.CheckState.Unchecked)
         return None
 
     def flags(self, index):
         if index.column() == 3:
-            return QAbstractTableModel.flags(self, index)|Qt.ItemIsUserCheckable
+            return QAbstractTableModel.flags(self, index)|Qt.ItemFlag.ItemIsUserCheckable
         else:
-            return QAbstractTableModel.flags(self, index)|Qt.ItemIsEditable
+            return QAbstractTableModel.flags(self, index)|Qt.ItemFlag.ItemIsEditable
 
     def setData(self, index, value, role):
         if not index.isValid():
@@ -136,29 +134,29 @@ class EmailAccounts(QAbstractTableModel):  # {{{
         if col == 3:
             self.accounts[account][1] ^= True
         elif col == 2:
-            self.subjects[account] = unicode(value or '')
+            self.subjects[account] = as_unicode(value or '')
         elif col == 4:
             self.aliases.pop(account, None)
-            aval = unicode(value or '').strip()
+            aval = as_unicode(value or '').strip()
             if aval:
                 self.aliases[account] = aval
         elif col == 5:
             self.tags.pop(account, None)
-            aval = unicode(value or '').strip()
+            aval = as_unicode(value or '').strip()
             if aval:
                 self.tags[account] = aval
         elif col == 1:
-            self.accounts[account][0] = re.sub(',+', ',', re.sub(r'\s+', ',', unicode(value or '').upper()))
+            self.accounts[account][0] = re.sub(r',+', ',', re.sub(r'\s+', ',', as_unicode(value or '').upper()))
         elif col == 0:
-            na = unicode(value or '')
+            na = as_unicode(value or '').strip()
             from email.utils import parseaddr
             addr = parseaddr(na)[-1]
-            if not addr:
+            if not addr or '@' not in na:
                 return False
             self.accounts[na] = self.accounts.pop(account)
             self.account_order[row] = na
             if '@kindle.com' in addr:
-                self.accounts[na][0] = 'AZW, MOBI, TPZ, PRC, AZW1'
+                self.accounts[na][0] = 'EPUB, TPZ'
 
         self.dataChanged.emit(
                 self.index(index.row(), 0), self.index(index.row(), 3))
@@ -184,27 +182,34 @@ class EmailAccounts(QAbstractTableModel):  # {{{
         self.beginResetModel()
         self.accounts[y] = ['MOBI, EPUB', auto_send,
                                                 len(self.account_order) == 0]
-        self.account_order = self.accounts.keys()
+        self.account_order = list(self.accounts)
         self.do_sort()
         self.endResetModel()
         return self.index(self.account_order.index(y), 0)
 
+    def remove_rows(self, *rows):
+        for row in sorted(rows, reverse=True):
+            try:
+                account = self.account_order[row]
+            except Exception:
+                continue
+            self.accounts.pop(account)
+        self.account_order = sorted(self.accounts)
+        has_default = False
+        for account in self.account_order:
+            if self.accounts[account][2]:
+                has_default = True
+                break
+        if not has_default and self.account_order:
+            self.accounts[self.account_order[0]][2] = True
+
+        self.beginResetModel()
+        self.endResetModel()
+        self.do_sort()
+
     def remove(self, index):
         if index.isValid():
-            row = index.row()
-            account = self.account_order[row]
-            self.accounts.pop(account)
-            self.account_order = sorted(self.accounts.keys())
-            has_default = False
-            for account in self.account_order:
-                if self.accounts[account][2]:
-                    has_default = True
-                    break
-            if not has_default and self.account_order:
-                self.accounts[self.account_order[0]][2] = True
-
-            self.beginResetModel()
-            self.endResetModel()
+            self.remove(index.row())
 
 # }}}
 
@@ -226,7 +231,7 @@ class ConfigWidget(ConfigWidgetBase, Ui_Form):
                 opts.aliases, opts.tags)
         connect_lambda(self._email_accounts.dataChanged, self, lambda self: self.changed_signal.emit())
         self.email_view.setModel(self._email_accounts)
-        self.email_view.sortByColumn(0, Qt.AscendingOrder)
+        self.email_view.sortByColumn(0, Qt.SortOrder.AscendingOrder)
         self.email_view.setSortingEnabled(True)
 
         self.email_add.clicked.connect(self.add_email_account)
@@ -247,14 +252,14 @@ class ConfigWidget(ConfigWidgetBase, Ui_Form):
         # No defaults to restore to
 
     def commit(self):
-        if self.email_view.state() == self.email_view.EditingState:
+        if self.email_view.state() == QAbstractItemView.State.EditingState:
             # Ensure that the cell being edited is committed by switching focus
             # to some other widget, which automatically closes the open editor
-            self.send_email_widget.setFocus(Qt.OtherFocusReason)
+            self.send_email_widget.setFocus(Qt.FocusReason.OtherFocusReason)
         to_set = bool(self._email_accounts.accounts)
         if not self.send_email_widget.set_email_settings(to_set):
             raise AbortCommit('abort')
-        self.proxy['accounts'] =  self._email_accounts.accounts
+        self.proxy['accounts'] = self._email_accounts.accounts
         self.proxy['subjects'] = self._email_accounts.subjects
         self.proxy['aliases'] = self._email_accounts.aliases
         self.proxy['tags'] = self._email_accounts.tags
@@ -273,8 +278,10 @@ class ConfigWidget(ConfigWidgetBase, Ui_Form):
         self.changed_signal.emit()
 
     def remove_email_account(self, *args):
-        idx = self.email_view.currentIndex()
-        self._email_accounts.remove(idx)
+        rows = set()
+        for idx in self.email_view.selectionModel().selectedIndexes():
+            rows.add(idx.row())
+        self._email_accounts.remove_rows(*rows)
         self.changed_signal.emit()
 
     def refresh_gui(self, gui):

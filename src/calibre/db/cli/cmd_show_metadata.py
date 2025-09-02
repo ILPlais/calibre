@@ -1,8 +1,6 @@
-#!/usr/bin/env python2
-# vim:fileencoding=utf-8
+#!/usr/bin/env python
 # License: GPLv3 Copyright: 2017, Kovid Goyal <kovid at kovidgoyal.net>
 
-from __future__ import absolute_import, division, print_function, unicode_literals
 
 import os
 import sys
@@ -47,11 +45,12 @@ def main(opts, args, dbctx):
     book_id = int(args[0])
     mi = dbctx.run('show_metadata', book_id)
     if mi is None:
-        raise SystemExit('Id #%d is not present in database.' % id)
+        raise SystemExit(f'Id #{book_id} is not present in database.')
     if opts.as_opf:
-        mi = OPFCreator(os.getcwdu(), mi)
-        mi.render(sys.stdout)
+        stdout = getattr(sys.stdout, 'buffer', sys.stdout)
+        mi = OPFCreator(os.getcwd(), mi)
+        mi.render(stdout)
     else:
-        prints(unicode(mi))
+        prints(str(mi))
 
     return 0

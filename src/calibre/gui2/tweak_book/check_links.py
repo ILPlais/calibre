@@ -1,21 +1,32 @@
-#!/usr/bin/env python2
-# vim:fileencoding=utf-8
+#!/usr/bin/env python
 # License: GPLv3 Copyright: 2015, Kovid Goyal <kovid at kovidgoyal.net>
-
-from __future__ import absolute_import, division, print_function, unicode_literals
 
 from collections import defaultdict
 from threading import Thread
 
-from PyQt5.Qt import (
-    QCheckBox, QHBoxLayout, QIcon, QInputDialog, QLabel, QProgressBar, QSizePolicy,
-    QStackedWidget, Qt, QTextBrowser, QVBoxLayout, QWidget, pyqtSignal
+from qt.core import (
+    QCheckBox,
+    QDialogButtonBox,
+    QHBoxLayout,
+    QIcon,
+    QInputDialog,
+    QLabel,
+    QProgressBar,
+    QSizePolicy,
+    QStackedWidget,
+    Qt,
+    QTextBrowser,
+    QVBoxLayout,
+    QWidget,
+    pyqtSignal,
 )
 
 from calibre.gui2 import error_dialog
 from calibre.gui2.tweak_book import current_container, editors, set_current_container, tprefs
 from calibre.gui2.tweak_book.boss import get_boss
 from calibre.gui2.tweak_book.widgets import Dialog
+from calibre.utils.localization import ngettext
+from polyglot.builtins import iteritems
 
 
 def get_data(name):
@@ -30,6 +41,8 @@ def set_data(name, val):
         editors[name].replace_data(val, only_if_different=False)
     else:
         with current_container().open(name, 'wb') as f:
+            if isinstance(val, str):
+                val = val.encode('utf-8')
             f.write(val)
     get_boss().set_modified()
 
@@ -40,7 +53,7 @@ class CheckExternalLinks(Dialog):
 
     def __init__(self, parent=None):
         Dialog.__init__(self, _('Check external links'), 'check-external-links-dialog', parent)
-        self.progress_made.connect(self.on_progress_made, type=Qt.QueuedConnection)
+        self.progress_made.connect(self.on_progress_made, type=Qt.ConnectionType.QueuedConnection)
 
     def show(self):
         if self.rb.isEnabled():
@@ -57,14 +70,14 @@ class CheckExternalLinks(Dialog):
     def setup_ui(self):
         self.pb = pb = QProgressBar(self)
         pb.setTextVisible(True)
-        pb.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        pb.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         pb.setRange(0, 0)
         self.w = w = QWidget(self)
         self.w.l = l = QVBoxLayout(w)
         l.addStretch(), l.addWidget(pb)
         self.w.la = la = QLabel(_('Checking external links, please wait...'))
         la.setStyleSheet('QLabel { font-size: 20px; font-weight: bold }')
-        l.addWidget(la, 0, Qt.AlignCenter), l.addStretch()
+        l.addWidget(la, 0, Qt.AlignmentFlag.AlignCenter), l.addStretch()
 
         self.l = l = QVBoxLayout(self)
         self.results = QTextBrowser(self)
@@ -81,9 +94,9 @@ class CheckExternalLinks(Dialog):
         ca.stateChanged.connect(self.anchors_changed)
         h.addWidget(ca), h.addStretch(100), h.addWidget(self.bb)
         l.addLayout(h)
-        self.bb.setStandardButtons(self.bb.Close)
-        self.rb = b = self.bb.addButton(_('&Refresh'), self.bb.ActionRole)
-        b.setIcon(QIcon(I('view-refresh.png')))
+        self.bb.setStandardButtons(QDialogButtonBox.StandardButton.Close)
+        self.rb = b = self.bb.addButton(_('&Refresh'), QDialogButtonBox.ButtonRole.ActionRole)
+        b.setIcon(QIcon.ic('view-refresh.png'))
         b.clicked.connect(self.refresh)
 
     def anchors_changed(self):
@@ -125,12 +138,12 @@ class CheckExternalLinks(Dialog):
 
     def populate_results(self, preserve_pos=False):
         num = len(self.errors) - len(self.fixed_errors)
-        text = '<h3>%s</h3><ol>' % (ngettext(
+        text = '<h3>{}</h3><ol>'.format(ngettext(
             'Found a broken link', 'Found {} broken links', num).format(num))
         for i, (locations, err, url) in enumerate(self.errors):
             if i in self.fixed_errors:
                 continue
-            text += '<li><b>%s</b> \xa0<a href="err:%d">[%s]</a><br>%s<br><ul>' % (url, i, _('Fix this link'), err)
+            text += '<li><b>{}</b> \xa0<a href="err:{}">[{}]</a><br>{}<br><ul>'.format(url, i, _('Fix this link'), err)
             for name, href, lnum, col in locations:
                 text += '<li>{name} \xa0<a href="loc:{lnum},{name}">[{line}: {lnum}]</a></li>'.format(
                     name=name, lnum=lnum, line=_('line number'))
@@ -149,7 +162,7 @@ class CheckExternalLinks(Dialog):
             for name, href in {(l[0], l[1]) for l in err[0]}:
                 nmap[name].add(href)
 
-            for name, hrefs in nmap.iteritems():
+            for name, hrefs in iteritems(nmap):
                 raw = oraw = get_data(name)
                 for href in hrefs:
                     raw = raw.replace(href, newurl)
@@ -167,11 +180,12 @@ class CheckExternalLinks(Dialog):
 
 if __name__ == '__main__':
     import sys
+
     from calibre.gui2 import Application
     from calibre.gui2.tweak_book.boss import get_container
     app = Application([])
     set_current_container(get_container(sys.argv[-1]))
     d = CheckExternalLinks()
     d.refresh()
-    d.exec_()
+    d.exec()
     del app

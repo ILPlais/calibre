@@ -1,11 +1,14 @@
-#!/usr/bin/env python2
+#!/usr/bin/env python
 # vim:fileencoding=utf-8
 from __future__ import absolute_import, division, print_function, unicode_literals
 
 import re
 import shutil
-import urllib
 
+try:
+    from urllib.parse import urlencode
+except ImportError:
+    from urllib import urlencode
 from calibre.ptempfile import PersistentTemporaryDirectory, PersistentTemporaryFile
 from calibre.web.feeds.news import BasicNewsRecipe
 
@@ -31,22 +34,22 @@ class AdvancedUserRecipe1515196393(BasicNewsRecipe):
         issue_title = soup.find('h1')
         self.title = "Galaxy's Edge: " + self.tag_to_string(issue_title).lower().title()
         toc = soup.find('div', attrs={'class':'nav-tabs'})
-        current_section = "Articles"
+        current_section = 'Articles'
         current_articles = []
         feeds = []
         br = self.get_browser()
         self.ctdir = PersistentTemporaryDirectory()
-        for x in toc.findAll(['li'], attrs={"class": re.compile(".*get_content.*")}):
+        for x in toc.findAll(['li'], attrs={'class': re.compile(r'.*get_content.*')}):
             edwo = x.find('a')
             title = self.tag_to_string(edwo)
             self.log('\t\tFound article:', title)
-            post_id = x["data-post-id"]
-            cat_id = x["data-cat-id"]
-            parent_id = x["data-parent-id"]
+            post_id = x['data-post-id']
+            cat_id = x['data-cat-id']
+            parent_id = x['data-parent-id']
             self.log('\t\tdata-parent-id', parent_id)
             self.log('\t\tdata-cat-id', cat_id)
             self.log('\t\tdata-post-id', post_id)
-            data = urllib.urlencode({'action':'get_content', 'cat_id':cat_id, 'parent_id':parent_id, 'post_id':post_id})
+            data = urlencode({'action':'get_content', 'cat_id':cat_id, 'parent_id':parent_id, 'post_id':post_id})
             r=br.open('http://www.galaxysedge.com/wp-content/themes/galaxyedge/get_content.php', data)
             content_file = PersistentTemporaryFile(suffix='.html', dir=self.ctdir)
             content_file.write(r.read())
@@ -58,5 +61,5 @@ class AdvancedUserRecipe1515196393(BasicNewsRecipe):
         return feeds
 
     def cleanup(self):
-        self.log("Deleting temp files...")
+        self.log('Deleting temp files...')
         shutil.rmtree(self.ctdir)

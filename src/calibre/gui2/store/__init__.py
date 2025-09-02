@@ -1,7 +1,3 @@
-# -*- coding: utf-8 -*-
-
-from __future__ import (unicode_literals, division, absolute_import, print_function)
-
 __license__ = 'GPL 3'
 __copyright__ = '2011, John Schember <john@nachtimwald.com>'
 __docformat__ = 'restructuredtext en'
@@ -9,7 +5,7 @@ __docformat__ = 'restructuredtext en'
 from calibre.utils.filenames import ascii_filename
 
 
-class StorePlugin(object):  # {{{
+class StorePlugin:  # {{{
 
     '''
     A plugin representing an online ebook repository (store). The store can
@@ -42,7 +38,7 @@ class StorePlugin(object):  # {{{
 
     Plugin authors can use affiliate programs within their plugin. The
     distribution of money earned from a store plugin is 70/30. 70% going
-    to the pluin author / maintainer and 30% going to the calibre project.
+    to the plugin author / maintainer and 30% going to the calibre project.
 
     The easiest way to handle affiliate money payouts is to randomly select
     between the author's affiliate id and calibre's affiliate id so that
@@ -58,14 +54,14 @@ class StorePlugin(object):  # {{{
         self.name = name
         self.base_plugin = base_plugin
         if config is None:
-            from calibre.gui2 import JSONConfig
+            from calibre.utils.config import JSONConfig
             config = JSONConfig('store/stores/' + ascii_filename(self.name))
         self.config = config
 
     def create_browser(self):
         '''
         If the server requires special headers, such as a particular user agent
-        or a referrer, then implement this method in you plugin to return a
+        or a referrer, then implement this method in your plugin to return a
         customized browser instance. See the Gutenberg plugin for an example.
 
         Note that if you implement the open() method in your plugin and use the
@@ -116,14 +112,14 @@ class StorePlugin(object):  # {{{
         disabled by default.
 
         If a store doesn't provide search on it's own use something like a site specific
-        google search to get search results for this funtion.
+        google search to get search results for this function.
 
         :param query: The string query search with.
         :param max_results: The maximum number of results to return.
         :param timeout: The maximum amount of time in seconds to spend downloading data for search results.
 
         :return: :class:`calibre.gui2.store.search_result.SearchResult` objects
-        item_data is plugin specific and is used in :meth:`open` to open to a specifc place in the store.
+        item_data is plugin specific and is used in :meth:`open` to open to a specific place in the store.
         '''
         raise NotImplementedError()
 

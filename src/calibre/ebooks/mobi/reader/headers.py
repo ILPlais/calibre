@@ -1,26 +1,35 @@
-#!/usr/bin/env python2
-# vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
-from __future__ import (absolute_import, print_function)
+#!/usr/bin/env python
+
 
 __license__   = 'GPL v3'
 __copyright__ = '2012, Kovid Goyal <kovid@kovidgoyal.net>'
 __docformat__ = 'restructuredtext en'
 
-import struct, re, os
+import os
+import re
+import struct
 
 from calibre import replace_entities
-from calibre.utils.date import parse_date
-from calibre.ebooks.mobi import MobiError
 from calibre.ebooks.metadata import MetaInformation, check_isbn
-from calibre.ebooks.mobi.langcodes import main_language, sub_language, mobi2iana
+from calibre.ebooks.mobi import MobiError
+from calibre.ebooks.mobi.langcodes import main_language, mobi2iana, sub_language
 from calibre.utils.cleantext import clean_ascii_chars, clean_xml_chars
-from calibre.utils.localization import canonicalize_lang
 from calibre.utils.config_base import tweaks
+from calibre.utils.date import parse_date
+from calibre.utils.localization import canonicalize_lang
 
 NULL_INDEX = 0xffffffff
 
 
-class EXTHHeader(object):  # {{{
+def uniq(vals):
+    ''' Remove all duplicates from vals, while preserving order.  '''
+    vals = vals or ()
+    seen = set()
+    seen_add = seen.add
+    return [x for x in vals if x not in seen and not seen_add(x)]
+
+
+class EXTHHeader:  # {{{
 
     def __init__(self, raw, codec, title):
         self.doctype = raw[:4]
@@ -36,7 +45,7 @@ class EXTHHeader(object):  # {{{
         self.page_progression_direction = None
         self.primary_writing_mode = None
 
-        self.decode = lambda x : clean_ascii_chars(x.decode(codec, 'replace'))
+        self.decode = lambda x: clean_ascii_chars(x.decode(codec, 'replace'))
 
         while left > 0:
             left -= 1
@@ -74,7 +83,7 @@ class EXTHHeader(object):  # {{{
                 # they are messed up in the PDB header
                 try:
                     title = self.decode(content)
-                except:
+                except Exception:
                     pass
             elif idx == 524:  # Lang code
                 try:
@@ -82,7 +91,7 @@ class EXTHHeader(object):  # {{{
                     lang = canonicalize_lang(lang)
                     if lang:
                         self.mi.language = lang
-                except:
+                except Exception:
                     pass
             elif idx == 525:
                 try:
@@ -99,7 +108,7 @@ class EXTHHeader(object):  # {{{
                 except Exception:
                     pass
             # else:
-            #    print 'unknown record', idx, repr(content)
+            #     print('unknown record', idx, repr(content))
         if title:
             self.mi.title = replace_entities(clean_xml_chars(clean_ascii_chars(title)))
 
@@ -118,6 +127,8 @@ class EXTHHeader(object):  # {{{
                     self.mi.authors.append(m.group())
                 if self.mi.is_null('author_sort'):
                     self.mi.author_sort = m.group()
+                else:
+                    self.mi.author_sort += ' & ' + m.group()
             else:
                 self.mi.authors.append(au)
         elif idx == 101:
@@ -134,11 +145,11 @@ class EXTHHeader(object):  # {{{
             if not self.mi.tags:
                 self.mi.tags = []
             self.mi.tags.extend([x.strip() for x in clean_xml_chars(self.decode(content)).split(';')])
-            self.mi.tags = list(set(self.mi.tags))
+            self.mi.tags = uniq(self.mi.tags)
         elif idx == 106:
             try:
-                self.mi.pubdate = parse_date(content, as_utc=False)
-            except:
+                self.mi.pubdate = parse_date(self.decode(content), as_utc=False)
+            except Exception:
                 pass
         elif idx == 108:
             self.mi.book_producer = clean_xml_chars(self.decode(content).strip())
@@ -158,13 +169,13 @@ class EXTHHeader(object):  # {{{
                     cid = content[len('calibre:'):]
                     if cid:
                         self.mi.application_id = self.mi.uuid = cid
-            except:
+            except Exception:
                 pass
         elif idx == 113:  # ASIN or other id
             try:
                 self.uuid = content.decode('ascii')
                 self.mi.set_identifier('mobi-asin', self.uuid)
-            except:
+            except Exception:
                 self.uuid = None
         elif idx == 116:
             self.start_offset, = struct.unpack(b'>L', content)
@@ -173,18 +184,18 @@ class EXTHHeader(object):  # {{{
             if self.kf8_header == NULL_INDEX:
                 self.kf8_header = None
         # else:
-        #    print 'unhandled metadata record', idx, repr(content)
+        #     print('unhandled metadata record', idx, repr(content))
 # }}}
 
 
-class BookHeader(object):
+class BookHeader:
 
     def __init__(self, raw, ident, user_encoding, log, try_extra_data_fix=False):
         self.log = log
         self.compression_type = raw[:2]
         self.records, self.records_size = struct.unpack('>HH', raw[8:12])
         self.encryption_type, = struct.unpack('>H', raw[12:14])
-        if ident == 'TEXTREAD':
+        if ident == b'TEXTREAD':
             self.codepage = 1252
         if len(raw) <= 16:
             self.codec = 'cp1252'
@@ -209,20 +220,19 @@ class BookHeader(object):
                     }[self.codepage]
             except (IndexError, KeyError):
                 self.codec = 'cp1252' if not user_encoding else user_encoding
-                log.warn('Unknown codepage %d. Assuming %s' % (self.codepage,
-                    self.codec))
+                log.warn(f'Unknown codepage {self.codepage}. Assuming {self.codec}')
             # Some KF8 files have header length == 264 (generated by kindlegen
             # 2.9?). See https://bugs.launchpad.net/bugs/1179144
             max_header_length = 500  # We choose 500 for future versions of kindlegen
 
-            if (ident == 'TEXTREAD' or self.length < 0xE4 or
+            if (ident == b'TEXTREAD' or self.length < 0xE4 or
                     self.length > max_header_length or
                     (try_extra_data_fix and self.length == 0xE4)):
                 self.extra_flags = 0
             else:
                 self.extra_flags, = struct.unpack('>H', raw[0xF2:0xF4])
 
-            if self.compression_type == 'DH':
+            if self.compression_type == b'DH':
                 self.huff_offset, self.huff_number = struct.unpack('>LL',
                         raw[0x70:0x78])
 
@@ -239,7 +249,7 @@ class BookHeader(object):
 
             self.exth_flag, = struct.unpack('>L', raw[0x80:0x84])
             self.exth = None
-            if not isinstance(self.title, unicode):
+            if not isinstance(self.title, str):
                 self.title = self.title.decode(self.codec, 'replace')
             if self.exth_flag & 0x40:
                 try:
@@ -249,9 +259,9 @@ class BookHeader(object):
                     if self.exth.mi.is_null('language'):
                         try:
                             self.exth.mi.language = mobi2iana(langid, sublangid)
-                        except:
+                        except Exception:
                             self.log.exception('Unknown language code')
-                except:
+                except Exception:
                     self.log.exception('Invalid EXTH header')
                     self.exth_flag = 0
 
@@ -293,23 +303,23 @@ class MetadataHeader(BookHeader):
     def kf8_type(self):
         if (self.mobi_version == 8 and getattr(self, 'skelidx', NULL_INDEX) !=
                 NULL_INDEX):
-            return u'standalone'
+            return 'standalone'
 
         kf8_header_index = getattr(self.exth, 'kf8_header', None)
         if kf8_header_index is None:
             return None
         try:
             if self.section_data(kf8_header_index-1) == b'BOUNDARY':
-                return u'joint'
-        except:
+                return 'joint'
+        except Exception:
             pass
         return None
 
     def identity(self):
         self.stream.seek(60)
         ident = self.stream.read(8).upper()
-        if ident not in ['BOOKMOBI', 'TEXTREAD']:
-            raise MobiError('Unknown book type: %s' % ident)
+        if ident not in (b'BOOKMOBI', b'TEXTREAD'):
+            raise MobiError(f'Unknown book type: {ident}')
         return ident
 
     def section_count(self):

@@ -1,15 +1,25 @@
-#!/usr/bin/env python2
-# vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
+#!/usr/bin/env python
+
 
 __license__   = 'GPL v3'
 __copyright__ = '2011, Kovid Goyal <kovid@kovidgoyal.net>'
 __docformat__ = 'restructuredtext en'
 
-import traceback, sys
-from threading import Lock, Condition, current_thread
-from calibre.utils.config_base import tweaks
+import os
+import sys
+import traceback
+from contextlib import contextmanager
+from threading import Condition, Lock, current_thread
+
+
+@contextmanager
+def try_lock(lock):
+    got_lock = lock.acquire(blocking=False)
+    try:
+        yield got_lock
+    finally:
+        if got_lock:
+            lock.release()
 
 
 class LockingError(RuntimeError):
@@ -48,11 +58,11 @@ def create_locks():
     the possibility of deadlocking in this scenario).
     '''
     l = SHLock()
-    wrapper = DebugRWLockWrapper if tweaks.get('newdb_debug_locking', False) else RWLockWrapper
+    wrapper = DebugRWLockWrapper if os.environ.get('CALIBRE_DEBUG_DB_LOCKING') == '1' else RWLockWrapper
     return wrapper(l), wrapper(l, is_shared=False)
 
 
-class SHLock(object):  # {{{
+class SHLock:  # {{{
     '''
     Shareable lock class. Used to implement the Multiple readers-single writer
     paradigm. As best as I can tell, neither writer nor reader starvation
@@ -63,21 +73,21 @@ class SHLock(object):  # {{{
 
     def __init__(self):
         self._lock = Lock()
-        #  When a shared lock is held, is_shared will give the cumulative
-        #  number of locks and _shared_owners maps each owning thread to
-        #  the number of locks is holds.
+        # When a shared lock is held, is_shared will give the cumulative
+        # number of locks and _shared_owners maps each owning thread to
+        # the number of locks is holds.
         self.is_shared = 0
         self._shared_owners = {}
-        #  When an exclusive lock is held, is_exclusive will give the number
-        #  of locks held and _exclusive_owner will give the owning thread
+        # When an exclusive lock is held, is_exclusive will give the number
+        # of locks held and _exclusive_owner will give the owning thread
         self.is_exclusive = 0
         self._exclusive_owner = None
-        #  When someone is forced to wait for a lock, they add themselves
-        #  to one of these queues along with a "waiter" condition that
-        #  is used to wake them up.
+        # When someone is forced to wait for a lock, they add themselves
+        # to one of these queues along with a "waiter" condition that
+        # is used to wake them up.
         self._shared_queue = []
         self._exclusive_queue = []
-        #  This is for recycling waiter objects.
+        # This is for recycling waiter objects.
         self._free_waiters = []
 
     def acquire(self, blocking=True, shared=False):
@@ -101,29 +111,29 @@ class SHLock(object):  # {{{
 
     def release(self):
         ''' Release the lock. '''
-        #  This decrements the appropriate lock counters, and if the lock
-        #  becomes free, it looks for a queued thread to hand it off to.
-        #  By doing the handoff here we ensure fairness.
+        # This decrements the appropriate lock counters, and if the lock
+        # becomes free, it looks for a queued thread to hand it off to.
+        # By doing the handoff here we ensure fairness.
         me = current_thread()
         with self._lock:
             if self.is_exclusive:
                 if self._exclusive_owner is not me:
-                    raise LockingError("release() called on unheld lock")
+                    raise LockingError('release() called on unheld lock')
                 self.is_exclusive -= 1
                 if not self.is_exclusive:
                     self._exclusive_owner = None
-                    #  If there are waiting shared locks, issue them
-                    #  all and them wake everyone up.
+                    # If there are waiting shared locks, issue them
+                    # all and them wake everyone up.
                     if self._shared_queue:
-                        for (thread, waiter) in self._shared_queue:
+                        for thread, waiter in self._shared_queue:
                             self.is_shared += 1
                             self._shared_owners[thread] = 1
                             waiter.notify()
                         del self._shared_queue[:]
-                    #  Otherwise, if there are waiting exclusive locks,
-                    #  they get first dibbs on the lock.
+                    # Otherwise, if there are waiting exclusive locks,
+                    # they get first dibbs on the lock.
                     elif self._exclusive_queue:
-                        (thread, waiter) = self._exclusive_queue.pop(0)
+                        thread, waiter = self._exclusive_queue.pop(0)
                         self._exclusive_owner = thread
                         self.is_exclusive += 1
                         waiter.notify()
@@ -133,30 +143,30 @@ class SHLock(object):  # {{{
                     if self._shared_owners[me] == 0:
                         del self._shared_owners[me]
                 except KeyError:
-                    raise LockingError("release() called on unheld lock")
+                    raise LockingError('release() called on unheld lock')
                 self.is_shared -= 1
                 if not self.is_shared:
-                    #  If there are waiting exclusive locks,
-                    #  they get first dibbs on the lock.
+                    # If there are waiting exclusive locks,
+                    # they get first dibbs on the lock.
                     if self._exclusive_queue:
-                        (thread, waiter) = self._exclusive_queue.pop(0)
+                        thread, waiter = self._exclusive_queue.pop(0)
                         self._exclusive_owner = thread
                         self.is_exclusive += 1
                         waiter.notify()
                     else:
                         assert not self._shared_queue
             else:
-                raise LockingError("release() called on unheld lock")
+                raise LockingError('release() called on unheld lock')
 
     def _acquire_shared(self, blocking=True):
         me = current_thread()
-        #  Each case: acquiring a lock we already hold.
+        # Each case: acquiring a lock we already hold.
         if self.is_shared and me in self._shared_owners:
             self.is_shared += 1
             self._shared_owners[me] += 1
             return True
-        #  If the lock is already spoken for by an exclusive, add us
-        #  to the shared queue and it will give us the lock eventually.
+        # If the lock is already spoken for by an exclusive, add us
+        # to the shared queue and it will give us the lock eventually.
         if self.is_exclusive or self._exclusive_queue:
             if self._exclusive_owner is me:
                 raise DowngradeLockError("can't downgrade SHLock object")
@@ -176,7 +186,7 @@ class SHLock(object):  # {{{
 
     def _acquire_exclusive(self, blocking=True):
         me = current_thread()
-        #  Each case: acquiring a lock we already hold.
+        # Each case: acquiring a lock we already hold.
         if self._exclusive_owner is me:
             assert self.is_exclusive
             self.is_exclusive += 1
@@ -184,8 +194,8 @@ class SHLock(object):  # {{{
         # Do not allow upgrade of lock
         if self.is_shared and me in self._shared_owners:
             raise LockingError("can't upgrade SHLock object")
-        #  If the lock is already spoken for, add us to the exclusive queue.
-        #  This will eventually give us the lock when it's our turn.
+        # If the lock is already spoken for, add us to the exclusive queue.
+        # This will eventually give us the lock when it's our turn.
         if self.is_shared or self.is_exclusive:
             if not blocking:
                 return False
@@ -212,7 +222,7 @@ class SHLock(object):  # {{{
 # }}}
 
 
-class RWLockWrapper(object):
+class RWLockWrapper:
 
     def __init__(self, shlock, is_shared=True):
         self._shlock = shlock
@@ -235,28 +245,34 @@ class DebugRWLockWrapper(RWLockWrapper):
 
     def __init__(self, *args, **kwargs):
         RWLockWrapper.__init__(self, *args, **kwargs)
+        self.print_lock = Lock()
 
     def acquire(self):
-        print ('#' * 120, file=sys.stderr)
-        print ('acquire called: thread id:', current_thread(), 'shared:', self._is_shared, file=sys.stderr)
-        traceback.print_stack()
+        with self.print_lock:
+            print('#' * 120, file=sys.stderr)
+            print('acquire called: thread id:', current_thread(), 'shared:', self._is_shared, file=sys.stderr)
+            traceback.print_stack()
         RWLockWrapper.acquire(self)
-        print ('acquire done: thread id:', current_thread(), file=sys.stderr)
-        print ('_' * 120, file=sys.stderr)
+        with self.print_lock:
+            print('acquire done: thread id:', current_thread(), file=sys.stderr)
+            print('_' * 120, file=sys.stderr)
 
     def release(self, *args):
-        print ('*' * 120, file=sys.stderr)
-        print ('release called: thread id:', current_thread(), 'shared:', self._is_shared, file=sys.stderr)
-        traceback.print_stack()
+        with self.print_lock:
+            print('*' * 120, file=sys.stderr)
+            print('release called: thread id:', current_thread(), 'shared:', self._is_shared, file=sys.stderr)
+            traceback.print_stack()
         RWLockWrapper.release(self)
-        print ('release done: thread id:', current_thread(), 'is_shared:', self._shlock.is_shared, 'is_exclusive:', self._shlock.is_exclusive, file=sys.stderr)
-        print ('_' * 120, file=sys.stderr)
+        with self.print_lock:
+            print('release done: thread id:', current_thread(), 'is_shared:', self._shlock.is_shared, 'is_exclusive:', self._shlock.is_exclusive,
+                  file=sys.stderr)
+            print('_' * 120, file=sys.stderr)
 
     __enter__ = acquire
     __exit__ = release
 
 
-class SafeReadLock(object):
+class SafeReadLock:
 
     def __init__(self, read_lock):
         self.read_lock = read_lock

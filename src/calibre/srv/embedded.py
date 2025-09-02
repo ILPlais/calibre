@@ -1,11 +1,11 @@
-#!/usr/bin/env python2
-# vim:fileencoding=utf-8
+#!/usr/bin/env python
 # License: GPLv3 Copyright: 2017, Kovid Goyal <kovid at kovidgoyal.net>
-from __future__ import absolute_import, division, print_function, unicode_literals
+
 
 import errno
 import json
 import os
+from contextlib import suppress
 from threading import Thread
 
 from calibre import as_unicode
@@ -24,21 +24,31 @@ def log_paths():
     )
 
 
-def custom_list_template():
+def read_json(path):
     try:
-        with lopen(custom_list_template.path, 'rb') as f:
+        with open(path, 'rb') as f:
             raw = f.read()
-    except EnvironmentError as err:
+    except OSError as err:
         if err.errno != errno.ENOENT:
             raise
         return
-    return json.loads(raw)
+    with suppress(json.JSONDecodeError):
+        return json.loads(raw)
+
+
+def custom_list_template():
+    return read_json(custom_list_template.path)
+
+
+def search_the_net_urls():
+    return read_json(search_the_net_urls.path)
 
 
 custom_list_template.path = os.path.join(config_dir, 'server-custom-list-template.json')
+search_the_net_urls.path = os.path.join(config_dir, 'server-search-the-net.json')
 
 
-class Server(object):
+class Server:
 
     loop = current_thread = exception = None
     state_callback = start_failure_callback = None
@@ -48,7 +58,7 @@ class Server(object):
         lp, lap = log_paths()
         try:
             os.makedirs(cache_dir())
-        except EnvironmentError as err:
+        except OSError as err:
             if err.errno != errno.EEXIST:
                 raise
         log_size = opts.max_log_size * 1024 * 1024
@@ -57,11 +67,12 @@ class Server(object):
         self.handler = Handler(library_broker, opts, notify_changes=notify_changes)
         plugins = self.plugins = []
         if opts.use_bonjour:
-            plugins.append(BonJour())
+            plugins.append(BonJour(wait_for_stop=max(0, opts.shutdown_timeout - 0.2)))
         self.opts = opts
         self.log, self.access_log = log, access_log
         self.handler.set_log(self.log)
         self.handler.router.ctx.custom_list_template = custom_list_template()
+        self.handler.router.ctx.search_the_net_urls = search_the_net_urls()
 
     @property
     def ctx(self):

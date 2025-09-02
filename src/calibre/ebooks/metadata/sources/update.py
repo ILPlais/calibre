@@ -1,4 +1,4 @@
-#!/usr/bin/env python2
+#!/usr/bin/env python
 # vim:fileencoding=utf-8
 # License: GPLv3 Copyright: 2017, Kovid Goyal <kovid at kovidgoyal.net>
 
@@ -13,10 +13,12 @@ from threading import Thread
 
 import calibre.ebooks.metadata.sources.search_engines as builtin_search_engines
 from calibre import as_unicode, prints
-from calibre.constants import DEBUG, numeric_version
+from calibre.constants import numeric_version
 from calibre.ebooks.metadata.sources.base import Source
+from calibre.prints import debug_print
 from calibre.utils.config import JSONConfig
 from calibre.utils.https import get_https_resource_securely
+from polyglot.builtins import iteritems, itervalues
 
 cache = JSONConfig('metadata-sources-cache.json')
 
@@ -29,21 +31,16 @@ def search_engines_module():
     return current_search_engines
 
 
-def debug_print(*args, **k):
-    if DEBUG:
-        prints(*args, **k)
-
-
 def load_plugin(src):
     src = src.encode('utf-8')
     ns = {}
     exec(src, ns)
-    for x in ns.itervalues():
+    for x in itervalues(ns):
         if isinstance(x, type) and issubclass(x, Source) and x is not Source:
             return x
 
 
-class PatchedSearchEngines(object):
+class PatchedSearchEngines:
 
     def __init__(self, ns):
         self.__ns = ns
@@ -76,12 +73,15 @@ def patch_search_engines(src):
 def patch_plugins():
     from calibre.customize.ui import patch_metadata_plugins
     patches = {}
-    for name, val in cache.iteritems():
+    for name, val in iteritems(cache):
         if name == 'hashes':
             continue
         if name == 'search_engines':
             patch_search_engines(val)
-        p = load_plugin(val)
+        try:
+            p = load_plugin(val)
+        except Exception:
+            p = None
         if p is not None:
             patches[p.name] = p
     patch_metadata_plugins(patches)
@@ -94,7 +94,7 @@ def update_needed():
         'https://code.calibre-ebook.com/metadata-sources/hashes.json')
     hashes = bz2.decompress(hashes)
     hashes = json.loads(hashes)
-    for k, v in hashes.iteritems():
+    for k, v in iteritems(hashes):
         if current_hashes.get(k) != v:
             needed[k] = v
     remove = set(current_hashes) - set(hashes)
@@ -132,7 +132,7 @@ def main(report_error=prints, report_action=prints):
             cache.touch()
             return
         updated = {}
-        for name, expected_hash in needed.iteritems():
+        for name, expected_hash in iteritems(needed):
             report_action('Updating metadata source {}...'.format(name))
             try:
                 update_plugin(name, updated, expected_hash)

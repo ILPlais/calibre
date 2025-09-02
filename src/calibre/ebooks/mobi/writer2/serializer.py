@@ -1,25 +1,32 @@
-#!/usr/bin/env python2
-# vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
+#!/usr/bin/env python
+
 
 __license__   = 'GPL v3'
 __copyright__ = '2011, Kovid Goyal <kovid@kovidgoyal.net>'
 __docformat__ = 'restructuredtext en'
 
-import re, unicodedata
 
-from calibre.ebooks.oeb.base import (OEB_DOCS, XHTML, XHTML_NS, XML_NS,
-        namespace, prefixname, urlnormalize)
+import re
+import unicodedata
+from collections import defaultdict
+from io import BytesIO
+
 from calibre.ebooks.mobi.mobiml import MBP_NS
 from calibre.ebooks.mobi.utils import is_guide_ref_start
+from calibre.ebooks.oeb.base import OEB_DOCS, XHTML, XHTML_NS, XML_NS, namespace, prefixname, urlnormalize
+from polyglot.builtins import string_or_bytes
+from polyglot.urllib import urldefrag
 
-from collections import defaultdict
-from urlparse import urldefrag
-from cStringIO import StringIO
+
+class Buf(BytesIO):
+
+    def write(self, x):
+        if isinstance(x, str):
+            x = x.encode('utf-8')
+        BytesIO.write(self, x)
 
 
-class Serializer(object):
+class Serializer:
     NSRMAP = {'': None, XML_NS: 'xml', XHTML_NS: '', MBP_NS: 'mbp'}
 
     def __init__(self, oeb, images, is_periodical, write_page_breaks_after_item=True):
@@ -96,7 +103,7 @@ class Serializer(object):
         for i, item in enumerate(items):
             try:
                 prev_item = items[i-1]
-            except:
+            except Exception:
                 prev_item = None
             if in_art and item.is_article_start is True:
                 prev_item.is_article_end = True
@@ -115,7 +122,7 @@ class Serializer(object):
         '''
         Return the document serialized as a single UTF-8 encoded bytestring.
         '''
-        buf = self.buf = StringIO()
+        buf = self.buf = Buf()
         buf.write(b'<html>')
         self.serialize_head()
         self.serialize_body()
@@ -156,7 +163,7 @@ class Serializer(object):
                 continue
 
             buf.write(b'<reference type="')
-            if ref.type.startswith('other.') :
+            if ref.type.startswith('other.'):
                 self.serialize_text(ref.type.replace('other.',''), quot=True)
             else:
                 self.serialize_text(ref.type, quot=True)
@@ -184,7 +191,7 @@ class Serializer(object):
         try:
             path, frag = urldefrag(urlnormalize(href))
         except ValueError:
-            # Unparseable URL
+            # Unparsable URL
             return False
         if path and base:
             path = base.abshref(path)
@@ -213,39 +220,39 @@ class Serializer(object):
             # if href is provided add a link ref to the toc level output (e.g. feed_0/index.html)
             if href is not None:
                 # resolve the section url in id_offsets
-                buf.write('<mbp:pagebreak />')
+                buf.write(b'<mbp:pagebreak />')
                 self.id_offsets[urlnormalize(href)] = buf.tell()
 
-            if tocref.klass == "periodical":
-                buf.write('<div> <div height="1em"></div>')
+            if tocref.klass == 'periodical':
+                buf.write(b'<div> <div height="1em"></div>')
             else:
                 t = tocref.title
-                if isinstance(t, unicode):
+                if isinstance(t, str):
                     t = t.encode('utf-8')
-                buf.write('<div></div> <div> <h2 height="1em"><font size="+2"><b>' + t +
-                          '</b></font></h2> <div height="1em"></div>')
+                buf.write(b'<div></div> <div> <h2 height="1em"><font size="+2"><b>' + t +
+                          b'</b></font></h2> <div height="1em"></div>')
 
-            buf.write('<ul>')
+            buf.write(b'<ul>')
 
             for tocitem in tocref.nodes:
-                buf.write('<li><a filepos=')
+                buf.write(b'<li><a filepos=')
                 itemhref = tocitem.href
                 if tocref.klass == 'periodical':
                     # This is a section node.
                     # For periodical tocs, the section urls are like r'feed_\d+/index.html'
-                    # We dont want to point to the start of the first article
+                    # We don't want to point to the start of the first article
                     # so we change the href.
                     itemhref = re.sub(r'article_\d+/', '', itemhref)
                 self.href_offsets[itemhref].append(buf.tell())
-                buf.write('0000000000')
-                buf.write(' ><font size="+1"><b><u>')
+                buf.write(b'0000000000')
+                buf.write(b' ><font size="+1"><b><u>')
                 t = tocitem.title
-                if isinstance(t, unicode):
+                if isinstance(t, str):
                     t = t.encode('utf-8')
                 buf.write(t)
-                buf.write('</u></b></font></a></li>')
+                buf.write(b'</u></b></font></a></li>')
 
-            buf.write('</ul><div height="1em"></div></div><mbp:pagebreak />')
+            buf.write(b'</ul><div height="1em"></div></div><mbp:pagebreak />')
 
         self.anchor_offset = buf.tell()
         buf.write(b'<body>')
@@ -300,7 +307,7 @@ class Serializer(object):
 
     def serialize_elem(self, elem, item, nsrmap=NSRMAP):
         buf = self.buf
-        if not isinstance(elem.tag, basestring) \
+        if not isinstance(elem.tag, string_or_bytes) \
             or namespace(elem.tag) not in nsrmap:
             return
         tag = prefixname(elem.tag, nsrmap)
@@ -349,16 +356,16 @@ class Serializer(object):
                 if child.tail:
                     self.anchor_offset = None
                     self.serialize_text(child.tail)
-        buf.write(b'</%s>' % tag.encode('utf-8'))
+        buf.write((f'</{tag}>').encode('utf-8'))
 
     def serialize_text(self, text, quot=False):
         text = text.replace('&', '&amp;')
         text = text.replace('<', '&lt;')
         text = text.replace('>', '&gt;')
-        text = text.replace(u'\u00AD', '')  # Soft-hyphen
+        text = text.replace('\u00ad', '')  # Soft-hyphen
         if quot:
             text = text.replace('"', '&quot;')
-        if isinstance(text, unicode):
+        if isinstance(text, str):
             text = unicodedata.normalize('NFC', text)
         self.buf.write(text.encode('utf-8'))
 
@@ -374,7 +381,7 @@ class Serializer(object):
             is_start = (href and href == start_href)
             # Iterate over all filepos items
             if href not in id_offsets:
-                self.logger.warn('Hyperlink target %r not found' % href)
+                self.logger.warn(f'Hyperlink target {href!r} not found')
                 # Link to the top of the document, better than just ignoring
                 href, _ = urldefrag(href)
             if href in self.id_offsets:
@@ -383,6 +390,4 @@ class Serializer(object):
                     self.start_offset = ioff
                 for hoff in hoffs:
                     buf.seek(hoff)
-                    buf.write(b'%010d' % ioff)
-
-
+                    buf.write(f'{ioff:010}'.encode('utf-8'))

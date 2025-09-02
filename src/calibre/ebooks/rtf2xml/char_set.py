@@ -1,4 +1,4 @@
-char_set = """
+char_set = '''
 <ms_standard>
 NON-BREAKING HYPEHN:_:8290:&#x2011;
 LEFT DOUBLE QUOTATION MARK:ldblquote:8220:&#x201C;
@@ -108,7 +108,7 @@ DIGIT SIX:'36:54:6
 DIGIT SEVEN:'37:55:7
 DIGIT EIGHT:'38:56:8
 DIGIT NINE:'39:57:9
-COLON:'3A:58:\colon
+COLON:'3A:58:\\colon
 SEMICOLON:'3B:59:;
 LESS-THAN SIGN:'3C:60:&lt;
 EQUALS SIGN:'3D:61:=
@@ -15242,7 +15242,7 @@ UPWARDS DOUBLE ARROW:'DD:8657:&#x21D1;
 RIGHTWARDS DOUBLE ARROW:'DE:8658:&#x21D2;
 DOWNWARDS DOUBLE ARROW:'DF:8659:&#x21D3;
 BETWEEN:'E0:8812:&#x226C;
-MATHMATICAL LEFT ANGELBRACKET:'E1:10216:&#x27E8;
+MATHEMATICAL LEFT ANGELBRACKET:'E1:10216:&#x27E8;
 REGISTERED SIGN:'E2:174:&#x00AE;
 COPYRIGHT:'E3:169:&#x00A9;
 TRADEMARK SYMBOL:'E4:8482:&#x2122;
@@ -15257,7 +15257,7 @@ LARGE LEFT BRACKET PART1:'EC:0:<udef_symbol num="0xEC" description="right_bracke
 LARGE LEFT BRACKET PART2:'ED:0:<udef_symbol num="0xED" description="right_bracke tpart 2"/>
 LARGE LEFT BRACKET PART3:'EE:0:<udef_symbol num="0xEE" description="right_bracket part 3"/>
 DIVIDES:'EF:8739:&#x2223;
-MATHMATICAL RIGHT ANGLE BRACKET:'F1:10217:&#x27E9;
+MATHEMATICAL RIGHT ANGLE BRACKET:'F1:10217:&#x27E9;
 INTEGRAL:'F2:8747:&#x222B;
 LARGE INTEGRAL PART 1:'F3:0:<udef_symbol num="0xF3" description="integral part 1"/>
 LARGE INTEGRAL PART 2:'F4:0:<udef_symbol num="0xF4" description="integral part 2"/>
@@ -15265,7 +15265,7 @@ LARGE INTEGRAL PART 3:'F5:0:<udef_symbol num="0xF5" description="integral part 3
 LARGE RIGHT PARENTHESIS PART1:'F6:0:<udef_symbol num="0xF6" description="right_parenthesis part 1"/>
 LARGE RIGHT PARENTHESIS PART2:'F7:0:<udef_symbol num="0xF7" description="right_parenthesis part 2"/>
 LARGE RIGHT PARENTHESIS PART3:'F8:0:<udef_symbol num="0xF8" description="right_parenthesis part 3"/>
-LARGE RIGHT SQAURE BRACKET PART1:'F9:0:<udef_symbol num="0xF9" description="right_square_bracket part 1"/>
+LARGE RIGHT SQUARE BRACKET PART1:'F9:0:<udef_symbol num="0xF9" description="right_square_bracket part 1"/>
 LARGE RIGHT SQUARE BRACKET PART2:'FA:0:<udef_symbol num="0xFA" description="right_square_bracket part 2"/>
 LARGE RIGHT SQUARE BRACKETPART3:'FB:0:<udef_symbol num="0xFB" description="right_square_bracket part 3"/>
 LARGE RIGHT BRACKET PART1:'FC:0:<udef_symbol num="0xFC" description="right_bracket part 1"/>
@@ -15335,7 +15335,7 @@ DIGIT SIX:6:54:\'36
 DIGIT SEVEN:7:55:\'37
 DIGIT EIGHT:8:56:\'38
 DIGIT NINE:9:57:\'39
-COLON:\colon:58:\'3A
+COLON:\\colon:58:\'3A
 SEMICOLON:;:59:\'3B
 EQUALS SIGN:=:61:\'3D
 QUESTION MARK:?:63:\'3F
@@ -15366,7 +15366,7 @@ LATIN CAPITAL LETTER X:X:88:\'58
 LATIN CAPITAL LETTER Y:Y:89:\'59
 LATIN CAPITAL LETTER Z:Z:90:\'5A
 LEFT SQUARE BRACKET:[:91:\'5B
-REVERSE SOLIDUS:\:92:\'5C
+REVERSE SOLIDUS:\\:92:\'5C
 RIGHT SQUARE BRACKET:]:93:\'5D
 LATIN SMALL LETTER A:a:97:\'61
 LATIN SMALL LETTER B:b:98:\'62
@@ -16140,7 +16140,7 @@ SNOWFLAKE:T:10052:&#x2744;
 SHADOWED WHITE LATIN CROSS:U:10014:&#x271E;
 SHADOWED WHITE LATIN CROSS:V:10014:&#x271E;
 MY CELTIC CROSS:W:0:<celtic_cross/>
-MALTESE CORSS:X:10016:&#x2720;
+MALTESE CROSS:X:10016:&#x2720;
 STAR OF DAVID:Y:10017:&#x2721;
 STAR AND CRESCENT:Z:9770:&#x262A;
 MY FOLDER:0:0:<folder/>
@@ -16175,7 +16175,7 @@ MY OPEN MAILBOX:.:0:<open_mailbox/>
 WRITING HAND:?:9996:&#x270C;
 EIGHT PETALLED OUTLINED BLACK FLORETTE:|:10049:&#x2741;
 MY OPEN MAILBOX:/:0:<open_mailbox/>
-MY COMPUETR:\colon:0:<computer/>
+MY COMPUETR:\\colon:0:<computer/>
 MY DOWNWARD LEAF:" :0:<downward_leaf/>
 MY UPWARD LEAF:"  :0:<upward_leaf/>
 </wingdings_old>
@@ -16334,7 +16334,7 @@ UPWARDS DOUBLE ARROW:221:8657:&#x21D1;
 RIGHTWARDS DOUBLE ARROW:222:8658:&#x21D2;
 DOWNWARDS DOUBLE ARROW:223:8659:&#x21D3;
 BETWEEN:224:8812:&#x226C;
-MATHMATICAL LEFT ANGELBRACKET:225:10216:&#x27E8;
+MATHEMATICAL LEFT ANGELBRACKET:225:10216:&#x27E8;
 REGISTERED SIGN:226:174:&#x00AE;
 COPYRIGHT:227:169:&#x00A9;
 TRADEMARK SYMBOL:228:8482:&#x2122;
@@ -16349,7 +16349,7 @@ LARGE LEFT BRACKET PART1:236:0:<udef_symbol num="0x236" description="right_brack
 LARGE LEFT BRACKET PART2:237:0:<udef_symbol num="0x237" description="right_bracket part 2"/>
 LARGE LEFT BRACKET PART3:238:0:<udef_symbol num="0x238" description="right_bracket part 3"/>
 DIVIDES:239:8739:&#x2223;
-MATHMATICAL RIGHT ANGLE BRACKET:241:10217:&#x27E9;
+MATHEMATICAL RIGHT ANGLE BRACKET:241:10217:&#x27E9;
 INTEGRAL:242:8747:&#x222B;
 LARGE INTEGRAL PART 1:243:0:<udef_symbol num="0x243" description="integral part 1"/>
 LARGE INTEGRAL PART 2:244:0:<udef_symbol num="0x244" description="integral part 2"/>
@@ -16357,7 +16357,7 @@ LARGE INTEGRAL PART 3:245:0:<udef_symbol num="0x245" description="integral part 
 LARGE RIGHT PARENTHESIS PART1:246:0:<udef_symbol num="0x246" description="right_parenthesis part 1"/>
 LARGE RIGHT PARENTHESIS PART2:247:0:<udef_symbol num="0x247" description="right_parenthesis part 2"/>
 LARGE RIGHT PARENTHESIS PART3:248:0:<udef_symbol num="0x248" description="right_parenthesis part 3"/>
-LARGE RIGHT SQAURE BRACKET PART1:249:0:<udef_symbol num="0x249" description="right_square_bracket part 1"/>
+LARGE RIGHT SQUARE BRACKET PART1:249:0:<udef_symbol num="0x249" description="right_square_bracket part 1"/>
 LARGE RIGHT SQUARE BRACKET PART2:250:0:<udef_symbol num="0x250" description="right_square_bracket part 2"/>
 LARGE RIGHT SQUARE BRACKETPART3:251:0:<udef_symbol num="0x251" description="right_square_bracket part 3"/>
 LARGE RIGHT BRACKET PART1:252:0:<udef_symbol num="0x252" description="right_bracket part 1"/>
@@ -16519,7 +16519,7 @@ UPWARDS DOUBLE ARROW:221:unknown:&#x21D1;
 RIGHTWARDS DOUBLE ARROW:222:unknown:&#x21D2;
 DOWNWARDS DOUBLE ARROW:223:unknown:&#x21D3;
 BETWEEN:224:unknown:&#x226C;
-MATHMATICAL LEFT ANGELBRACKET:225:unknown:&#x27E8;
+MATHEMATICAL LEFT ANGELBRACKET:225:unknown:&#x27E8;
 REGISTERED SIGN:226:unknown:&#x00AE;
 COPYRIGHT:227:unknown:&#x00A9;
 N-ARY SUMMATION:229:8721:&#x2211;
@@ -16533,7 +16533,7 @@ LARGE LEFT BRACKET PART1:236:unknown:<udef_symbol num="0x236" description="right
 LARGE LEFT BRACKET PART2:237:unknown:<udef_symbol num="0x237" description="right_bracket part 2"/>
 LARGE LEFT BRACKET PART3:238:unknown:<udef_symbol num="0x238" description="right_bracket part 3"/>
 DIVIDES:239:8739:&#x2223;
-MATHMATICAL RIGHT ANGLE BRACKET:241:unknown:27E9
+MATHEMATICAL RIGHT ANGLE BRACKET:241:unknown:27E9
 INTEGRAL:242:unknown:&#x222B;
 LARGE INTEGRAL PART 1:243:unknown:<integral part="1"/>
 LARGE INTEGRAL PART 2:244:unknown:<integral part="2"/>
@@ -16541,7 +16541,7 @@ LARGE INTEGRAL PART 3:245:unknown:<integral part="3"/>
 LARGE RIGHT PARENTHESIS PART1:246:unknown:<right_parenthesis part="1"/>
 LARGE RIGHT PARENTHESIS PART2:247:unknown:<right_parenthesis part="2"/>
 LARGE RIGHT PARENTHESIS PART3:248:unknown:<right_parenthesis part="3"/>
-LARGE RIGHT SQAURE BRACKET PART1:249:unknown:<right_square_bracket part="1"/>
+LARGE RIGHT SQUARE BRACKET PART1:249:unknown:<right_square_bracket part="1"/>
 LARGE RIGHT SQUARE BRACKET PART2:250:unknown:<right_square_bracket part="2"/>
 LARGE RIGHT SQUARE BRACKETPART3:251:unknown:<right_square_bracket part="3"/>
 LARGE RIGHT BRACKET PART1:252:unknown:<right_bracket part="1"/>
@@ -16681,7 +16681,7 @@ TELEPHONE LOCATION SIGN:&:9990:&#x2706;
 BLACK RIGHT POINTING INDEX:*:9755:&#x261B;
 AIRPLANE:(:9992:&#x2708;
 ENVELOPE:):9993:&#x2709;
-HEAVY GREK CROSS:\colon:10010:&#x271A;
+HEAVY GREK CROSS:\\colon:10010:&#x271A;
 OUTLINED LATIN CROSS:?:10015:&#x271F;
 PENCIL:/:9999:&#x270F;
 OPEN CENTRE TEARDROP-SPOKED ASTERISK:\\:10044:&#x273C;
@@ -16705,4 +16705,4 @@ HORIZONTAL TABULATION:TAB :9:&#x0009;
 NULL:\xef:0:&#xnull;
 </single_set>
 </unused>
-"""
+'''

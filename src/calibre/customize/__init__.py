@@ -1,18 +1,21 @@
-from __future__ import with_statement
-from __future__ import print_function
 __license__   = 'GPL v3'
 __copyright__ = '2008, Kovid Goyal <kovid at kovidgoyal.net>'
 
-import os, sys, zipfile, importlib
+import enum
+import importlib
+import os
+import sys
+import zipfile
 
-from calibre.constants import numeric_version, iswindows, isosx
+from calibre.constants import ismacos, iswindows, numeric_version
 from calibre.ptempfile import PersistentTemporaryFile
 
-platform = 'linux'
 if iswindows:
     platform = 'windows'
-elif isosx:
+elif ismacos:
     platform = 'osx'
+else:
+    platform = 'linux'
 
 
 class PluginNotFound(ValueError):
@@ -23,10 +26,17 @@ class InvalidPlugin(ValueError):
     pass
 
 
-class Plugin(object):  # {{{
+class PluginInstallationType(enum.IntEnum):
+    EXTERNAL = 1
+    SYSTEM = 2
+    BUILTIN = 3
+
+
+class Plugin:  # {{{
     '''
     A calibre plugin. Useful members include:
 
+       * ``self.installation_type``: Stores how the plugin was installed.
        * ``self.plugin_path``: Stores path to the ZIP file that contains
                                this plugin or None if it is a builtin
                                plugin
@@ -65,12 +75,15 @@ class Plugin(object):  # {{{
     #: When more than one plugin exists for a filetype,
     #: the plugins are run in order of decreasing priority.
     #: Plugins with higher priority will be run first.
-    #: The highest possible priority is ``sys.maxint``.
+    #: The highest possible priority is ``sys.maxsize``.
     #: Default priority is 1.
     priority = 1
 
     #: The earliest version of calibre this plugin requires
     minimum_calibre_version = (0, 4, 118)
+
+    #: The way this plugin is installed
+    installation_type  = None
 
     #: If False, the user will not be able to disable this plugin. Use with
     #: care.
@@ -132,30 +145,36 @@ class Plugin(object):  # {{{
         True if the user clicks OK, False otherwise. The changes are
         automatically applied.
         '''
-        from PyQt5.Qt import QDialog, QDialogButtonBox, QVBoxLayout, \
-                QLabel, Qt, QLineEdit
+        from qt.core import QApplication, QDialog, QDialogButtonBox, QLabel, QLineEdit, QScrollArea, QSize, Qt, QVBoxLayout
+
         from calibre.gui2 import gprefs
 
-        prefname = 'plugin config dialog:'+self.type + ':' + self.name
-        geom = gprefs.get(prefname, None)
+        class ConfigDialog(QDialog):
 
-        config_dialog = QDialog(parent)
-        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        v = QVBoxLayout(config_dialog)
+            def __init__(self, parent, config_widget):
+                super().__init__(parent)
+                self.config_widget = config_widget
 
-        def size_dialog():
-            if geom is None:
-                config_dialog.resize(config_dialog.sizeHint())
-            else:
-                config_dialog.restoreGeometry(geom)
+            def accept(self):
+                if ((validate := getattr(self.config_widget, 'validate', None)) and
+                        getattr(self.config_widget, 'validate_before_accept', False)):
+                    if not validate():
+                        return
+                super().accept()
 
-        button_box.accepted.connect(config_dialog.accept)
-        button_box.rejected.connect(config_dialog.reject)
-        config_dialog.setWindowTitle(_('Customize') + ' ' + self.name)
         try:
             config_widget = self.config_widget()
         except NotImplementedError:
             config_widget = None
+
+        prefname = 'plugin config dialog:'+self.type + ':' + self.name
+
+        config_dialog = ConfigDialog(parent, config_widget)
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        v = QVBoxLayout(config_dialog)
+        button_box.accepted.connect(config_dialog.accept)
+        button_box.rejected.connect(config_dialog.reject)
+        config_dialog.setWindowTitle(_('Customize') + ' ' + self.name)
 
         if isinstance(config_widget, tuple):
             from calibre.gui2 import warning_dialog
@@ -164,24 +183,32 @@ class Plugin(object):  # {{{
             return False
 
         if config_widget is not None:
-            v.addWidget(config_widget)
+            class SA(QScrollArea):
+                def sizeHint(self):
+                    sz = self.widget().sizeHint()
+                    fw = 2 * self.frameWidth()
+                    return QSize(sz.width() + self.verticalScrollBar().sizeHint().width() + fw, sz.height() + fw)
+            sa = SA(config_dialog)
+            sa.setWidget(config_widget)
+            sa.setWidgetResizable(True)
+            v.addWidget(sa)
             v.addWidget(button_box)
-            size_dialog()
-            config_dialog.exec_()
+            if not config_dialog.restore_geometry(gprefs, prefname):
+                QApplication.instance().ensure_window_on_screen(config_dialog)
+            config_dialog.exec()
 
-            if config_dialog.result() == QDialog.Accepted:
+            if config_dialog.result() == QDialog.DialogCode.Accepted:
                 if hasattr(config_widget, 'validate'):
                     if config_widget.validate():
                         self.save_settings(config_widget)
                 else:
                     self.save_settings(config_widget)
         else:
-            from calibre.customize.ui import plugin_customization, \
-                customize_plugin
+            from calibre.customize.ui import customize_plugin, plugin_customization
             help_text = self.customization_help(gui=True)
             help_text = QLabel(help_text, config_dialog)
             help_text.setWordWrap(True)
-            help_text.setTextInteractionFlags(Qt.LinksAccessibleByMouse | Qt.LinksAccessibleByKeyboard)
+            help_text.setTextInteractionFlags(Qt.TextInteractionFlag.LinksAccessibleByMouse | Qt.TextInteractionFlag.LinksAccessibleByKeyboard)
             help_text.setOpenExternalLinks(True)
             v.addWidget(help_text)
             sc = plugin_customization(self)
@@ -191,16 +218,14 @@ class Plugin(object):  # {{{
             sc = QLineEdit(sc, config_dialog)
             v.addWidget(sc)
             v.addWidget(button_box)
-            size_dialog()
-            config_dialog.exec_()
+            config_dialog.restore_geometry(gprefs, prefname)
+            config_dialog.exec()
 
-            if config_dialog.result() == QDialog.Accepted:
-                sc = unicode(sc.text()).strip()
+            if config_dialog.result() == QDialog.DialogCode.Accepted:
+                sc = str(sc.text()).strip()
                 customize_plugin(self, sc)
 
-        geom = bytearray(config_dialog.saveGeometry())
-        gprefs[prefname] = geom
-
+        config_dialog.save_geometry(gprefs, prefname)
         return config_dialog.result()
 
     def load_resources(self, names):
@@ -211,7 +236,7 @@ class Plugin(object):  # {{{
         For example to load an image::
 
             pixmap = QPixmap()
-            pixmap.loadFromData(self.load_resources(['images/icon.png']).itervalues().next())
+            pixmap.loadFromData(self.load_resources(['images/icon.png'])['images/icon.png'])
             icon = QIcon(pixmap)
 
         :param names: List of paths to resources in the ZIP file using / as separator
@@ -247,7 +272,7 @@ class Plugin(object):  # {{{
         :param gui: If True return HTML help, otherwise return plain text help.
 
         '''
-        raise NotImplementedError
+        raise NotImplementedError()
 
     def temporary_file(self, suffix):
         '''
@@ -275,25 +300,28 @@ class Plugin(object):  # {{{
                 import something
         '''
         if self.plugin_path is not None:
+            from importlib.machinery import EXTENSION_SUFFIXES
+
             from calibre.utils.zipfile import ZipFile
-            zf = ZipFile(self.plugin_path)
-            extensions = {x.rpartition('.')[-1].lower() for x in
-                zf.namelist()}
-            zip_safe = True
-            for ext in ('pyd', 'so', 'dll', 'dylib'):
-                if ext in extensions:
-                    zip_safe = False
-                    break
-            if zip_safe:
-                sys.path.insert(0, self.plugin_path)
-                self.sys_insertion_path = self.plugin_path
-            else:
-                from calibre.ptempfile import TemporaryDirectory
-                self._sys_insertion_tdir = TemporaryDirectory('plugin_unzip')
-                self.sys_insertion_path = self._sys_insertion_tdir.__enter__(*args)
-                zf.extractall(self.sys_insertion_path)
-                sys.path.insert(0, self.sys_insertion_path)
-            zf.close()
+            with ZipFile(self.plugin_path) as zf:
+                extensions = {x.lower() for x in EXTENSION_SUFFIXES}
+                zip_safe = True
+                for name in zf.namelist():
+                    for q in extensions:
+                        if name.endswith(q):
+                            zip_safe = False
+                            break
+                    if not zip_safe:
+                        break
+                if zip_safe:
+                    sys.path.append(self.plugin_path)
+                    self.sys_insertion_path = self.plugin_path
+                else:
+                    from calibre.ptempfile import TemporaryDirectory
+                    self._sys_insertion_tdir = TemporaryDirectory('plugin_unzip')
+                    self.sys_insertion_path = self._sys_insertion_tdir.__enter__(*args)
+                    zf.extractall(self.sys_insertion_path)
+                    sys.path.append(self.sys_insertion_path)
 
     def __exit__(self, *args):
         ip, it = getattr(self, 'sys_insertion_path', None), getattr(self,
@@ -309,8 +337,7 @@ class Plugin(object):  # {{{
         interface. It is called when the user does: calibre-debug -r "Plugin
         Name". Any arguments passed are present in the args variable.
         '''
-        raise NotImplementedError('The %s plugin has no command line interface'
-                                  %self.name)
+        raise NotImplementedError(f'The {self.name} plugin has no command line interface')
 
 # }}}
 
@@ -333,6 +360,15 @@ class FileTypePlugin(Plugin):  # {{{
     #: to the database. In this case the postimport and postadd
     #: methods of the plugin are called.
     on_postimport  = False
+
+    #: If True, this plugin is run after a book is converted.
+    #: In this case the postconvert method of the plugin is called.
+    on_postconvert = False
+
+    #: If True, this plugin is run after a book file is deleted
+    #: from the database. In this case the postdelete method of
+    #: the plugin is called.
+    on_postdelete = False
 
     #: If True, this plugin is run just before a conversion
     on_preprocess  = False
@@ -378,6 +414,31 @@ class FileTypePlugin(Plugin):  # {{{
         '''
         pass  # Default implementation does nothing
 
+    def postconvert(self, book_id, book_format, db):
+        '''
+        Called post conversion, i.e., after the conversion output book file has been added to the database.
+        Note that it is run after a conversion only, not after a book is added. It is useful for modifying
+        the book record based on the contents of the newly added file.
+
+        :param book_id: Database id of the added book.
+        :param book_format: The file type of the book that was added.
+        :param db: Library database.
+        '''
+        pass  # Default implementation does nothing
+
+    def postdelete(self, book_id, book_format, db):
+        '''
+        Called post deletion, i.e., after the book file has been deleted from the database. Note
+        that it is not run when a book record is deleted, only when one or more formats from the
+        book are deleted. It is useful for modifying the book record based on the format of the
+        deleted file.
+
+        :param book_id: Database id of the added book.
+        :param book_format: The file type of the book that was added.
+        :param db: Library database.
+        '''
+        pass  # Default implementation does nothing
+
     def postadd(self, book_id, fmt_map, db):
         '''
         Called post add, i.e. after a book has been added to the db. Note that
@@ -405,7 +466,7 @@ class MetadataReaderPlugin(Plugin):  # {{{
     '''
     #: Set of file types for which this plugin should be run.
     #: For example: ``set(['lit', 'mobi', 'prc'])``
-    file_types     = set([])
+    file_types     = set()
 
     supported_platforms = ['windows', 'osx', 'linux']
     version = numeric_version
@@ -427,7 +488,8 @@ class MetadataReaderPlugin(Plugin):  # {{{
             in :attr:`file_types`.
         :return: A :class:`calibre.ebooks.metadata.book.Metadata` object
         '''
-        return None
+        return
+
 # }}}
 
 
@@ -437,7 +499,7 @@ class MetadataWriterPlugin(Plugin):  # {{{
     '''
     #: Set of file types for which this plugin should be run.
     #: For example: ``set(['lit', 'mobi', 'prc'])``
-    file_types     = set([])
+    file_types     = set()
 
     supported_platforms = ['windows', 'osx', 'linux']
     version = numeric_version
@@ -473,17 +535,17 @@ class CatalogPlugin(Plugin):  # {{{
 
     #: Output file type for which this plugin should be run.
     #: For example: 'epub' or 'xml'
-    file_types = set([])
+    file_types = set()
 
     type = _('Catalog generator')
 
-    #: CLI parser options specific to this plugin, declared as namedtuple Option:
+    #: CLI parser options specific to this plugin, declared as `namedtuple` `Option`:
     #:
-    #:   from collections import namedtuple
-    #:   Option = namedtuple('Option', 'option, default, dest, help')
-    #:   cli_options = [Option('--catalog-title', default = 'My Catalog',
-    #:   dest = 'catalog_title', help = (_('Title of generated catalog. \nDefault:') + " '" + '%default' + "'"))]
-    #:   cli_options parsed in calibre.db.cli.cmd_catalog:option_parser()
+    #:     from collections import namedtuple
+    #:     Option = namedtuple('Option', 'option, default, dest, help')
+    #:     cli_options = [Option('--catalog-title', default = 'My Catalog',
+    #:     dest = 'catalog_title', help = (_('Title of generated catalog. \nDefault:') + " '" + '%default' + "'"))]
+    #:     cli_options parsed in calibre.db.cli.cmd_catalog:option_parser()
     #:
     cli_options = []
 
@@ -492,7 +554,7 @@ class CatalogPlugin(Plugin):  # {{{
         Custom fields sort after standard fields
         '''
         if key.startswith('#'):
-            return '~%s' % key[1:]
+            return f'~{key[1:]}'
         else:
             return key
 
@@ -500,7 +562,7 @@ class CatalogPlugin(Plugin):  # {{{
 
         db.search(opts.search_text)
 
-        if opts.sort_by:
+        if getattr(opts, 'sort_by', None):
             # 2nd arg = ascending
             db.sort(opts.sort_by, True)
         return db.get_data_as_dict(ids=opts.ids)
@@ -518,7 +580,7 @@ class CatalogPlugin(Plugin):  # {{{
                 all_custom_fields.add(field+'_index')
         all_fields = all_std_fields.union(all_custom_fields)
 
-        if opts.fields != 'all':
+        if getattr(opts, 'fields', 'all') != 'all':
             # Make a list from opts.fields
             of = [x.strip() for x in opts.fields.split(',')]
             requested_fields = set(of)
@@ -526,11 +588,10 @@ class CatalogPlugin(Plugin):  # {{{
             # Validate requested_fields
             if requested_fields - all_fields:
                 from calibre.library import current_library_name
-                invalid_fields = sorted(list(requested_fields - all_fields))
-                print("invalid --fields specified: %s" % ', '.join(invalid_fields))
-                print("available fields in '%s': %s" %
-                      (current_library_name(), ', '.join(sorted(list(all_fields)))))
-                raise ValueError("unable to generate catalog with specified fields")
+                invalid_fields = sorted(requested_fields - all_fields)
+                print('invalid --fields specified: {}'.format(', '.join(invalid_fields)))
+                print("available fields in '{}': {}".format(current_library_name(), ', '.join(sorted(all_fields))))
+                raise ValueError('unable to generate catalog with specified fields')
 
             fields = [x for x in of if x in all_fields]
         else:
@@ -552,8 +613,8 @@ class CatalogPlugin(Plugin):  # {{{
         from calibre.customize.ui import config
         from calibre.ptempfile import PersistentTemporaryDirectory
 
-        if not type(self) in builtin_plugins and self.name not in config['disabled_plugins']:
-            files_to_copy = ["%s.%s" % (self.name.lower(),ext) for ext in ["ui","py"]]
+        if type(self) not in builtin_plugins and self.name not in config['disabled_plugins']:
+            files_to_copy = [f'{self.name.lower()}.{ext}' for ext in ['ui','py']]
             resources = zipfile.ZipFile(self.plugin_path,'r')
 
             if self.resources_path is None:
@@ -562,8 +623,8 @@ class CatalogPlugin(Plugin):  # {{{
             for file in files_to_copy:
                 try:
                     resources.extract(file, self.resources_path)
-                except:
-                    print(" customize:__init__.initialize(): %s not found in %s" % (file, os.path.basename(self.plugin_path)))
+                except Exception:
+                    print(f' customize:__init__.initialize(): {file} not found in {os.path.basename(self.plugin_path)}')
                     continue
             resources.close()
 
@@ -723,66 +784,6 @@ class StoreBase(Plugin):  # {{{
         if getattr(self, 'actual_plugin_object', None) is not None:
             return self.actual_plugin_object.save_settings(config_widget)
         raise NotImplementedError()
-
-# }}}
-
-
-class ViewerPlugin(Plugin):  # {{{
-
-    type = _('Viewer')
-
-    '''
-    These plugins are used to add functionality to the calibre E-book viewer.
-    '''
-
-    def load_fonts(self):
-        '''
-        This method is called once at viewer startup. It should load any fonts
-        it wants to make available. For example::
-
-            def load_fonts():
-                from PyQt5.Qt import QFontDatabase
-                font_data = get_resources(['myfont1.ttf', 'myfont2.ttf'])
-                for raw in font_data.itervalues():
-                    QFontDatabase.addApplicationFontFromData(raw)
-        '''
-        pass
-
-    def load_javascript(self, evaljs):
-        '''
-        This method is called every time a new HTML document is loaded in the
-        viewer. Use it to load javascript libraries into the viewer. For
-        example::
-
-            def load_javascript(self, evaljs):
-                js = get_resources('myjavascript.js')
-                evaljs(js)
-        '''
-        pass
-
-    def run_javascript(self, evaljs):
-        '''
-        This method is called every time a document has finished loading. Use
-        it in the same way as load_javascript().
-        '''
-        pass
-
-    def customize_ui(self, ui):
-        '''
-        This method is called once when the viewer is created. Use it to make
-        any customizations you want to the viewer's user interface. For
-        example, you can modify the toolbars via ui.tool_bar and ui.tool_bar2.
-        '''
-        pass
-
-    def customize_context_menu(self, menu, event, hit_test_result):
-        '''
-        This method is called every time the context (right-click) menu is
-        shown. You can use it to customize the context menu. ``event`` is the
-        context menu event and hit_test_result is the QWebHitTestResult for this
-        event in the currently loaded document.
-        '''
-        pass
 
 # }}}
 

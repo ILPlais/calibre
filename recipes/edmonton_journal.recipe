@@ -1,14 +1,23 @@
-#!/usr/bin/env  python2
+#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 from __future__ import print_function
+
 __license__ = 'GPL v3'
 
 '''
 www.canada.com
 '''
 import re
+
+from calibre.ebooks.BeautifulSoup import Tag
 from calibre.web.feeds.recipes import BasicNewsRecipe
-from calibre.ebooks.BeautifulSoup import BeautifulStoneSoup, Tag
+
+
+def new_tag(soup, name, attrs=()):
+    impl = getattr(soup, 'new_tag', None)
+    if impl is not None:
+        return impl(name, attrs=dict(attrs))
+    return Tag(soup, name, attrs=attrs or None)
 
 
 class CanWestPaper(BasicNewsRecipe):
@@ -51,28 +60,28 @@ class CanWestPaper(BasicNewsRecipe):
     ]
 
     # un-comment the following six lines for the Vancouver Province
-    # title = u'Vancouver Province'
-    # url_prefix = 'http://www.theprovince.com'
-    # description = u'News from Vancouver, BC'
-    # std_logo_url = 'http://www.theprovince.com/images/logo_theprovince.jpg'
-    # logo_url = 'vplogo.jpg'
-    # fp_tag = 'CAN_TP'
+    # #    title = u'Vancouver Province'
+    # #    url_prefix = 'http://www.theprovince.com'
+    # #    description = u'News from Vancouver, BC'
+    # #    std_logo_url = 'http://www.theprovince.com/images/logo_theprovince.jpg'
+    # #    logo_url = 'vplogo.jpg'
+    # #    fp_tag = 'CAN_TP'
 
     # un-comment the following six lines for the Vancouver Sun
-    # title = u'Vancouver Sun'
-    # url_prefix = 'http://www.vancouversun.com'
-    # description = u'News from Vancouver, BC'
-    # std_logo_url = 'http://www.vancouversun.com/images/logo_vancouversun.jpg'
-    # logo_url = 'vslogo.jpg'
-    # fp_tag = 'CAN_VS'
+    # #    title = u'Vancouver Sun'
+    # #    url_prefix = 'http://www.vancouversun.com'
+    # #    description = u'News from Vancouver, BC'
+    # #    std_logo_url = 'http://www.vancouversun.com/images/logo_vancouversun.jpg'
+    # #    logo_url = 'vslogo.jpg'
+    # #    fp_tag = 'CAN_VS'
 
     # un-comment the following six lines for the Calgary Herald
-    # title = u'Calgary Herald'
-    # url_prefix = 'http://www.calgaryherald.com'
-    # description = u'News from Calgary, AB'
-    # std_logo_url = 'http://www.calgaryherald.com/images/logo_calgaryherald.jpg'
-    # logo_url = 'chlogo.jpg'
-    # fp_tag = 'CAN_CH'
+    # #    title = u'Calgary Herald'
+    # #    url_prefix = 'http://www.calgaryherald.com'
+    # #    description = u'News from Calgary, AB'
+    # #    std_logo_url = 'http://www.calgaryherald.com/images/logo_calgaryherald.jpg'
+    # #    logo_url = 'chlogo.jpg'
+    # #    fp_tag = 'CAN_CH'
 
     # un-comment the following six lines for the Edmonton Journal
     title = u'Edmonton Journal'
@@ -83,20 +92,20 @@ class CanWestPaper(BasicNewsRecipe):
     fp_tag = 'CAN_EJ'
 
     # un-comment the following six lines for the Ottawa Citizen
-#     title = u'Ottawa Citizen'
-#     url_prefix = 'http://www.ottawacitizen.com'
-#     description = u'News from Ottawa, ON'
-#     std_logo_url = 'http://www.ottawacitizen.com/images/logo_ottawacitizen.jpg'
-#     logo_url = 'oclogo.jpg'
-#     fp_tag = 'CAN_OC'
+    # #    title = u'Ottawa Citizen'
+    # #    url_prefix = 'http://www.ottawacitizen.com'
+    # #    description = u'News from Ottawa, ON'
+    # #    std_logo_url = 'http://www.ottawacitizen.com/images/logo_ottawacitizen.jpg'
+    # #    logo_url = 'oclogo.jpg'
+    # #    fp_tag = 'CAN_OC'
 
     # un-comment the following six lines for the Montreal Gazette
-#     title = u'Montreal Gazette'
-#     url_prefix = 'http://www.montrealgazette.com'
-#     description = u'News from Montreal, QC'
-#     std_logo_url = 'http://www.montrealgazette.com/images/logo_montrealgazette.jpg'
-#     logo_url = 'mglogo.jpg'
-#     fp_tag = 'CAN_MG'
+    # #    title = u'Montreal Gazette'
+    # #    url_prefix = 'http://www.montrealgazette.com'
+    # #    description = u'News from Montreal, QC'
+    # #    std_logo_url = 'http://www.montrealgazette.com/images/logo_montrealgazette.jpg'
+    # #    logo_url = 'mglogo.jpg'
+    # #    fp_tag = 'CAN_MG'
 
     Kindle_Fire = False
     masthead_url = std_logo_url
@@ -117,7 +126,7 @@ class CanWestPaper(BasicNewsRecipe):
                 .photocaption { font-size: xx-small; font-style: italic; font-weight: normal; }
                 #photocredit { font-size: xx-small; font-weight: normal; }'''
 
-    keep_only_tags = [dict(name='div', attrs={'id': re.compile('story')})]
+    keep_only_tags = [dict(name='div', attrs={'id': re.compile(r'story')})]
 
     remove_tags = [{'class': 'comments'}, {'class': 'comment-intro'}, {'class': 'storytab'},
                    dict(name='div', attrs={'class': 'section_title'}), dict(name='div', attrs={'class': 'sharebar'}), dict(
@@ -131,60 +140,51 @@ class CanWestPaper(BasicNewsRecipe):
                        name='div', attrs={'class': 'copyright'}),
                    dict(name='div', attrs={'class': 'rule_grey_solid'}),
                    dict(name='div', attrs={'id': 'soundoff'}),
-                   dict(name='div', attrs={'id': re.compile('flyer')}),
+                   dict(name='div', attrs={'id': re.compile(r'flyer')}),
                    dict(name='li', attrs={'class': 'print'}), dict(name='li', attrs={'class': 'share'}), dict(name='ul', attrs={'class': 'bullet'})]
 
     def get_cover_url(self):
-        from datetime import timedelta, date
+        from datetime import date, timedelta
         cover = 'http://webmedia.newseum.org/newseum-multimedia/dfp/jpg' + \
             str(date.today().day) + '/lg/' + self.fp_tag + '.jpg'
         br = BasicNewsRecipe.get_browser(self)
         daysback = 1
         try:
             br.open(cover)
-        except:
+        except Exception:
             while daysback < 7:
                 cover = 'http://webmedia.newseum.org/newseum-multimedia/dfp/jpg' + \
-                    str((date.today() - timedelta(days=daysback)).day) + \
-                    '/lg/' + self.fp_tag + '.jpg'
+                    str((date.today() - timedelta(days=daysback)).day) + '/lg/' + self.fp_tag + '.jpg'
                 br = BasicNewsRecipe.get_browser(self)
                 try:
                     br.open(cover)
-                except:
+                except Exception:
                     daysback = daysback + 1
                     continue
                 break
         if daysback == 7:
-            self.log("\nCover unavailable")
+            self.log('\nCover unavailable')
             cover = None
         return cover
 
     def fixChars(self, string):
         # Replace lsquo (\x91)
-        fixed = re.sub("\x91", "‘", string)
+        fixed = string.replace('\x91', '‘')
         # Replace rsquo (\x92)
-        fixed = re.sub("\x92", "’", fixed)
+        fixed = fixed.replace('\x92', '’')
         # Replace ldquo (\x93)
-        fixed = re.sub("\x93", "“", fixed)
+        fixed = fixed.replace('\x93', '“')
         # Replace rdquo (\x94)
-        fixed = re.sub("\x94", "”", fixed)
+        fixed = fixed.replace('\x94', '”')
         # Replace ndash (\x96)
-        fixed = re.sub("\x96", "–", fixed)
+        fixed = fixed.replace('\x96', '–')
         # Replace mdash (\x97)
-        fixed = re.sub("\x97", "—", fixed)
-        fixed = re.sub("&#x2019;", "’", fixed)
+        fixed = fixed.replace('\x97', '—')
+        fixed = fixed.replace('&#x2019;', '’')
         return fixed
 
     def massageNCXText(self, description):
-        # Kindle TOC descriptions won't render certain characters
-        if description:
-            massaged = unicode(BeautifulStoneSoup(
-                description, convertEntities=BeautifulStoneSoup.HTML_ENTITIES))
-            # Replace '&' with '&'
-            massaged = re.sub("&", "&", massaged)
-            return self.fixChars(massaged)
-        else:
-            return description
+        return description
 
     def populate_article_metadata(self, article, soup, first):
         if first:
@@ -213,26 +213,26 @@ class CanWestPaper(BasicNewsRecipe):
         divtags = soup.findAll('div', attrs={'id': ''})
         if divtags:
             for div in divtags:
-                del(div['id'])
+                del div['id']
 
         pgall = soup.find('div', attrs={'id': 'storyphoto'})
         if pgall is not None:  # photo gallery perhaps
             if (soup.find('div', attrs={'id': 'storycontent'}) is None):
-                allpics = Tag(soup, 'div')
+                allpics = new_tag(soup, 'div')
                 first_img = pgall.find('div', 'storyimage')
                 if first_img is not None:
                     first_img.extract()
                     tlist = pgall.find('div', attrs={'id': 'relatedthumbs'})
                     if tlist is not None:
                         for atag in tlist.findAll('a'):
-                            img = Tag(soup, 'img')
+                            img = new_tag(soup, 'img')
                             srcpre, sep, srcpost = atag.img[
                                 'src'].partition('?')
                             img['src'] = srcpre
-                            pdesc = Tag(soup, 'p')
+                            pdesc = new_tag(soup, 'p')
                             pdesc.insert(0, atag.img['alt'])
                             pdesc['class'] = 'photocaption'
-                            div = Tag(soup, 'div')
+                            div = new_tag(soup, 'div')
                             div.insert(0, pdesc)
                             div.insert(0, img)
                             allpics.append(div)
@@ -261,10 +261,10 @@ class CanWestPaper(BasicNewsRecipe):
                     if url.startswith('/'):
                         url = self.url_prefix + url
                     if not url.startswith(self.url_prefix):
-                        print("Rejected " + url)
+                        print('Rejected ' + url)
                         return
                     if url in self.url_list:
-                        print("Rejected dup " + url)
+                        print('Rejected dup ' + url)
                         return
                     self.url_list.append(url)
                     title = self.tag_to_string(atag, False)
@@ -276,27 +276,27 @@ class CanWestPaper(BasicNewsRecipe):
                         return
                     dtag = adiv.find('div', 'content')
                     description = ''
-                    print("URL " + url)
-                    print("TITLE " + title)
+                    print('URL ' + url)
+                    print('TITLE ' + title)
                     if dtag is not None:
                         stag = dtag.span
                         if stag is not None:
-                            if stag['class'] != 'timestamp':
+                            if ''.join(stag['class']) != 'timestamp':
                                 description = self.tag_to_string(stag, False)
                         else:
                             description = self.tag_to_string(dtag, False)
-                        print("DESCRIPTION: " + description)
-                    if not articles.has_key(key):  # noqa
+                        print('DESCRIPTION: ' + description)
+                    if key not in articles:
                         articles[key] = []
                     articles[key].append(dict(
                         title=title, url=url, date='', description=description, author='', content=''))
 
         def parse_web_index(key, keyurl):
-            print("Section: " + key + ': ' + self.url_prefix + keyurl)
+            print('Section: ' + key + ': ' + self.url_prefix + keyurl)
             try:
                 soup = self.index_to_soup(self.url_prefix + keyurl)
-            except:
-                print("Section: " + key + ' NOT FOUND')
+            except Exception:
+                print('Section: ' + key + ' NOT FOUND')
                 return
             ans.append(key)
             mainsoup = soup.find('div', 'bodywrapper')
@@ -308,7 +308,7 @@ class CanWestPaper(BasicNewsRecipe):
             for wdiv in mainsoup.findAll(attrs={'class': ['headline', 'featurecontent']}):
                 handle_article(wdiv, key)
 
-        for (k, url) in self.postmedia_index_pages:
+        for k,url in self.postmedia_index_pages:
             parse_web_index(k, url)
-        ans = [(key, articles[key]) for key in ans if articles.has_key(key)]  # noqa
+        ans = [(key, articles[key]) for key in ans if key in articles]
         return ans

@@ -5,7 +5,7 @@ from __python__ import bound_methods, hash_literals
 from elementmaker import E
 from gettext import gettext as _
 
-from book_list.theme import get_color
+from book_list.theme import browser_in_dark_mode, css_for_variables, get_color
 from dom import build_rule, clear, set_css, svgicon
 from session import get_interface_data
 from utils import fmt_sidx, safe_set_inner_html, sandboxed_html
@@ -66,8 +66,11 @@ def on_img_load(img, load_type):
 
 
 def sandbox_css():
-    if not sandbox_css.ans:
-        sandbox_css.ans = 'html {{ overflow: hidden; color: {} }}'.format(get_color('window-foreground'))
+    is_dark_theme = browser_in_dark_mode()
+    if not sandbox_css.ans or sandbox_css.is_dark_theme is not is_dark_theme:
+        sandbox_css.ans = css_for_variables() + '\n\n'
+        sandbox_css.ans += 'html {{ overflow: hidden; color: {} }}'.format(get_color('window-foreground'))
+        sandbox_css.is_dark_theme = is_dark_theme
     return sandbox_css.ans
 
 
@@ -96,7 +99,7 @@ def create_item(book_id, metadata, create_image, show_book_details, href):
         ival = fmt_sidx(ival, use_roman=interface_data.use_roman_numerals_for_series_number)
         extra_data.appendChild(safe_set_inner_html(E.span(), _('{0} of <i>{1}</i>').format(ival, metadata.series)))
     right = E.div(
-        class_='details-list-right',
+            class_='details-list-right',
             E.div(style='display:flex; justify-content: space-between; overflow: hidden',
             E.div(
                 E.b(metadata.title or _('Unknown')), E.br(), authors,

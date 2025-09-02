@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 #
 #   Create and extract text from ODF, handling whitespace correctly.
 #   Copyright (C) 2008 J. David Eisenberg
@@ -18,32 +17,33 @@
 #   51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
 
-"""
+'''
 Class for handling whitespace properly in OpenDocument.
 
 While it is possible to use getTextContent() and setTextContent()
 to extract or create ODF content, these won't extract or create
 the appropriate <text:s>, <text:tab>, or <text:line-break>
 elements.  This module takes care of that problem.
-"""
+'''
 
-from odf.element import Node
-import odf.opendocument
-from odf.text import S,LineBreak,Tab
 
-class WhitespaceText(object):
+from .element import Node
+from .text import LineBreak, S, Tab
+
+
+class WhitespaceText:
 
     def __init__(self):
         self.textBuffer = []
         self.spaceCount = 0
 
     def addTextToElement(self, odfElement, s):
-        """ Process an input string, inserting
+        ''' Process an input string, inserting
             <text:tab> elements for '\t',
             <text:line-break> elements for '\n', and
             <text:s> elements for runs of more than one blank.
             These will be added to the given element.
-        """
+        '''
         i = 0
         ch = ' '
 
@@ -63,7 +63,7 @@ class WhitespaceText(object):
                 odfElement.addElement(Tab())
                 i += 1
             elif ch == '\n':
-                self._emitTextBuffer(odfElement);
+                self._emitTextBuffer(odfElement)
                 odfElement.addElement(LineBreak())
                 i += 1
             elif ch == ' ':
@@ -83,35 +83,36 @@ class WhitespaceText(object):
         self._emitTextBuffer(odfElement)
 
     def _emitTextBuffer(self, odfElement):
-        """ Creates a Text Node whose contents are the current textBuffer.
+        ''' Creates a Text Node whose contents are the current textBuffer.
             Side effect: clears the text buffer.
-        """
+        '''
         if len(self.textBuffer) > 0:
             odfElement.addText(''.join(self.textBuffer))
         self.textBuffer = []
 
-
     def _emitSpaces(self, odfElement):
-        """ Creates a <text:s> element for the current spaceCount.
+        ''' Creates a <text:s> element for the current spaceCount.
             Side effect: sets spaceCount back to zero
-        """
+        '''
         if self.spaceCount > 0:
             spaceElement = S(c=self.spaceCount)
             odfElement.addElement(spaceElement)
         self.spaceCount = 0
 
+
 def addTextToElement(odfElement, s):
     wst = WhitespaceText()
     wst.addTextToElement(odfElement, s)
 
+
 def extractText(odfElement):
-    """ Extract text content from an Element, with whitespace represented
+    ''' Extract text content from an Element, with whitespace represented
         properly. Returns the text, with tabs, spaces, and newlines
         correctly evaluated. This method recursively descends through the
         children of the given element, accumulating text and "unwrapping"
         <text:s>, <text:tab>, and <text:line-break> elements along the way.
-    """
-    result = [];
+    '''
+    result = []
 
     if len(odfElement.childNodes) != 0:
         for child in odfElement.childNodes:
@@ -119,19 +120,19 @@ def extractText(odfElement):
                 result.append(child.data)
             elif child.nodeType == Node.ELEMENT_NODE:
                 subElement = child
-                tagName = subElement.qname;
-                if tagName == (u"urn:oasis:names:tc:opendocument:xmlns:text:1.0", u"line-break"):
-                    result.append("\n")
-                elif tagName == (u"urn:oasis:names:tc:opendocument:xmlns:text:1.0", u"tab"):
-                    result.append("\t")
-                elif tagName == (u"urn:oasis:names:tc:opendocument:xmlns:text:1.0", u"s"):
+                tagName = subElement.qname
+                if tagName == ('urn:oasis:names:tc:opendocument:xmlns:text:1.0', 'line-break'):
+                    result.append('\n')
+                elif tagName == ('urn:oasis:names:tc:opendocument:xmlns:text:1.0', 'tab'):
+                    result.append('\t')
+                elif tagName == ('urn:oasis:names:tc:opendocument:xmlns:text:1.0', 's'):
                     c = subElement.getAttribute('c')
                     if c:
-                        spaceCount =  int(c)
+                        spaceCount = int(c)
                     else:
                         spaceCount = 1
 
-                    result.append(" " * spaceCount)
+                    result.append(' ' * spaceCount)
                 else:
                     result.append(extractText(subElement))
     return ''.join(result)

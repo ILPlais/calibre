@@ -1,21 +1,15 @@
-#!/usr/bin/env python2
-# vim:fileencoding=utf-8
+#!/usr/bin/env python
 # License: GPLv3 Copyright: 2016, Kovid Goyal <kovid at kovidgoyal.net>
 
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
 from collections import namedtuple
-from polyglot.builtins import map
-
-from lxml import etree
 
 from calibre.ebooks.chardet import xml_to_unicode
 from calibre.ebooks.oeb.base import OPF
 from calibre.ebooks.oeb.polish.utils import guess_type
 from calibre.spell import parse_lang_code
+from calibre.utils.cleantext import clean_xml_chars
 from calibre.utils.localization import lang_as_iso639_1
-
-PARSER = etree.XMLParser(recover=True, no_network=True)
+from calibre.utils.xml_parse import safe_xml_fromstring
 
 OPFVersion = namedtuple('OPFVersion', 'major minor patch')
 
@@ -38,14 +32,19 @@ def parse_opf_version(raw):
 
 def parse_opf(stream_or_path):
     stream = stream_or_path
-    if not hasattr(stream, 'read'):
+    needs_close = not hasattr(stream, 'read')
+    if needs_close:
         stream = open(stream, 'rb')
-    raw = stream.read()
+    try:
+        raw = stream.read()
+    finally:
+        if needs_close:
+            stream.close()
     if not raw:
         raise ValueError('Empty file: '+getattr(stream, 'name', 'stream'))
     raw, encoding = xml_to_unicode(raw, strip_encoding_pats=True, resolve_entities=True, assume_utf8=True)
     raw = raw[raw.find('<'):]
-    root = etree.fromstring(raw, PARSER)
+    root = safe_xml_fromstring(clean_xml_chars(raw))
     if root is None:
         raise ValueError('Not an OPF file')
     return root
@@ -82,7 +81,7 @@ def ensure_unique(template, existing):
     c = 0
     while q in existing:
         c += 1
-        q = '%s-%d%s' % (b, c, e)
+        q = f'{b}-{c}{e}'
     return q
 
 

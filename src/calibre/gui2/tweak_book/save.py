@@ -1,30 +1,30 @@
-#!/usr/bin/env python2
-# vim:fileencoding=utf-8
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
+#!/usr/bin/env python
+
 
 __license__ = 'GPL v3'
 __copyright__ = '2013, Kovid Goyal <kovid at kovidgoyal.net>'
 
-import shutil, os, errno
+import errno
+import os
+import shutil
+import stat
 from threading import Thread
-from Queue import LifoQueue, Empty
 
-from PyQt5.Qt import (QObject, pyqtSignal, QLabel, QWidget, QHBoxLayout, Qt)
+from qt.core import QHBoxLayout, QLabel, QObject, QSize, Qt, QWidget, pyqtSignal
 
 from calibre.constants import iswindows
-from calibre.ptempfile import PersistentTemporaryFile
 from calibre.gui2.progress_indicator import ProgressIndicator
+from calibre.ptempfile import PersistentTemporaryFile
 from calibre.utils import join_with_timeout
 from calibre.utils.filenames import atomic_rename, format_permissions
-from calibre.utils.ipc import RC
+from polyglot.queue import Empty, LifoQueue
 
 
 def save_dir_container(container, path):
     if not os.path.exists(path):
         os.makedirs(path)
     if not os.path.isdir(path):
-        raise ValueError('%s is not a folder, cannot save a directory based container to it' % path)
+        raise ValueError(f'{path} is not a folder, cannot save a directory based container to it')
     container.commit(path)
 
 
@@ -39,31 +39,31 @@ def save_container(container, path):
         st = None
         try:
             st = os.stat(path)
-        except EnvironmentError as err:
+        except OSError as err:
             if err.errno != errno.ENOENT:
                 raise
             # path may not exist if we are saving a copy, in which case we use
             # the metadata from the original book
             try:
                 st = os.stat(container.path_to_ebook)
-            except EnvironmentError as err:
+            except OSError as err:
                 if err.errno != errno.ENOENT:
                     raise
                 # Somebody deleted the original file
         if st is not None:
             try:
-                os.fchmod(fno, st.st_mode)
-            except EnvironmentError as err:
+                os.fchmod(fno, st.st_mode | stat.S_IWUSR)
+            except OSError as err:
                 if err.errno != errno.EPERM:
                     raise
-                raise EnvironmentError('Failed to change permissions of %s to %s (%s), with error: %s. Most likely the %s directory has a restrictive umask' % (
-                    temp.name, oct(st.st_mode), format_permissions(st.st_mode), errno.errorcode[err.errno], os.path.dirname(temp.name)))
+                raise OSError(f'Failed to change permissions of {temp.name} to {oct(st.st_mode)} ({format_permissions(st.st_mode)}), '
+                              f'with error: {errno.errorcode[err.errno]}. Most likely the {os.path.dirname(temp.name)} directory has a restrictive umask')
             try:
                 os.fchown(fno, st.st_uid, st.st_gid)
-            except EnvironmentError as err:
+            except OSError as err:
                 if err.errno not in (errno.EPERM, errno.EACCES):
                     # ignore chown failure as user could be editing file belonging
-                    # to a different user, in which case we really cant do anything
+                    # to a different user, in which case we really can't do anything
                     # about it short of making the file update non-atomic
                     raise
 
@@ -79,12 +79,8 @@ def save_container(container, path):
 
 def send_message(msg=''):
     if msg:
-        t = RC(print_error=False)
-        t.start()
-        t.join(3)
-        if t.done:
-            t.conn.send('bookedited:'+msg)
-            t.conn.close()
+        from calibre.gui2.listener import send_message_in_process
+        send_message_in_process('bookedited:'+msg)
 
 
 def find_first_existing_ancestor(path):
@@ -111,7 +107,7 @@ class SaveWidget(QWidget):
         self.stop()
 
     def start(self):
-        self.pi.setDisplaySize(self.label.height())
+        self.pi.setDisplaySize(QSize(self.label.height(), self.label.height()))
         self.pi.setVisible(True)
         self.pi.startAnimation()
         self.label.setText(_('Saving...'))
@@ -143,8 +139,8 @@ class SaveManager(QObject):
         t.daemon = True
         t.start()
         self.status_widget = w = SaveWidget(parent)
-        self.start_save.connect(w.start, type=Qt.QueuedConnection)
-        self.save_done.connect(w.stop, type=Qt.QueuedConnection)
+        self.start_save.connect(w.start, type=Qt.ConnectionType.QueuedConnection)
+        self.save_done.connect(w.stop, type=Qt.ConnectionType.QueuedConnection)
 
     def schedule(self, tdir, container):
         self.count += 1
@@ -161,7 +157,7 @@ class SaveManager(QObject):
             try:
                 count, tdir, container = x
                 error_occurred = self.process_save(count, tdir, container)
-            except:
+            except Exception:
                 import traceback
                 traceback.print_exc()
             finally:
@@ -197,7 +193,7 @@ class SaveManager(QObject):
         error_occurred = False
         try:
             self.do_save(tdir, container)
-        except:
+        except Exception:
             import traceback
             self.report_error.emit(traceback.format_exc())
             error_occurred = True

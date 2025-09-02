@@ -1,4 +1,4 @@
-#!/usr/bin/env  python2
+#!/usr/bin/env python
 __license__ = 'GPL v3'
 __author__ = 'Gabriele Marini, based on Darko Miletic'
 __copyright__ = '2009, Darko Miletic <darko.miletic at gmail.com>'
@@ -26,7 +26,7 @@ class LaStampa(BasicNewsRecipe):
     conversion_options = {'linearize_tables': True}
     remove_attributes = ['colspan']
 
-    extra_css = ' .boxocchiello2{font-size: small} .catenaccio{font-style: italic} .titoloRub{font-size: xx-large; font-weight: bold } .titologir{font-size: xx-large; font-weight: bold } .sezione{font-weight: bold} '  # noqa
+    extra_css = ' .boxocchiello2{font-size: small} .catenaccio{font-style: italic} .titoloRub{font-size: xx-large; font-weight: bold } .titologir{font-size: xx-large; font-weight: bold } .sezione{font-weight: bold} '  # noqa: E501
 
     def get_article_url(self, article):
         link = article.get('links')
@@ -34,9 +34,9 @@ class LaStampa(BasicNewsRecipe):
             return link[0]['href']
 
     keep_only_tags = [
-        dict(attrs={'class': ['boxocchiello2', 'titoloRub', 'titologir', 'autore-girata', 'luogo-girata', 'catenaccio', 'sezione', 'articologirata', 'bodytext', 'news-single-img', 'ls-articoloCorpo', 'ls-blog-list-1col']}),  # noqa
-                      dict(name='div', attrs={'id': 'corpoarticolo'})
-                      ]
+        dict(attrs={'class': ['boxocchiello2', 'titoloRub', 'titologir', 'autore-girata', 'luogo-girata', 'catenaccio', 'sezione', 'articologirata', 'bodytext', 'news-single-img', 'ls-articoloCorpo', 'ls-blog-list-1col']}),  # noqa: E501
+        dict(name='div', attrs={'id': 'corpoarticolo'})
+    ]
 
     remove_tags = [dict(name='div', attrs={'id': ['menutop', 'fwnetblocco']}),
                    dict(

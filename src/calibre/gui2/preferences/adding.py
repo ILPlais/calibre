@@ -1,5 +1,5 @@
-#!/usr/bin/env python2
-# vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
+#!/usr/bin/env python
+
 
 __license__   = 'GPL v3'
 __copyright__ = '2010, Kovid Goyal <kovid@kovidgoyal.net>'
@@ -7,15 +7,14 @@ __docformat__ = 'restructuredtext en'
 
 import os
 
-from PyQt5.Qt import Qt, QVBoxLayout, QFormLayout
+from qt.core import QDialog, QFormLayout, QInputDialog, Qt, QVBoxLayout
 
-from calibre.gui2.preferences import ConfigWidgetBase, test_widget, \
-    CommaSeparatedList, AbortCommit
-from calibre.gui2.preferences.adding_ui import Ui_Form
-from calibre.utils.config import prefs
-from calibre.gui2.widgets import FilenamePattern
+from calibre.gui2 import choose_dir, error_dialog, gprefs, question_dialog
 from calibre.gui2.auto_add import AUTO_ADDED
-from calibre.gui2 import gprefs, choose_dir, error_dialog, question_dialog
+from calibre.gui2.preferences import AbortCommit, CommaSeparatedList, ConfigWidgetBase, test_widget
+from calibre.gui2.preferences.adding_ui import Ui_Form
+from calibre.gui2.widgets import FilenamePattern
+from calibre.utils.config import prefs
 
 
 class ConfigWidget(ConfigWidgetBase, Ui_Form):
@@ -57,14 +56,15 @@ class ConfigWidget(ConfigWidgetBase, Ui_Form):
         self.author_map_rules_button.clicked.connect(self.change_author_map_rules)
         self.add_filter_rules_button.clicked.connect(self.change_add_filter_rules)
         self.tabWidget.setCurrentIndex(0)
-        self.actions_tab.layout().setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+        self.actions_tab.layout().setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        self.ignore_another_button.clicked.connect(self.add_another_ignored_format)
 
     def change_tag_map_rules(self):
         from calibre.gui2.tag_mapper import RulesDialog
         d = RulesDialog(self)
         if gprefs.get('tag_map_on_add_rules'):
             d.rules = gprefs['tag_map_on_add_rules']
-        if d.exec_() == d.Accepted:
+        if d.exec() == QDialog.DialogCode.Accepted:
             self.tag_map_rules = d.rules
             self.changed_signal.emit()
 
@@ -73,7 +73,7 @@ class ConfigWidget(ConfigWidgetBase, Ui_Form):
         d = RulesDialog(self)
         if gprefs.get('author_map_on_add_rules'):
             d.rules = gprefs['author_map_on_add_rules']
-        if d.exec_() == d.Accepted:
+        if d.exec() == QDialog.DialogCode.Accepted:
             self.author_map_rules = d.rules
             self.changed_signal.emit()
 
@@ -82,7 +82,7 @@ class ConfigWidget(ConfigWidgetBase, Ui_Form):
         d = RulesDialog(self)
         if gprefs.get('add_filter_rules'):
             d.rules = gprefs['add_filter_rules']
-        if d.exec_() == d.Accepted:
+        if d.exec() == QDialog.DialogCode.Accepted:
             self.add_filter_rules = d.rules
             self.changed_signal.emit()
 
@@ -91,6 +91,7 @@ class ConfigWidget(ConfigWidgetBase, Ui_Form):
                 _('Choose a folder'))
         if path:
             self.opt_auto_add_path.setText(path)
+            self.opt_auto_add_path.save_history()
 
     def initialize(self):
         ConfigWidgetBase.initialize(self)
@@ -113,25 +114,42 @@ class ConfigWidget(ConfigWidgetBase, Ui_Form):
             fmts = gprefs.defaults['blocked_auto_formats']
         else:
             fmts = gprefs['blocked_auto_formats']
+        self.set_blocked_auto_formats(set(fmts))
+
+    def set_blocked_auto_formats(self, fmts):
+        exts = set(AUTO_ADDED) | set(fmts)
         viewer = self.opt_blocked_auto_formats
         viewer.blockSignals(True)
-        exts = set(AUTO_ADDED)
         viewer.clear()
         for ext in sorted(exts):
             viewer.addItem(ext)
             item = viewer.item(viewer.count()-1)
-            item.setFlags(Qt.ItemIsEnabled|Qt.ItemIsUserCheckable)
-            item.setCheckState(Qt.Checked if
-                    ext in fmts else Qt.Unchecked)
+            item.setFlags(Qt.ItemFlag.ItemIsEnabled|Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(Qt.CheckState.Checked if
+                    ext in fmts else Qt.CheckState.Unchecked)
         viewer.blockSignals(False)
+
+    def add_another_ignored_format(self):
+        fmt, ok = QInputDialog.getText(self, _('Add a file extension to ignore'), _('The file extension to ignore:'))
+        if ok:
+            fmt = fmt.lower()
+            viewer = self.opt_blocked_auto_formats
+            existing = set(self.current_blocked_auto_formats)
+            existing.add(fmt)
+            self.set_blocked_auto_formats(existing)
+            for i in range(viewer.count()):
+                if viewer.item(i).text() == fmt:
+                    viewer.scrollToItem(viewer.item(i))
+                    break
+            self.changed_signal.emit()
 
     @property
     def current_blocked_auto_formats(self):
         fmts = []
         viewer = self.opt_blocked_auto_formats
         for i in range(viewer.count()):
-            if viewer.item(i).checkState() == Qt.Checked:
-                fmts.append(unicode(viewer.item(i).text()))
+            if viewer.item(i).checkState() == Qt.CheckState.Checked:
+                fmts.append(str(viewer.item(i).text()))
         return fmts
     # }}}
 
@@ -144,10 +162,11 @@ class ConfigWidget(ConfigWidgetBase, Ui_Form):
         self.add_filter_rules = []
 
     def commit(self):
-        path = unicode(self.opt_auto_add_path.text()).strip()
+        path = str(self.opt_auto_add_path.text()).strip()
         if path != gprefs['auto_add_path']:
             if path:
                 path = os.path.abspath(path)
+                bname = os.path.basename(path)
                 self.opt_auto_add_path.setText(path)
                 if not os.path.isdir(path):
                     error_dialog(self, _('Invalid folder'),
@@ -160,7 +179,7 @@ class ConfigWidget(ConfigWidgetBase, Ui_Form):
                             _('You do not have read/write permissions for '
                                 'the folder: %s')%path, show=True)
                     raise AbortCommit('invalid auto-add folder')
-                if os.path.basename(path)[0] in '._':
+                if bname and bname[0] in '._':
                     error_dialog(self, _('Invalid folder'),
                             _('Cannot use folders whose names start with a '
                                 'period or underscore: %s')%os.path.basename(path), show=True)

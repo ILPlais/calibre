@@ -1,18 +1,20 @@
 # -*- coding: utf-8 -*-
+from __future__ import absolute_import, division, print_function, unicode_literals
 
-from __future__ import (unicode_literals, division, absolute_import, print_function)
 store_version = 4  # Needed for dynamic plugin loading
 
 __license__ = 'GPL 3'
 __copyright__ = '2011, John Schember <john@nachtimwald.com>'
 __docformat__ = 'restructuredtext en'
 
-import urllib2
+try:
+    from urllib.parse import quote
+except ImportError:
+    from urllib2 import quote
 from contextlib import closing
 
 from lxml import html
-
-from PyQt5.Qt import QUrl
+from qt.core import QUrl
 
 from calibre import browser
 from calibre.gui2 import open_url
@@ -38,10 +40,10 @@ class BeamEBooksDEStore(BasicStoreConfig, StorePlugin):
             d = WebStoreDialog(self.gui, url, parent, detail_url)
             d.setWindowTitle(self.name)
             d.set_tags(self.config.get('tags', ''))
-            d.exec_()
+            d.exec()
 
     def search(self, query, max_results=10, timeout=60):
-        url = 'https://www.beam-shop.de/search?saltFieldLimitation=all&sSearch=' + urllib2.quote(query)
+        url = 'https://www.beam-shop.de/search?saltFieldLimitation=all&sSearch=' + quote(query)
         br = browser()
 
         counter = max_results
@@ -69,5 +71,5 @@ class BeamEBooksDEStore(BasicStoreConfig, StorePlugin):
                 s.price = price
                 s.drm = SearchResult.DRM_UNLOCKED
                 s.detail_item = id_
-#                 s.formats = None
+                # s.formats = None
                 yield s

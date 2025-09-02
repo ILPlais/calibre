@@ -1,23 +1,32 @@
-#!/usr/bin/env python2
-# vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
-from __future__ import with_statement, print_function
+#!/usr/bin/env python
+
 
 __license__   = 'GPL v3'
 __copyright__ = '2009, Kovid Goyal <kovid@kovidgoyal.net>'
 __docformat__ = 'restructuredtext en'
 
-import os, calendar, zipfile
-from threading import RLock
+import calendar
+import json
+import os
+import zipfile
+from collections.abc import Sequence
 from datetime import timedelta
+from threading import RLock
+from typing import NamedTuple
 
 from lxml import etree
 from lxml.builder import ElementMaker
 
 from calibre import force_unicode
 from calibre.constants import numeric_version
+from calibre.utils.date import EPOCH, UNDEFINED_DATE, isoformat, local_tz, utcnow
+from calibre.utils.date import now as nowf
 from calibre.utils.iso8601 import parse_iso8601
-from calibre.utils.date import now as nowf, utcnow, local_tz, isoformat, EPOCH, UNDEFINED_DATE
+from calibre.utils.localization import _
 from calibre.utils.recycle_bin import delete_file
+from calibre.utils.resources import get_path as P
+from calibre.utils.xml_parse import safe_xml_fromstring
+from polyglot.builtins import iteritems
 
 NS = 'http://calibre-ebook.com/recipe_collection'
 E = ElementMaker(namespace=NS, nsmap={None:NS})
@@ -37,51 +46,64 @@ def iterate_over_builtin_recipe_files():
         yield rid, f
 
 
-def serialize_recipe(urn, recipe_class):
+def normalize_language(x: str) -> str:
+    lang, sep, country = x.replace('-', '_').partition('_')
+    if sep == '_':
+        x = f'{lang.lower()}{sep}{country.upper()}'
+    else:
+        x = lang.lower()
+    return x
 
-    def attr(n, d):
+
+def serialize_recipe(urn, recipe_class):
+    from xml.sax.saxutils import quoteattr
+
+    def attr(n, d, normalize=lambda x: x):
         ans = getattr(recipe_class, n, d)
-        if isinstance(ans, str):
+        if isinstance(ans, bytes):
             ans = ans.decode('utf-8', 'replace')
-        return ans
+        return quoteattr(normalize(ans))
 
     default_author = _('You') if urn.startswith('custom:') else _('Unknown')
-    ns = attr('needs_subscription', False)
+    ns = getattr(recipe_class, 'needs_subscription', False)
     if not ns:
         ns = 'no'
     if ns is True:
         ns = 'yes'
-    return E.recipe({
-        'id'                 : str(urn),
-        'title'              : attr('title', _('Unknown')),
-        'author'             : attr('__author__', default_author),
-        'language'           : attr('language', 'und'),
-        'needs_subscription' : ns,
-        'description'        : attr('description', '')
-        })
+    options = ''
+    rso = getattr(recipe_class, 'recipe_specific_options', None)
+    if rso:
+        options = f' options={quoteattr(json.dumps(rso))}'
+    return ('  <recipe id={id} title={title} author={author} language={language}'
+            ' needs_subscription={needs_subscription} description={description}{options}/>').format(
+                id=quoteattr(str(urn)),
+                title=attr('title', _('Unknown')),
+                author=attr('__author__', default_author),
+                language=attr('language', 'und', normalize_language),
+                needs_subscription=quoteattr(ns),
+                description=attr('description', ''),
+                options=options,
+            )
 
 
 def serialize_collection(mapping_of_recipe_classes):
-    collection = E.recipe_collection()
-    '''for u, x in mapping_of_recipe_classes.items():
-        print 11111, u, repr(x.title)
-        if isinstance(x.title, str):
-            x.title.decode('ascii')
-    '''
+    collection = []
     for urn in sorted(mapping_of_recipe_classes.keys(),
             key=lambda key: force_unicode(
                 getattr(mapping_of_recipe_classes[key], 'title', 'zzz'),
                 'utf-8')):
         try:
             recipe = serialize_recipe(urn, mapping_of_recipe_classes[urn])
-        except:
+        except Exception:
             import traceback
             traceback.print_exc()
             continue
         collection.append(recipe)
-    collection.set('count', str(len(collection)))
-    return etree.tostring(collection, encoding='utf-8', xml_declaration=True,
-            pretty_print=True)
+    items = '\n'.join(collection)
+    return f'''<?xml version='1.0' encoding='utf-8'?>
+<recipe_collection xmlns="http://calibre-ebook.com/recipe_collection" count="{len(collection)}">
+{items}
+</recipe_collection>'''.encode()
 
 
 def serialize_builtin_recipes():
@@ -91,8 +113,8 @@ def serialize_builtin_recipes():
         with open(f, 'rb') as stream:
             try:
                 recipe_class = compile_recipe(stream.read())
-            except:
-                print ('Failed to compile: %s'%f)
+            except Exception:
+                print(f'Failed to compile: {f}')
                 raise
         if recipe_class is not None:
             recipe_mapping['builtin:'+rid] = recipe_class
@@ -105,24 +127,24 @@ def get_builtin_recipe_collection():
 
 
 def get_custom_recipe_collection(*args):
-    from calibre.web.feeds.recipes import compile_recipe, \
-            custom_recipes
+    from calibre.web.feeds.recipes import compile_recipe, custom_recipes
     bdir = os.path.dirname(custom_recipes.file_path)
     rmap = {}
-    for id_, x in custom_recipes.iteritems():
+    for id_, x in iteritems(custom_recipes):
         title, fname = x
         recipe = os.path.join(bdir, fname)
         try:
-            recipe = open(recipe, 'rb').read().decode('utf-8')
+            with open(recipe, 'rb') as f:
+                recipe = f.read().decode('utf-8')
             recipe_class = compile_recipe(recipe)
             if recipe_class is not None:
-                rmap['custom:%s'%id_] = recipe_class
-        except:
-            print('Failed to load recipe from: %r'%fname)
+                rmap[f'custom:{id_}'] = recipe_class
+        except Exception:
+            print(f'Failed to load recipe from: {fname!r}')
             import traceback
             traceback.print_exc()
             continue
-    return etree.fromstring(serialize_collection(rmap))
+    return safe_xml_fromstring(serialize_collection(rmap), recover=False)
 
 
 def update_custom_recipe(id_, title, script):
@@ -130,8 +152,7 @@ def update_custom_recipe(id_, title, script):
 
 
 def update_custom_recipes(script_ids):
-    from calibre.web.feeds.recipes import custom_recipes, \
-            custom_recipe_filename
+    from calibre.web.feeds.recipes import custom_recipe_filename, custom_recipes
 
     bdir = os.path.dirname(custom_recipes.file_path)
     for id_, title, script in script_ids:
@@ -143,7 +164,7 @@ def update_custom_recipes(script_ids):
             fname = custom_recipe_filename(id_, title)
         else:
             fname = existing[1]
-        if isinstance(script, unicode):
+        if isinstance(script, str):
             script = script.encode('utf-8')
 
         custom_recipes[id_] = (title, fname)
@@ -160,19 +181,18 @@ def add_custom_recipe(title, script):
 
 
 def add_custom_recipes(script_map):
-    from calibre.web.feeds.recipes import custom_recipes, \
-            custom_recipe_filename
+    from calibre.web.feeds.recipes import custom_recipe_filename, custom_recipes
     id_ = 1000
-    keys = tuple(map(int, custom_recipes.iterkeys()))
+    keys = tuple(map(int, custom_recipes))
     if keys:
         id_ = max(keys)+1
     bdir = os.path.dirname(custom_recipes.file_path)
     with custom_recipes:
-        for title, script in script_map.iteritems():
+        for title, script in iteritems(script_map):
             fid = str(id_)
 
             fname = custom_recipe_filename(fid, title)
-            if isinstance(script, unicode):
+            if isinstance(script, str):
                 script = script.encode('utf-8')
 
             custom_recipes[fid] = (title, fname)
@@ -195,7 +215,7 @@ def remove_custom_recipe(id_):
         del custom_recipes[id_]
         try:
             delete_file(os.path.join(bdir, fname))
-        except:
+        except Exception:
             pass
 
 
@@ -215,23 +235,25 @@ def get_builtin_recipe_titles():
 
 
 def download_builtin_recipe(urn):
+    import bz2
+
     from calibre.utils.config_base import prefs
     from calibre.utils.https import get_https_resource_securely
-    import bz2
     recipe_source = bz2.decompress(get_https_resource_securely(
         'https://code.calibre-ebook.com/recipe-compressed/'+urn, headers={'CALIBRE-INSTALL-UUID':prefs['installation_uuid']}))
+    recipe_source = recipe_source.decode('utf-8')
     from calibre.web.feeds.recipes import compile_recipe
     recipe = compile_recipe(recipe_source)  # ensure the downloaded recipe is at least compile-able
     if recipe is None:
         raise ValueError('Failed to find recipe object in downloaded recipe: ' + urn)
     if recipe.requires_version > numeric_version:
-        raise ValueError('Downloaded recipe for {} requires calibre >= {}'.format(urn, recipe.requires_version))
+        raise ValueError(f'Downloaded recipe for {urn} requires calibre >= {recipe.requires_version}')
     return recipe_source
 
 
 def get_builtin_recipe(urn):
     with zipfile.ZipFile(P('builtin_recipes.zip', allow_user_override=False), 'r') as zf:
-        return zf.read(urn+'.recipe')
+        return zf.read(urn+'.recipe').decode('utf-8')
 
 
 def get_builtin_recipe_by_title(title, log=None, download_recipe=False):
@@ -243,7 +265,7 @@ def get_builtin_recipe_by_title(title, log=None, download_recipe=False):
                     if log is not None:
                         log('Trying to get latest version of recipe:', urn)
                     return download_builtin_recipe(urn)
-                except:
+                except Exception:
                     if log is None:
                         import traceback
                         traceback.print_exc()
@@ -262,7 +284,7 @@ def get_builtin_recipe_by_id(id_, log=None, download_recipe=False):
                     if log is not None:
                         log('Trying to get latest version of recipe:', urn)
                     return download_builtin_recipe(urn)
-                except:
+                except Exception:
                     if log is None:
                         import traceback
                         traceback.print_exc()
@@ -272,7 +294,14 @@ def get_builtin_recipe_by_id(id_, log=None, download_recipe=False):
             return get_builtin_recipe(urn)
 
 
-class SchedulerConfig(object):
+class RecipeCustomization(NamedTuple):
+    add_title_tag: bool = False
+    custom_tags: Sequence[str] = ()
+    keep_issues: int = 0
+    recipe_specific_options: dict[str, str] | None = None
+
+
+class SchedulerConfig:
 
     def __init__(self):
         from calibre.utils.config import config_dir
@@ -284,8 +313,8 @@ class SchedulerConfig(object):
         if os.access(self.conf_path, os.R_OK):
             with ExclusiveFile(self.conf_path) as f:
                 try:
-                    self.root = etree.fromstring(f.read())
-                except:
+                    self.root = safe_xml_fromstring(f.read(), recover=False)
+                except Exception:
                     print('Failed to read recipe scheduler config')
                     import traceback
                     traceback.print_exc()
@@ -294,17 +323,17 @@ class SchedulerConfig(object):
 
     def iter_recipes(self):
         for x in self.root:
-            if x.tag == '{%s}scheduled_recipe'%NS:
+            if x.tag == f'{{{NS}}}scheduled_recipe':
                 yield x
 
     def iter_accounts(self):
         for x in self.root:
-            if x.tag == '{%s}account_info'%NS:
+            if x.tag == f'{{{NS}}}account_info':
                 yield x
 
     def iter_customization(self):
         for x in self.root:
-            if x.tag == '{%s}recipe_customization'%NS:
+            if x.tag == f'{{{NS}}}recipe_customization':
                 yield x
 
     def schedule_recipe(self, recipe, schedule_type, schedule, last_downloaded=None):
@@ -322,7 +351,7 @@ class SchedulerConfig(object):
             if last_downloaded is None:
                 last_downloaded = EPOCH
             sr = E.scheduled_recipe({
-                'id' : recipe.get('id'),
+                'id': recipe.get('id'),
                 'title': recipe.get('title'),
                 'last_downloaded':isoformat(last_downloaded),
                 }, self.serialize_schedule(schedule_type, schedule))
@@ -330,16 +359,17 @@ class SchedulerConfig(object):
             self.write_scheduler_file()
 
     # 'keep_issues' argument for recipe-specific number of copies to keep
-    def customize_recipe(self, urn, add_title_tag, custom_tags, keep_issues):
+    def customize_recipe(self, urn, val: RecipeCustomization):
         with self.lock:
             for x in list(self.iter_customization()):
                 if x.get('id') == urn:
                     self.root.remove(x)
             cs = E.recipe_customization({
-                'keep_issues' : keep_issues,
-                'id' : urn,
-                'add_title_tag' : 'yes' if add_title_tag else 'no',
-                'custom_tags' : ','.join(custom_tags),
+                'keep_issues': str(val.keep_issues),
+                'id': urn,
+                'add_title_tag': 'yes' if val.add_title_tag else 'no',
+                'custom_tags': ','.join(val.custom_tags),
+                'recipe_specific_options': json.dumps(val.recipe_specific_options or {}),
                 })
             self.root.append(cs)
             self.write_scheduler_file()
@@ -395,14 +425,14 @@ class SchedulerConfig(object):
         if typ == 'interval':
             if schedule < 0.04:
                 schedule = 0.04
-            text = '%f'%schedule
+            text = f'{schedule:f}'
         elif typ == 'day/time':
-            text = '%d:%d:%d'%schedule
+            text = f'{int(schedule[0])}:{int(schedule[1])}:{int(schedule[2])}'
         elif typ in ('days_of_week', 'days_of_month'):
             dw = ','.join(map(str, map(int, schedule[0])))
-            text = '%s:%d:%d'%(dw, schedule[1], schedule[2])
+            text = f'{dw}:{int(schedule[1])}:{int(schedule[2])}'
         else:
-            raise ValueError('Unknown schedule type: %r'%typ)
+            raise ValueError(f'Unknown schedule type: {typ!r}')
         s.text = text
         return s
 
@@ -428,7 +458,7 @@ class SchedulerConfig(object):
     def recipe_needs_to_be_downloaded(self, recipe):
         try:
             typ, sch, ld = self.un_serialize_schedule(recipe)
-        except:
+        except Exception:
             return False
 
         def is_time(now, hour, minute):
@@ -510,16 +540,17 @@ class SchedulerConfig(object):
     def get_customize_info(self, urn):
         keep_issues = 0
         add_title_tag = True
-        custom_tags = []
+        custom_tags = ()
+        recipe_specific_options = {}
         with self.lock:
             for x in self.iter_customization():
                 if x.get('id', False) == urn:
-                    keep_issues = x.get('keep_issues', '0')
+                    keep_issues = int(x.get('keep_issues', '0'))
                     add_title_tag = x.get('add_title_tag', 'yes') == 'yes'
-                    custom_tags = [i.strip() for i in x.get('custom_tags',
-                        '').split(',')]
+                    custom_tags = tuple(i.strip() for i in x.get('custom_tags', '').split(','))
+                    recipe_specific_options = json.loads(x.get('recipe_specific_options', '{}'))
                     break
-        return add_title_tag, custom_tags, keep_issues
+        return RecipeCustomization(add_title_tag, custom_tags, keep_issues, recipe_specific_options)
 
     def get_schedule_info(self, urn):
         with self.lock:
@@ -534,7 +565,7 @@ class SchedulerConfig(object):
         for r in c.get('scheduled_recipes', []):
             try:
                 self.add_old_recipe(r)
-            except:
+            except Exception:
                 continue
         for k in c.keys():
             if k.startswith('recipe_account_info'):
@@ -543,20 +574,20 @@ class SchedulerConfig(object):
                     if urn.startswith('recipe_'):
                         urn = 'builtin:'+urn[7:]
                     else:
-                        urn = 'custom:%d'%int(urn)
+                        urn = f'custom:{int(urn)}'
                     try:
                         username, password = c[k]
-                    except:
+                    except Exception:
                         username = password = ''
-                    self.set_account_info(urn, unicode(username),
-                            unicode(password))
-                except:
+                    self.set_account_info(urn, str(username),
+                            str(password))
+                except Exception:
                     continue
         del c
         self.write_scheduler_file()
         try:
             os.remove(old_conf_path)
-        except:
+        except Exception:
             pass
 
     def add_old_recipe(self, r):
@@ -565,14 +596,14 @@ class SchedulerConfig(object):
             urn = 'builtin:'+r['id'][7:]
         elif not r['builtin']:
             try:
-                urn = 'custom:%d'%int(r['id'])
-            except:
+                urn = 'custom:{}'.format(int(r['id']))
+            except Exception:
                 return
         schedule = r['schedule']
         typ = 'interval'
         if schedule > 1e5:
             typ = 'day/time'
-            raw = '%d'%int(schedule)
+            raw = str(int(schedule))
             day = int(raw[0]) - 1
             hour = int(raw[2:4]) - 1
             minute = int(raw[-2:]) - 1

@@ -1,7 +1,5 @@
-#!/usr/bin/env python2
-# vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:fdm=marker:ai
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
+#!/usr/bin/env python
+
 
 __license__   = 'GPL v3'
 __copyright__ = '2012, Kovid Goyal <kovid at kovidgoyal.net>'
@@ -9,9 +7,8 @@ __docformat__ = 'restructuredtext en'
 
 import threading
 from functools import wraps
-from polyglot.builtins import map
 
-from calibre.constants import plugins
+from calibre_extensions.freetype import FreeType as _FreeType
 
 
 class ThreadingViolation(Exception):
@@ -31,10 +28,7 @@ def same_thread(func):
     return check_thread
 
 
-FreeTypeError = getattr(plugins['freetype'][0], 'FreeTypeError', Exception)
-
-
-class Face(object):
+class Face:
 
     def __init__(self, face):
         self.start_thread = threading.current_thread()
@@ -52,8 +46,8 @@ class Face(object):
         '''
         Returns True if all the characters in text have glyphs in this font.
         '''
-        if not isinstance(text, unicode):
-            raise TypeError('%r is not a unicode object'%text)
+        if not isinstance(text, str):
+            raise TypeError(f'{text!r} is not a unicode object')
         if has_non_printable_chars:
             from calibre.utils.fonts.utils import get_printable_characters
             text = get_printable_characters(text)
@@ -62,21 +56,17 @@ class Face(object):
 
     @same_thread
     def glyph_ids(self, text):
-        if not isinstance(text, unicode):
-            raise TypeError('%r is not a unicode object'%text)
+        if not isinstance(text, str):
+            raise TypeError(f'{text!r} is not a unicode object')
         for char in text:
             yield self.face.glyph_id(ord(char))
 
 
-class FreeType(object):
+class FreeType:
 
     def __init__(self):
         self.start_thread = threading.current_thread()
-        ft, ft_err = plugins['freetype']
-        if ft_err:
-            raise RuntimeError('Failed to load FreeType module with error: %s'
-                    % ft_err)
-        self.ft = ft.FreeType()
+        self.ft = _FreeType()
 
     @same_thread
     def load_font(self, data):

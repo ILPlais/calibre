@@ -1,7 +1,5 @@
-#!/usr/bin/env python2
+#!/usr/bin/env python
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
 
 __license__   = 'GPL v3'
 __copyright__ = '2011, Kovid Goyal <kovid@kovidgoyal.net>'
@@ -13,14 +11,14 @@ from threading import Event
 
 from calibre import prints
 from calibre.customize.ui import all_metadata_plugins
-from calibre.utils.config import OptionParser
-from calibre.utils.img import save_cover_data_to
 from calibre.ebooks.metadata import string_to_authors
 from calibre.ebooks.metadata.opf2 import metadata_to_opf
 from calibre.ebooks.metadata.sources.base import create_log
-from calibre.ebooks.metadata.sources.identify import identify
 from calibre.ebooks.metadata.sources.covers import download_cover
+from calibre.ebooks.metadata.sources.identify import identify
 from calibre.ebooks.metadata.sources.update import patch_plugins
+from calibre.utils.config import OptionParser
+from calibre.utils.img import save_cover_data_to
 
 
 def option_parser():
@@ -35,7 +33,7 @@ of title, authors or ISBN.
     parser.add_option('-a', '--authors', help=_('Book author(s)'))
     parser.add_option('-i', '--isbn', help=_('Book ISBN'))
     parser.add_option('-I', '--identifier', action='append', default=[], help=_(
-        'Identifiers such as ASIN/goodreads id etc. Can be specified multiple times for multiple identifiers.'
+        'Identifiers such as ASIN/Goodreads id etc. Can be specified multiple times for multiple identifiers.'
         ' For example: ') + '--identifier asin:B0082BAJA0')
     parser.add_option('-v', '--verbose', default=False, action='store_true',
                       help=_('Print the log to the console (stderr)'))
@@ -81,7 +79,7 @@ def main(args=sys.argv):
             allowed_plugins=allowed_plugins or None)
 
     if not results:
-        print (log, file=sys.stderr)
+        prints(buf.getvalue(), file=sys.stderr)
         prints('No results found', file=sys.stderr)
         raise SystemExit(1)
     result = results[0]
@@ -90,21 +88,21 @@ def main(args=sys.argv):
     if opts.cover and results:
         cover = download_cover(log, title=opts.title, authors=authors,
                 identifiers=result.identifiers, timeout=int(opts.timeout))
-        if cover is None and not opts.opf:
-            prints('No cover found', file=sys.stderr)
+        if cover is None:
+            if not opts.opf:
+                prints('No cover found', file=sys.stderr)
         else:
             save_cover_data_to(cover[-1], opts.cover)
             result.cover = cf = opts.cover
 
-    log = buf.getvalue()
-
-    result = (metadata_to_opf(result) if opts.opf else
-                    unicode(result).encode('utf-8'))
-
     if opts.verbose:
-        print (log, file=sys.stderr)
+        prints(buf.getvalue(), file=sys.stderr)
 
-    print (result)
+    if opts.opf:
+        getattr(sys.stdout, 'buffer', sys.stdout).write(metadata_to_opf(result))
+        print()
+    else:
+        prints(str(result))
     if not opts.opf and opts.cover:
         prints('Cover               :', cf)
 

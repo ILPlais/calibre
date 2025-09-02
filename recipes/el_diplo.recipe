@@ -1,123 +1,147 @@
-# Copyright 2013 Tomás Di Domenico
-#
-# This is a news fetching recipe for the Calibre ebook software, for
-# fetching the Cono Sur edition of Le Monde Diplomatique (www.eldiplo.org).
-#
-# This recipe is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
-#
-# This software is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with this recipe.  If not, see <http://www.gnu.org/licenses/>.
+# -*- mode: python; coding: utf-8; -*-
+# vim: set syntax=python fileencoding=utf-8
 
-import re
-from contextlib import closing
-from calibre.web.feeds.recipes import BasicNewsRecipe
-from calibre.ptempfile import PersistentTemporaryFile
-from calibre.utils.magick import Image
+__license__ = 'GPL v3'
+__copyright__ = '2023, Tomás Di Domenico <tdido at tdido.eu>'
+
+'''
+www.eldiplo.org
+'''
+
+from calibre.web.feeds.news import BasicNewsRecipe
 
 
-class ElDiplo_Recipe(BasicNewsRecipe):
-    title = u'El Diplo'
-    __author__ = 'Tomas Di Domenico'
-    description = 'Publicacion mensual de Le Monde Diplomatique, edicion Argentina'
+class ElDiplo2023(BasicNewsRecipe):
+    title = 'Le Monde Diplomatique - cono sur'
+    __author__ = 'Tomás Di Domenico'
+    description = 'Publicación de Le Monde Diplomatique para el cono sur.'
+    publisher = 'Capital Intelectual'
+    category = 'News, Politics, Argentina, Uruguay, Paraguay, South America, World'
+    oldest_article = 31
+    no_stylesheets = True
+    encoding = 'utf8'
+    use_embedded_content = False
     language = 'es_AR'
+    remove_empty_feeds = True
+    publication_type = 'magazine'
+    delay = 1
+    simultaneous_downloads = 1
+    timeout = 8
     needs_subscription = True
-    auto_cleanup = True
+    ignore_duplicate_articles = {'url'}
+    temp_files = []
+    fetch_retries = 10
+    handle_gzip = True
+    compress_news_images = True
+    scale_news_images_to_device = True
+    masthead_url = (
+        'https://www.eldiplo.org/wp-content/themes/_polenta_/assets/diplo.png'
+    )
+    INDEX = 'https://www.eldiplo.org/'
 
-    def get_cover(self, url):
-        tmp_cover = PersistentTemporaryFile(suffix=".jpg", prefix="eldiplo_")
-        self.cover_url = tmp_cover.name
+    conversion_options = {'series': 'El Dipló', 'publisher': publisher, 'base_font_size': 8, 'tags': category}
 
-        with closing(self.browser.open(url)) as r:
-            imgdata = r.read()
+    keep_only_tags = [dict(name=['article'])]
 
-        img = Image()
-        img.load(imgdata)
-        img.crop(img.size[0], img.size[1] / 2, 0, 0)
+    remove_tags = [dict(name=['button'])]
 
-        img.save(tmp_cover.name)
+    extra_css = '''
+        .entry-title {
+            text-align: center;
+        }
+        .text-right {
+            text-align: right;
+        }
+        .bajada {
+            display: block;
+            font-family: sans-serif;
+            text-align: center;
+            font-size: 110%;
+            padding: 2%;
+        }
+        .Destacado{
+            display: block;
+            font-size: 120%;
+            font-weight: bold;
+            font-style: italic;
+            padding-left: 10%;
+            padding-right: 10%;
+        }
+    '''
 
     def get_browser(self):
         br = BasicNewsRecipe.get_browser(self)
+        br.open(self.INDEX)
         if self.username is not None and self.password is not None:
-            br.open('http://www.eldiplo.org/index.php/login/-/do_login/index.html')
-            br.select_form(nr=3)
-            br['uName'] = self.username
-            br['uPassword'] = self.password
+            br.select_form(id='loginform')
+            br['log'] = self.username
+            br['pwd'] = self.password
             br.submit()
-        self.browser = br
         return br
 
+    def get_cover_url(self):
+        soup_index = self.index_to_soup(self.INDEX)
+        tag_sumario = soup_index.find('span', text='Sumario')
+        url_sumario = 'https://www.eldiplo.org' + tag_sumario.parent['href']
+
+        soup = self.index_to_soup(url_sumario)
+
+        container = soup.find('div', class_='px-16')
+        url = container.find('img')['src']
+
+        return getattr(self, 'cover_url', url)
+
+    def _process_article(self, article):
+        url = article.find('a', href=True, attrs={'class': 'title'})['href']
+        title = self.tag_to_string(article).replace('Editorial', 'Editorial: ')
+        try:
+            title, authors = title.split(', por')
+            authors = f'por {authors}'
+        except ValueError:
+            authors = ''
+        self.log('title: ', title, ' url: ', url)
+        return {'title': title, 'url': url, 'description': authors, 'date': ''}
+
+    def preprocess_html(self, soup):
+        font_size = '90%'
+
+        # make the footnotes smaller
+        for p in soup.find('div', id='nota_pie').findChildren('p', recursive=False):
+            p['style'] = f'font-size: {font_size};'
+
+        return soup
+
     def parse_index(self):
-        default_sect = 'General'
-        articles = {default_sect: []}
-        ans = [default_sect]
-        sectionsmarker = 'DOSSIER_TITLE: '
-        sectionsre = re.compile('^' + sectionsmarker)
+        soup_index = self.index_to_soup(self.INDEX)
 
-        soup = self.index_to_soup('http://www.eldiplo.org/index.php')
+        tag_sumario = soup_index.find('span', text='Sumario')
 
-        coverdivs = soup.findAll(True, attrs={'id': ['lmd-foto']})
-        a = coverdivs[0].find('a', href=True)
-        coverurl = a['href'].split("?imagen=")[1]
-        self.get_cover(coverurl)
+        if tag_sumario is None:
+            return None
 
-        thedivs = soup.findAll(True, attrs={'class': ['lmd-leermas']})
-        for div in thedivs:
-            a = div.find('a', href=True)
-            if 'Sumario completo' in self.tag_to_string(a, use_alt=True):
-                summaryurl = re.sub(r'\?.*', '', a['href'])
-                summaryurl = 'http://www.eldiplo.org' + summaryurl
+        url_sumario = 'https://www.eldiplo.org' + tag_sumario.parent['href']
+        self.log(url_sumario)
 
-        for pagenum in xrange(1, 10):
-            soup = self.index_to_soup(
-                '{0}/?cms1_paging_p_b32={1}'.format(summaryurl, pagenum))
-            thedivs = soup.findAll(True, attrs={'class': ['interna']})
+        soup_sumario = self.index_to_soup(url_sumario)
 
-            if len(thedivs) == 0:
-                break
+        feeds = []
+        articles = []
+        dossiers = []
 
-            for div in thedivs:
-                section = div.find(True, text=sectionsre).replace(
-                    sectionsmarker, '')
-                if section == '':
-                    section = default_sect
+        sumario = soup_sumario.find('div', class_='sumario')
 
-                if section not in articles.keys():
-                    articles[section] = []
-                    ans.append(section)
+        for section in sumario.find_all('div', recursive=False):
+            classes = section.attrs['class']
 
-                nota = div.find(
-                    True, attrs={'class': ['lmd-pl-titulo-nota-dossier']})
-                a = nota.find('a', href=True)
-                if not a:
-                    continue
+            if 'dossier' in classes:
+                dtitle = self.tag_to_string(section.find('h3'))
+                darticles = []
+                for article in section.find_all('div', recursive=False):
+                    darticles.append(self._process_article(article))
+                dossiers.append((dtitle, darticles))
+            else:
+                articles.append(self._process_article(section))
+        feeds.append(('Artículos', articles))
+        feeds += dossiers
 
-                url = re.sub(r'\?.*', '', a['href'])
-                url = 'http://www.eldiplo.org' + url
-                title = self.tag_to_string(a, use_alt=True).strip()
-
-                summary = div.find(
-                    True, attrs={'class': 'lmd-sumario-descript'}).find('p')
-                if summary:
-                    description = self.tag_to_string(summary, use_alt=False)
-
-                aut = div.find(True, attrs={'class': 'lmd-autor-sumario'})
-                if aut:
-                    auth = self.tag_to_string(aut, use_alt=False).strip()
-
-                if not articles.has_key(section):  # noqa
-                    articles[section] = []
-
-                articles[section].append(dict(
-                    title=title, author=auth, url=url, date=None, description=description, content=''))
-
-        ans = [(s, articles[s]) for s in ans if articles.has_key(s)]  # noqa
-        return ans
+        return feeds

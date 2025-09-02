@@ -1,23 +1,45 @@
-#!/usr/bin/env python2
-# vim:fileencoding=utf-8
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
+#!/usr/bin/env python
+
 
 __license__ = 'GPL v3'
 __copyright__ = '2013, Kovid Goyal <kovid at kovidgoyal.net>'
 
 from collections import namedtuple
 
-from PyQt5.Qt import (
-    QColor, QBrush, QFont, QApplication, QPalette, QComboBox,
-    QPushButton, QIcon, QFormLayout, QLineEdit, QWidget, QScrollArea,
-    QVBoxLayout, Qt, QHBoxLayout, pyqtSignal, QPixmap, QColorDialog,
-    QToolButton, QCheckBox, QSize, QLabel, QSplitter, QTextCharFormat)
+from qt.core import (
+    QApplication,
+    QBrush,
+    QCheckBox,
+    QColor,
+    QColorDialog,
+    QComboBox,
+    QDialog,
+    QDialogButtonBox,
+    QFont,
+    QFormLayout,
+    QHBoxLayout,
+    QIcon,
+    QLabel,
+    QLineEdit,
+    QPalette,
+    QPixmap,
+    QPushButton,
+    QScrollArea,
+    QSize,
+    QSplitter,
+    Qt,
+    QTextCharFormat,
+    QToolButton,
+    QVBoxLayout,
+    QWidget,
+    pyqtSignal,
+)
 
 from calibre.gui2 import error_dialog
 from calibre.gui2.tweak_book import tprefs
 from calibre.gui2.tweak_book.editor import syntax_text_char_format
 from calibre.gui2.tweak_book.widgets import Dialog
+from polyglot.builtins import iteritems
 
 underline_styles = {'single', 'dash', 'dot', 'dash_dot', 'dash_dot_dot', 'wave', 'spell'}
 
@@ -27,17 +49,18 @@ _default_theme = None
 def default_theme():
     global _default_theme
     if _default_theme is None:
-        isdark = QApplication.instance().palette().color(QPalette.WindowText).lightness() > 128
+        isdark = QApplication.instance().palette().color(QPalette.ColorRole.WindowText).lightness() > 128
         _default_theme = 'wombat-dark' if isdark else 'pyte-light'
     return _default_theme
 
+
 # The solarized themes {{{
-SLDX = {'base03':'1c1c1c', 'base02':'262626', 'base01':'585858', 'base00':'626262', 'base0':'808080', 'base1':'8a8a8a', 'base2':'e4e4e4', 'base3':'ffffd7', 'yellow':'af8700', 'orange':'d75f00', 'red':'d70000', 'magenta':'af005f', 'violet':'5f5faf', 'blue':'0087ff', 'cyan':'00afaf', 'green':'5f8700'}  # noqa
-SLD  = {'base03':'002b36', 'base02':'073642', 'base01':'586e75', 'base00':'657b83', 'base0':'839496', 'base1':'93a1a1', 'base2':'eee8d5', 'base3':'fdf6e3', 'yellow':'b58900', 'orange':'cb4b16', 'red':'dc322f', 'magenta':'d33682', 'violet':'6c71c4', 'blue':'268bd2', 'cyan':'2aa198', 'green':'859900'}  # noqa
-m = {'base%d'%n:'base%02d'%n for n in xrange(1, 4)}
-m.update({'base%02d'%n:'base%d'%n for n in xrange(1, 4)})
-SLL = {m.get(k, k) : v for k, v in SLD.iteritems()}
-SLLX = {m.get(k, k) : v for k, v in SLDX.iteritems()}
+SLDX = {'base03':'1c1c1c', 'base02':'262626', 'base01':'585858', 'base00':'626262', 'base0':'808080', 'base1':'8a8a8a', 'base2':'e4e4e4', 'base3':'ffffd7', 'yellow':'af8700', 'orange':'d75f00', 'red':'d70000', 'magenta':'af005f', 'violet':'5f5faf', 'blue':'0087ff', 'cyan':'00afaf', 'green':'5f8700'}  # noqa: E501
+SLD  = {'base03':'002b36', 'base02':'073642', 'base01':'586e75', 'base00':'657b83', 'base0':'839496', 'base1':'93a1a1', 'base2':'eee8d5', 'base3':'fdf6e3', 'yellow':'b58900', 'orange':'cb4b16', 'red':'dc322f', 'magenta':'d33682', 'violet':'6c71c4', 'blue':'268bd2', 'cyan':'2aa198', 'green':'859900'}  # noqa: E501
+m = {f'base{n}':f'base{n:02}' for n in range(1, 4)}
+m.update({f'base{n:02}':f'base{n}' for n in range(1, 4)})
+SLL =  {m.get(k, k): v for k, v in iteritems(SLD)}
+SLLX = {m.get(k, k): v for k, v in iteritems(SLDX)}
 SOLARIZED = \
     '''
     CursorLine   bg={base02}
@@ -66,7 +89,7 @@ SOLARIZED = \
     Statement    fg={green} bold
     Keyword      fg={green}
     Special      fg={red}
-    SpecialCharacter bg={base02}
+    SpecialCharacter bg={base03}
 
     Error        us=wave uc={red}
     SpellError   us=wave uc={orange}
@@ -113,7 +136,7 @@ THEMES = {
     Special      fg={special}
     Error        us=wave uc=red
     SpellError   us=wave uc=orange
-    SpecialCharacter bg={cursor_loc}
+    SpecialCharacter bg=666666
     Link         fg=cyan
     BadLink      fg={string} us=wave uc=red
 
@@ -160,7 +183,7 @@ THEMES = {
     Statement    fg={keyword}
     Keyword      fg={keyword}
     Special      fg={special} italic
-    SpecialCharacter bg={cursor_loc}
+    SpecialCharacter bg=afafaf
     Error        us=wave uc=red
     SpellError   us=wave uc=magenta
     Link         fg=blue
@@ -237,7 +260,7 @@ def read_theme(raw):
     return ans
 
 
-THEMES = {k:read_theme(raw) for k, raw in THEMES.iteritems()}
+THEMES = {k:read_theme(raw) for k, raw in iteritems(THEMES)}
 
 
 def u(x):
@@ -247,7 +270,7 @@ def u(x):
     return x + 'Underline'
 
 
-underline_styles = {x:getattr(QTextCharFormat, u(x)) for x in underline_styles}
+underline_styles = {x:getattr(QTextCharFormat.UnderlineStyle, u(x)) for x in underline_styles}
 
 
 def to_highlight(data):
@@ -259,7 +282,7 @@ def to_highlight(data):
 
 def read_custom_theme(data):
     dt = THEMES[default_theme()].copy()
-    dt.update({k:to_highlight(v) for k, v in data.iteritems()})
+    dt.update({k:to_highlight(v) for k, v in iteritems(data)})
     return dt
 
 
@@ -278,7 +301,7 @@ def get_theme(name):
 def highlight_to_char_format(h):
     ans = syntax_text_char_format()
     if h.bold:
-        ans.setFontWeight(QFont.Bold)
+        ans.setFontWeight(QFont.Weight.Bold)
     if h.italic:
         ans.setFontItalic(True)
     if h.fg is not None:
@@ -308,18 +331,18 @@ def theme_format(theme, name):
 
 
 def custom_theme_names():
-    return tuple(tprefs['custom_themes'].iterkeys())
+    return tuple(tprefs['custom_themes'])
 
 
 def builtin_theme_names():
-    return tuple(THEMES.iterkeys())
+    return tuple(THEMES)
 
 
 def all_theme_names():
     return builtin_theme_names() + custom_theme_names()
 
-# Custom theme creation/editing {{{
 
+# Custom theme creation/editing {{{
 
 class CreateNewTheme(Dialog):
 
@@ -345,7 +368,7 @@ class CreateNewTheme(Dialog):
 
     @property
     def theme_name(self):
-        return unicode(self._name.text()).strip()
+        return str(self._name.text()).strip()
 
     def accept(self):
         if not self.theme_name:
@@ -358,7 +381,7 @@ class CreateNewTheme(Dialog):
 
 
 def col_to_string(color):
-    return '%02X%02X%02X' % color.getRgb()[:3]
+    return '{:02X}{:02X}{:02X}'.format(*color.getRgb()[:3])
 
 
 class ColorButton(QPushButton):
@@ -374,7 +397,7 @@ class ColorButton(QPushButton):
             self.current_color = read_color(color).color()
             self.ic.fill(self.current_color)
         else:
-            self.ic.fill(Qt.transparent)
+            self.ic.fill(Qt.GlobalColor.transparent)
             self.current_color = color
         self.update_tooltip()
         self.setIcon(QIcon(self.ic))
@@ -383,13 +406,13 @@ class ColorButton(QPushButton):
     def clear(self):
         self.current_color = None
         self.update_tooltip()
-        self.ic.fill(Qt.transparent)
+        self.ic.fill(Qt.GlobalColor.transparent)
         self.setIcon(QIcon(self.ic))
         self.data[self.name] = self.value
         self.changed.emit()
 
     def choose_color(self):
-        col = QColorDialog.getColor(self.current_color or Qt.black, self, _('Choose color'))
+        col = QColorDialog.getColor(self.current_color or Qt.GlobalColor.black, self, _('Choose color'))
         if col.isValid():
             self.current_color = col
             self.update_tooltip()
@@ -424,7 +447,7 @@ class Bool(QCheckBox):
 
     @property
     def value(self):
-        return self.checkState() == Qt.Checked
+        return self.checkState() == Qt.CheckState.Checked
 
 
 class Property(QWidget):
@@ -443,7 +466,7 @@ class Property(QWidget):
             b = ColorButton(data, key, text, self)
             b.changed.connect(self.changed), l.addWidget(b)
             bc = QToolButton(self)
-            bc.setIcon(QIcon(I('clear_left.png')))
+            bc.setIcon(QIcon.ic('clear_left.png'))
             bc.setToolTip(_('Remove color'))
             bc.clicked.connect(b.clear)
             h = QHBoxLayout()
@@ -474,11 +497,11 @@ class Property(QWidget):
         l.addStretch(1)
 
     def us_changed(self):
-        self.data['underline'] = unicode(self.underline.currentText()) or None
+        self.data['underline'] = str(self.underline.currentText()) or None
         self.changed.emit()
 
-# Help text {{{
 
+# Help text {{{
 
 HELP_TEXT = _('''\
 <h2>Creating a custom theme</h2>
@@ -493,45 +516,45 @@ the color of the blinking cursor.</p>
 <p>As you make changes to your theme on the left, the changes will be reflected live in this panel.</p>
 
 <p xml:lang="und">
-{}
+{Normal}
     The most important rule. Sets the foreground and background colors for the \
     editor as well as the style of "normal" text, that is, text that does not match any special syntax.
 
-{}
+{Visual}
     Defines the colors for text selected by the mouse.
 
-{}
+{CursorLine}
     Defines the color for the line containing the cursor.
 
-{}
+{LineNr}
     Defines the colors for the line numbers on the left.
 
-{}
+{MatchParen}
     Defines the colors for matching tags in HTML and matching
     braces in CSS.
 
-{}
+{Function}
     Used for highlighting tags in HTML
 
-{}
+{Type}
     Used for highlighting attributes in HTML
 
-{}
+{Statement}
     Tag names in HTML
 
-{}
+{Constant}
     Namespace prefixes in XML and constants in CSS
 
-{}
-    Non-breaking spaces/hyphens in HTML
+{SpecialCharacter}
+    Non{endash}breaking{nbsp}spaces/hyphens in HTML
 
-{}
+{Error}
     Syntax errors such as <this <>
 
-{}
+{SpellError}
     Misspelled words such as <span lang="en">thisword</span>
 
-{}
+{Comment}
     Comments like <!-- this one -->
 
 </p>
@@ -568,14 +591,14 @@ class ThemeEditor(Dialog):
         t.setMinimumWidth(200)
         if t.count() > 0:
             t.setCurrentIndex(0)
-        t.currentIndexChanged[int].connect(self.show_theme)
+        t.currentIndexChanged.connect(self.show_theme)
         h.addWidget(t)
 
-        self.add_button = b = QPushButton(QIcon(I('plus.png')), _('Add &new theme'), self)
+        self.add_button = b = QPushButton(QIcon.ic('plus.png'), _('Add &new theme'), self)
         b.clicked.connect(self.create_new_theme)
         h.addWidget(b)
 
-        self.remove_button = b = QPushButton(QIcon(I('minus.png')), _('&Remove theme'), self)
+        self.remove_button = b = QPushButton(QIcon.ic('minus.png'), _('&Remove theme'), self)
         b.clicked.connect(self.remove_theme)
         h.addWidget(b)
         h.addStretch(1)
@@ -588,13 +611,14 @@ class ThemeEditor(Dialog):
 
         from calibre.gui2.tweak_book.editor.text import TextEdit
         self.preview = p = TextEdit(self, expected_geometry=(73, 50))
-        p.load_text(HELP_TEXT.format(
-                *['<b>%s</b>' % x for x in (
-                    'Normal', 'Visual', 'CursorLine', 'LineNr', 'MatchParen',
-                    'Function', 'Type', 'Statement', 'Constant', 'SpecialCharacter',
-                    'Error', 'SpellError', 'Comment'
-                )]
-            ))
+        t = {x: f'<b>{x}</b>' for x in (
+            'Normal', 'Visual', 'CursorLine', 'LineNr', 'MatchParen',
+            'Function', 'Type', 'Statement', 'Constant', 'SpecialCharacter',
+            'Error', 'SpellError', 'Comment')
+        }
+        t['nbsp'] = '\xa0'
+        t['endash'] = '–'
+        p.load_text(HELP_TEXT.format(**t))
         p.setMaximumWidth(p.size_hint.width() + 5)
         s.setMinimumWidth(600)
         self.splitter = sp = QSplitter(self)
@@ -602,7 +626,7 @@ class ThemeEditor(Dialog):
         sp.addWidget(s), sp.addWidget(p)
 
         self.bb.clear()
-        self.bb.addButton(self.bb.Close)
+        self.bb.addButton(QDialogButtonBox.StandardButton.Close)
         l.addWidget(self.bb)
 
         if self.theme.count() > 0:
@@ -610,15 +634,15 @@ class ThemeEditor(Dialog):
 
     def update_theme(self, name):
         data = tprefs['custom_themes'][name]
-        extra = set(data.iterkeys()) - set(THEMES[default_theme()].iterkeys())
-        missing = set(THEMES[default_theme()].iterkeys()) - set(data.iterkeys())
+        extra = set(data) - set(THEMES[default_theme()])
+        missing = set(THEMES[default_theme()]) - set(data)
         for k in extra:
             data.pop(k)
         for k in missing:
             data[k] = dict(THEMES[default_theme()][k]._asdict())
-            for nk, nv in data[k].iteritems():
+            for nk, nv in iteritems(data[k]):
                 if isinstance(nv, QBrush):
-                    data[k][nk] = unicode(nv.color().name())
+                    data[k][nk] = str(nv.color().name())
         if extra or missing:
             tprefs['custom_themes'][name] = data
         return data
@@ -632,7 +656,7 @@ class ThemeEditor(Dialog):
             c.setParent(None)
             c.deleteLater()
         self.properties = []
-        name = unicode(self.theme.currentText())
+        name = str(self.theme.currentText())
         if not name:
             return
         data = self.update_theme(name)
@@ -649,7 +673,7 @@ class ThemeEditor(Dialog):
 
     @property
     def theme_name(self):
-        return unicode(self.theme.currentText())
+        return str(self.theme.currentText())
 
     def changed(self):
         name = self.theme_name
@@ -658,12 +682,12 @@ class ThemeEditor(Dialog):
 
     def create_new_theme(self):
         d = CreateNewTheme(self)
-        if d.exec_() == d.Accepted:
+        if d.exec() == QDialog.DialogCode.Accepted:
             name = '*' + d.theme_name
-            base = unicode(d.base.currentText())
+            base = str(d.base.currentText())
             theme = {}
-            for key, val in THEMES[base].iteritems():
-                theme[key] = {k:col_to_string(v.color()) if isinstance(v, QBrush) else v for k, v in val._asdict().iteritems()}
+            for key, val in iteritems(THEMES[base]):
+                theme[key] = {k:col_to_string(v.color()) if isinstance(v, QBrush) else v for k, v in iteritems(val._asdict())}
             tprefs['custom_themes'][name] = theme
             tprefs['custom_themes'] = tprefs['custom_themes']
             t = self.theme
@@ -687,13 +711,14 @@ class ThemeEditor(Dialog):
             self.show_theme()
 
     def sizeHint(self):
-        g = QApplication.instance().desktop().availableGeometry(self.parent() or self)
+        g = self.screen().availableSize()
         return QSize(min(1500, g.width() - 25), 650)
 # }}}
 
 
 if __name__ == '__main__':
-    app = QApplication([])
+    from calibre.gui2 import Application
+    app = Application([])
     d = ThemeEditor()
-    d.exec_()
+    d.exec()
     del app

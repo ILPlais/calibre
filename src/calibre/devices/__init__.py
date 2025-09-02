@@ -1,4 +1,3 @@
-from __future__ import print_function
 __license__   = 'GPL v3'
 __copyright__ = '2008, Kovid Goyal <kovid at kovidgoyal.net>'
 
@@ -6,9 +5,10 @@ __copyright__ = '2008, Kovid Goyal <kovid at kovidgoyal.net>'
 Device drivers.
 '''
 
-import sys, time, pprint
+import pprint
+import sys
+import time
 from functools import partial
-from StringIO import StringIO
 
 DAY_MAP   = dict(Sun=0, Mon=1, Tue=2, Wed=3, Thu=4, Fri=5, Sat=6)
 MONTH_MAP = dict(Jan=1, Feb=2, Mar=3, Apr=4, May=5, Jun=6, Jul=7, Aug=8, Sep=9, Oct=10, Nov=11, Dec=12)
@@ -25,7 +25,7 @@ def strptime(src):
 
 
 def strftime(epoch, zone=time.gmtime):
-    src = time.strftime("%w, %d %m %Y %H:%M:%S GMT", zone(epoch)).split()
+    src = time.strftime('%w, %d %m %Y %H:%M:%S GMT', zone(epoch)).split()
     src[0] = INVERSE_DAY_MAP[int(src[0][:-1])]+','
     src[2] = INVERSE_MONTH_MAP[int(src[2])]
     return ' '.join(src)
@@ -52,7 +52,7 @@ def get_connected_device():
     for det, d in connected_devices:
         try:
             d.open(det, None)
-        except:
+        except Exception:
             continue
         else:
             dev = d
@@ -69,31 +69,34 @@ def debug(ioreg_to_tmp=False, buf=None, plugins=None,
     device plugins as the plugins parameter.
     '''
     import textwrap
+
+    from calibre import prints
+    from calibre.constants import debug, is_debugging, ismacos, iswindows
     from calibre.customize.ui import device_plugins, disabled_device_plugins
     from calibre.debug import print_basic_debug_info
     from calibre.devices.scanner import DeviceScanner
-    from calibre.constants import iswindows, isosx
-    from calibre import prints
+    from polyglot.io import PolyglotStringIO
     oldo, olde = sys.stdout, sys.stderr
 
     if buf is None:
-        buf = StringIO()
+        buf = PolyglotStringIO()
     sys.stdout = sys.stderr = buf
     out = partial(prints, file=buf)
 
     devplugins = device_plugins() if plugins is None else plugins
-    devplugins = list(sorted(devplugins, cmp=lambda
-            x,y:cmp(x.__class__.__name__, y.__class__.__name__)))
+    devplugins = list(sorted(devplugins, key=lambda x: x.__class__.__name__))
     if plugins is None:
         for d in devplugins:
             try:
                 d.startup()
-            except:
-                out('Startup failed for device plugin: %s'%d)
+            except Exception:
+                out(f'Startup failed for device plugin: {d}')
 
     if disabled_plugins is None:
         disabled_plugins = list(disabled_device_plugins())
 
+    orig_debug = is_debugging()
+    debug(True)
     try:
         print_basic_debug_info(out=buf)
         s = DeviceScanner()
@@ -108,13 +111,17 @@ def debug(ioreg_to_tmp=False, buf=None, plugins=None,
         out(pprint.pformat(devices))
 
         ioreg = None
-        if isosx:
+        if ismacos:
             from calibre.devices.usbms.device import Device
-            mount = '\n'.join(repr(x) for x in Device.osx_run_mount().splitlines())
+            mount = Device.osx_run_mount()
             drives = pprint.pformat(Device.osx_get_usb_drives())
             ioreg = 'Output from mount:\n'+mount+'\n\n'
             ioreg += 'Output from osx_get_usb_drives:\n'+drives+'\n\n'
-            ioreg += Device.run_ioreg()
+            iro = Device.run_ioreg()
+            try:
+                ioreg += iro.decode('utf-8', 'replace')
+            except UnicodeDecodeError:
+                ioreg += repr(iro)
         connected_devices = []
         if disabled_plugins:
             out('\nDisabled plugins:', textwrap.fill(' '.join([x.__class__.__name__ for x in
@@ -158,7 +165,7 @@ def debug(ioreg_to_tmp=False, buf=None, plugins=None,
                     dev.reset(detected_device=det)
                     dev.open(det, None)
                     out('OK')
-                except:
+                except Exception:
                     import traceback
                     errors[dev] = traceback.format_exc()
                     out('failed')
@@ -180,22 +187,23 @@ def debug(ioreg_to_tmp=False, buf=None, plugins=None,
                 ioreg = 'IOREG Output\n'+ioreg
                 out(' ')
                 if ioreg_to_tmp:
-                    lopen('/tmp/ioreg.txt', 'wb').write(ioreg)
-                    out('Dont forget to send the contents of /tmp/ioreg.txt')
+                    open('/tmp/ioreg.txt', 'w').write(ioreg)
+                    out("Don't forget to send the contents of /tmp/ioreg.txt")
                     out('You can open it with the command: open /tmp/ioreg.txt')
                 else:
                     out(ioreg)
 
         if hasattr(buf, 'getvalue'):
-            return buf.getvalue().decode('utf-8', 'replace')
+            return buf.getvalue()
     finally:
+        debug(orig_debug)
         sys.stdout = oldo
         sys.stderr = olde
         if plugins is None:
             for d in devplugins:
                 try:
                     d.shutdown()
-                except:
+                except Exception:
                     pass
 
 

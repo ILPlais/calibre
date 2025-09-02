@@ -1,16 +1,14 @@
-#!/usr/bin/env python2
-# vim:fileencoding=utf-8
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
+#!/usr/bin/env python
+
 
 __license__ = 'GPL v3'
 __copyright__ = '2013, Kovid Goyal <kovid at kovidgoyal.net>'
 
 import string
-from polyglot.builtins import map
 
-from calibre.utils.config import JSONConfig
 from calibre.spell.dictionary import Dictionaries, parse_lang_code
+from calibre.utils.config import JSONConfig
+from polyglot.builtins import iteritems
 
 CONTAINER_DND_MIMETYPE = 'application/x-calibre-container-name-list'
 tprefs = JSONConfig('tweak_book_gui')
@@ -21,26 +19,41 @@ d['editor_font_family'] = None
 d['editor_font_size'] = 12
 d['editor_line_wrap'] = True
 d['editor_tab_stop_width'] = 2
+d['editor_cursor_width'] = 1
 d['editor_show_char_under_cursor'] = True
 d['replace_entities_as_typed'] = True
 d['preview_refresh_time'] = 2
 d['choose_tweak_fmt'] = True
-d['tweak_fmt_order'] = ['EPUB', 'AZW3']
+d['tweak_fmt_order'] = ['EPUB', 'KEPUB', 'AZW3']
 d['update_metadata_from_calibre'] = True
 d['nestable_dock_widgets'] = False
 d['dock_top_left'] = 'horizontal'
 d['dock_top_right'] = 'horizontal'
 d['dock_bottom_left'] = 'horizontal'
 d['dock_bottom_right'] = 'horizontal'
-d['preview_serif_family'] = 'Liberation Serif'
-d['preview_sans_family'] = 'Liberation Sans'
-d['preview_mono_family'] = 'Liberation Mono'
+d['engine_preview_serif_family'] = None
+d['engine_preview_sans_family'] = None
+d['engine_preview_mono_family'] = None
 d['preview_standard_font_family'] = 'serif'
 d['preview_base_font_size'] = 18
 d['preview_mono_font_size'] = 14
 d['preview_minimum_font_size'] = 8
+d['preview_sync_context'] = 0
+d['preview_background'] = 'auto'
+d['preview_foreground'] = 'auto'
+d['preview_link_color'] = 'auto'
 d['remove_existing_links_when_linking_sheets'] = True
-d['charmap_favorites'] = list(map(ord, '\xa0\u2002\u2003\u2009\xad' '‘’“”‹›«»‚„' '—–§¶†‡©®™' '→⇒•·°±−×÷¼½½¾' '…µ¢£€¿¡¨´¸ˆ˜' 'ÀÁÂÃÄÅÆÇÈÉÊË' 'ÌÍÎÏÐÑÒÓÔÕÖØ' 'ŒŠÙÚÛÜÝŸÞßàá' 'âãäåæçèéêëìí' 'îïðñòóôõöøœš' 'ùúûüýÿþªºαΩ∞'))  # noqa
+d['charmap_favorites'] = list(map(ord, ('\xa0\u2002\u2003\u2009\xad'
+                                        '‘’“”‹›«»‚„'
+                                        '—–§¶†‡©®™'
+                                        '→⇒•·°±−×÷¼½½¾'
+                                        '…µ¢£€¿¡¨´¸ˆ˜'
+                                        'ÀÁÂÃÄÅÆÇÈÉÊË'
+                                        'ÌÍÎÏÐÑÒÓÔÕÖØ'
+                                        'ŒŠÙÚÛÜÝŸÞßàá'
+                                        'âãäåæçèéêëìí'
+                                        'îïðñòóôõöøœš'
+                                        'ùúûüýÿþªºαΩ∞')))
 d['folders_for_types'] = {'style':'styles', 'image':'images', 'font':'fonts', 'audio':'audio', 'video':'video'}
 d['pretty_print_on_open'] = False
 d['disable_completion_popup_for_search'] = False
@@ -51,8 +64,11 @@ d['inline_spell_check'] = True
 d['custom_themes'] = {}
 d['remove_unused_classes'] = False
 d['merge_identical_selectors'] = False
+d['merge_identical_selectors'] = False
+d['merge_rules_with_identical_properties'] = False
+d['remove_unreferenced_sheets'] = True
 d['global_book_toolbar'] = [
-'new-file', 'open-book',  'save-book', None, 'global-undo', 'global-redo', 'create-checkpoint', None, 'donate', 'user-manual']
+'new-file', 'open-book', 'save-book', None, 'global-undo', 'global-redo', 'create-checkpoint', None, 'donate', 'user-manual']
 d['global_tools_toolbar'] = [
     'check-book', 'spell-check-book', 'edit-toc', 'insert-character',
     'manage-fonts', 'smarten-punctuation', 'remove-unused-css', 'show-reports'
@@ -78,6 +94,8 @@ d['preserve_aspect_ratio_when_inserting_image'] = False
 d['file_list_shows_full_pathname'] = False
 d['auto_link_stylesheets'] = True
 d['check_external_link_anchors'] = True
+d['remove_ncx'] = True
+d['html_transform_scope'] = 'current'
 del d
 
 ucase_map = {l:string.ascii_uppercase[i] for i, l in enumerate(string.ascii_lowercase)}
@@ -103,7 +121,7 @@ class NonReplaceDict(dict):
 
     def __setitem__(self, k, v):
         if k in self:
-            raise ValueError('The key %s is already present' % k)
+            raise ValueError(f'The key {k} is already present')
         dict.__setitem__(self, k, v)
 
 
@@ -118,7 +136,7 @@ dictionaries = Dictionaries()
 
 
 def editor_name(editor):
-    for n, ed in editors.iteritems():
+    for n, ed in iteritems(editors):
         if ed is editor:
             return n
 

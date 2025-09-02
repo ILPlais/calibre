@@ -1,19 +1,18 @@
-#!/usr/bin/env python2
-# vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
-from polyglot.builtins import filter, map
+#!/usr/bin/env python
+
 
 __license__   = 'GPL v3'
 __copyright__ = '2011, Kovid Goyal <kovid@kovidgoyal.net>'
 __docformat__ = 'restructuredtext en'
 
-from struct import pack
-from cStringIO import StringIO
+import io
+import numbers
 from collections import OrderedDict, defaultdict
+from struct import pack
 
-from calibre.ebooks.mobi.utils import (encint, encode_number_as_hex,
-        encode_tbs, align_block, RECORD_SIZE, CNCX as CNCX_)
+from calibre.ebooks.mobi.utils import CNCX as CNCX_
+from calibre.ebooks.mobi.utils import RECORD_SIZE, align_block, encint, encode_number_as_hex, encode_tbs
+from polyglot.builtins import iteritems, itervalues
 
 
 class CNCX(CNCX_):  # {{{
@@ -32,13 +31,13 @@ class CNCX(CNCX_):  # {{{
 # }}}
 
 
-class TAGX(object):  # {{{
+class TAGX:  # {{{
 
     BITMASKS = {11:0b1}
     BITMASKS.update({x:(1 << i) for i, x in enumerate([1, 2, 3, 4, 5, 21, 22, 23])})
     BITMASKS.update({x:(1 << i) for i, x in enumerate([69, 70, 71, 72, 73])})
 
-    NUM_VALUES = defaultdict(lambda :1)
+    NUM_VALUES = defaultdict(lambda:1)
     NUM_VALUES[11] = 3
     NUM_VALUES[0] = 0
 
@@ -65,8 +64,8 @@ class TAGX(object):  # {{{
         '''
         TAGX block for the Primary index header of a periodical
         '''
-        list(map(self.add_tag, (1, 2, 3, 4, 5, 21, 22, 23, 0, 69, 70, 71, 72,
-            73, 0)))
+        for i in (1, 2, 3, 4, 5, 21, 22, 23, 0, 69, 70, 71, 72, 73, 0):
+            self.add_tag(i)
         return self.header(2) + bytes(self.byts)
 
     @property
@@ -74,7 +73,8 @@ class TAGX(object):  # {{{
         '''
         TAGX block for the secondary index header of a periodical
         '''
-        list(map(self.add_tag, (11, 0)))
+        for i in (11, 0):
+            self.add_tag(i)
         return self.header(1) + bytes(self.byts)
 
     @property
@@ -82,15 +82,16 @@ class TAGX(object):  # {{{
         '''
         TAGX block for the primary index header of a flat book
         '''
-        list(map(self.add_tag, (1, 2, 3, 4, 0)))
+        for i in (1, 2, 3, 4, 0):
+            self.add_tag(i)
         return self.header(1) + bytes(self.byts)
-
 
 # }}}
 
+
 # Index Entries {{{
 
-class IndexEntry(object):
+class IndexEntry:
 
     TAG_VALUES = {
             'offset': 1,
@@ -107,7 +108,7 @@ class IndexEntry(object):
             'author_offset': 71,
 
     }
-    RTAG_MAP = {v:k for k, v in TAG_VALUES.iteritems()}  # noqa
+    RTAG_MAP = {v:k for k, v in iteritems(TAG_VALUES)}
 
     def __init__(self, offset, label_offset):
         self.offset, self.label_offset = offset, label_offset
@@ -126,18 +127,16 @@ class IndexEntry(object):
         self.desc_offset = None
 
     def __repr__(self):
-        return ('IndexEntry(offset=%r, depth=%r, length=%r, index=%r,'
-                ' parent_index=%r)')%(self.offset, self.depth, self.length,
-                        self.index, self.parent_index)
+        return (f'IndexEntry(offset={self.offset!r}, depth={self.depth!r}, length={self.length!r}, index={self.index!r},'
+                f' parent_index={self.parent_index!r})')
 
-    @dynamic_property
+    @property
     def size(self):
-        def fget(self):
-            return self.length
+        return self.length
 
-        def fset(self, val):
-            self.length = val
-        return property(fget=fget, fset=fset, doc='Alias for length')
+    @size.setter
+    def size(self, val):
+        self.length = val
 
     @property
     def next_offset(self):
@@ -145,8 +144,7 @@ class IndexEntry(object):
 
     @property
     def tag_nums(self):
-        for i in range(1, 5):
-            yield i
+        yield from range(1, 5)
         for attr in ('class_offset', 'parent_index', 'first_child_index',
                 'last_child_index'):
             if getattr(self, attr) is not None:
@@ -164,8 +162,8 @@ class IndexEntry(object):
 
     @property
     def bytestring(self):
-        buf = StringIO()
-        if isinstance(self.index, int):
+        buf = io.BytesIO()
+        if isinstance(self.index, numbers.Integral):
             buf.write(encode_number_as_hex(self.index))
         else:
             raw = bytearray(self.index.encode('ascii'))
@@ -187,7 +185,7 @@ class IndexEntry(object):
         for tag in self.tag_nums:
             attr = self.attr_for_tag(tag)
             val = getattr(self, attr)
-            if isinstance(val, int):
+            if isinstance(val, numbers.Integral):
                 val = [val]
             for x in val:
                 buf.write(encint(x))
@@ -223,9 +221,9 @@ class SecondaryIndexEntry(IndexEntry):
         tag = self.INDEX_MAP[index]
 
         # The values for this index entry
-        # I dont know what the 5 means, it is not the number of entries
+        # I don't know what the 5 means, it is not the number of entries
         self.secondary = [5 if tag == min(
-            self.INDEX_MAP.itervalues()) else 0, 0, tag]
+            itervalues(self.INDEX_MAP)) else 0, 0, tag]
 
     @property
     def tag_nums(self):
@@ -237,14 +235,14 @@ class SecondaryIndexEntry(IndexEntry):
 
     @classmethod
     def entries(cls):
-        rmap = {v:k for k,v in cls.INDEX_MAP.iteritems()}
+        rmap = {v:k for k,v in iteritems(cls.INDEX_MAP)}
         for tag in sorted(rmap, reverse=True):
             yield cls(rmap[tag])
 
 # }}}
 
 
-class TBS(object):  # {{{
+class TBS:  # {{{
 
     '''
     Take the list of index nodes starting/ending on a record and calculate the
@@ -282,7 +280,7 @@ class TBS(object):  # {{{
                 for x in ('starts', 'ends', 'completes'):
                     for idx in data[x]:
                         depth_map[idx.depth].append(idx)
-                for l in depth_map.itervalues():
+                for l in itervalues(depth_map):
                     l.sort(key=lambda x:x.offset)
                 self.periodical_tbs(data, first, depth_map)
         else:
@@ -292,7 +290,7 @@ class TBS(object):  # {{{
                 self.book_tbs(data, first)
 
     def periodical_tbs(self, data, first, depth_map):
-        buf = StringIO()
+        buf = io.BytesIO()
 
         has_section_start = (depth_map[1] and
                 set(depth_map[1]).intersection(set(data['starts'])))
@@ -316,7 +314,7 @@ class TBS(object):  # {{{
             if first_node is not None and first_node.depth > 0:
                 parent_section_index = (first_node.index if first_node.depth == 1 else first_node.parent_index)
             else:
-                parent_section_index = max(self.section_map.iterkeys())
+                parent_section_index = max(iter(self.section_map))
 
         else:
             # Non terminal record
@@ -370,7 +368,7 @@ class TBS(object):  # {{{
 
                 try:
                     next_sec = sections[i+1]
-                except:
+                except Exception:
                     next_sec = None
 
                 extra = {}
@@ -429,7 +427,7 @@ class TBS(object):  # {{{
 # }}}
 
 
-class Indexer(object):  # {{{
+class Indexer:  # {{{
 
     def __init__(self, serializer, number_of_text_records,
             size_of_last_text_record, masthead_offset, is_periodical,
@@ -449,11 +447,10 @@ class Indexer(object):  # {{{
         if self.is_periodical and self.masthead_offset is None:
             raise ValueError('Periodicals must have a masthead')
 
-        self.log('Generating MOBI index for a %s'%('periodical' if
-            self.is_periodical else 'book'))
+        self.log('Generating MOBI index for a {}'.format('periodical' if self.is_periodical else 'book'))
         self.is_flat_periodical = False
         if self.is_periodical:
-            periodical_node = iter(oeb.toc).next()
+            periodical_node = next(iter(oeb.toc))
             sections = tuple(periodical_node)
             self.is_flat_periodical = len(sections) == 1
 
@@ -494,7 +491,7 @@ class Indexer(object):  # {{{
 
     def create_index_record(self, secondary=False):  # {{{
         header_length = 192
-        buf = StringIO()
+        buf = io.BytesIO()
         indices = list(SecondaryIndexEntry.entries()) if secondary else self.indices
 
         # Write index entries
@@ -532,12 +529,12 @@ class Indexer(object):  # {{{
 
         ans = header + body
         if len(ans) > 0x10000:
-            raise ValueError('Too many entries (%d) in the TOC'%len(offsets))
+            raise ValueError(f'Too many entries ({len(offsets)}) in the TOC')
         return ans
     # }}}
 
     def create_header(self, secondary=False):  # {{{
-        buf = StringIO()
+        buf = io.BytesIO()
         if secondary:
             tagx_block = TAGX().secondary
         else:
@@ -601,7 +598,7 @@ class Indexer(object):  # {{{
 
         # The index of the last entry in the NCX
         idx = indices[-1].index
-        if isinstance(idx, int):
+        if isinstance(idx, numbers.Integral):
             idx = encode_number_as_hex(idx)
         else:
             idx = idx.encode('ascii')
@@ -638,9 +635,8 @@ class Indexer(object):  # {{{
             try:
                 offset = id_offsets[node.href]
                 label = self.cncx[node.title]
-            except:
-                self.log.warn('TOC item %s [%s] not found in document'%(
-                    node.title, node.href))
+            except Exception:
+                self.log.warn(f'TOC item {node.title} [{node.href}] not found in document')
                 continue
 
             if offset in seen:
@@ -655,7 +651,7 @@ class Indexer(object):  # {{{
         for i, index in enumerate(indices):
             try:
                 next_offset = indices[i+1].offset
-            except:
+            except Exception:
                 next_offset = self.serializer.body_end_offset
             index.length = next_offset - index.offset
 
@@ -666,7 +662,7 @@ class Indexer(object):  # {{{
         for i, index in enumerate(indices):
             try:
                 next_offset = indices[i+1].offset
-            except:
+            except Exception:
                 next_offset = self.serializer.body_end_offset
             index.length = next_offset - index.offset
 
@@ -679,7 +675,7 @@ class Indexer(object):  # {{{
     # }}}
 
     def create_periodical_index(self):  # {{{
-        periodical_node = iter(self.oeb.toc).next()
+        periodical_node = next(iter(self.oeb.toc))
         periodical_node_offset = self.serializer.body_start_offset
         periodical_node_size = (self.serializer.body_end_offset -
                 periodical_node_offset)
@@ -704,7 +700,7 @@ class Indexer(object):  # {{{
                 offset = id_offsets[sec.href]
                 label = self.cncx[sec.title]
                 klass = self.cncx[sec.klass]
-            except:
+            except Exception:
                 continue
             if offset in seen_sec_offsets:
                 continue
@@ -718,7 +714,7 @@ class Indexer(object):  # {{{
                     offset = id_offsets[art.href]
                     label = self.cncx[art.title]
                     klass = self.cncx[art.klass]
-                except:
+                except Exception:
                     continue
                 if offset in seen_art_offsets:
                     continue
@@ -746,12 +742,12 @@ class Indexer(object):  # {{{
             sec, normalized_articles = x
             try:
                 sec.length = normalized_sections[s+1][0].offset - sec.offset
-            except:
+            except Exception:
                 sec.length = self.serializer.body_end_offset - sec.offset
             for i, art in enumerate(normalized_articles):
                 try:
                     art.length = normalized_articles[i+1].offset - art.offset
-                except:
+                except Exception:
                     art.length = sec.offset + sec.length - art.offset
 
         # Filter
@@ -787,14 +783,14 @@ class Indexer(object):  # {{{
             sec, articles = x
             try:
                 next_offset = normalized_sections[s+1][0].offset
-            except:
+            except Exception:
                 next_offset = self.serializer.body_end_offset
             sec.length = next_offset - sec.offset
 
             for a, art in enumerate(articles):
                 try:
                     next_offset = articles[a+1].offset
-                except:
+                except Exception:
                     next_offset = sec.next_offset
                 art.length = next_offset - art.offset
 
@@ -803,7 +799,7 @@ class Indexer(object):  # {{{
             sec, articles = x
             try:
                 next_sec = normalized_sections[s+1][0]
-            except:
+            except Exception:
                 if (sec.length == 0 or sec.next_offset !=
                         self.serializer.body_end_offset):
                     raise ValueError('Invalid section layout')
@@ -813,7 +809,7 @@ class Indexer(object):  # {{{
             for a, art in enumerate(articles):
                 try:
                     next_art = articles[a+1]
-                except:
+                except Exception:
                     if (art.length == 0 or art.next_offset !=
                             sec.next_offset):
                         raise ValueError('Invalid article layout')
@@ -844,7 +840,7 @@ class Indexer(object):  # {{{
 
         deepest = max(i.depth for i in self.indices)
 
-        for i in xrange(self.number_of_text_records):
+        for i in range(self.number_of_text_records):
             offset = i * RECORD_SIZE
             next_offset = offset + RECORD_SIZE
             data = {'ends':[], 'completes':[], 'starts':[],
@@ -890,5 +886,3 @@ class Indexer(object):  # {{{
     # }}}
 
 # }}}
-
-

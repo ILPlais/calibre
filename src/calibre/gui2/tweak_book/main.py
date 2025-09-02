@@ -1,18 +1,16 @@
-#!/usr/bin/env python2
-# vim:fileencoding=utf-8
-from __future__ import absolute_import, division, print_function, unicode_literals
+#!/usr/bin/env python
+
 
 import importlib
 import os
 import sys
 import time
 
-from PyQt5.Qt import QIcon
+from qt.core import QIcon
 
-from calibre.constants import EDITOR_APP_UID, islinux, iswindows
-from calibre.gui2 import (
-    Application, decouple, set_app_uid, set_gui_prefs, setup_gui_option_parser
-)
+from calibre.constants import EDITOR_APP_UID, islinux, ismacos
+from calibre.ebooks.oeb.polish.check.css import shutdown as shutdown_css_check_pool
+from calibre.gui2 import Application, decouple, set_gui_prefs, setup_gui_option_parser
 from calibre.ptempfile import reset_base_dir
 from calibre.utils.config import OptionParser
 
@@ -26,22 +24,14 @@ def option_parser():
             '''\
 %prog [opts] [path_to_ebook] [name_of_file_inside_book ...]
 
-Launch the calibre edit book tool. You can optionally also specify the names of
+Launch the calibre Edit book tool. You can optionally also specify the names of
 files inside the book which will be opened for editing automatically.
 '''
         )
     )
     setup_gui_option_parser(parser)
+    parser.add_option('--select-text', default=None, help=_('The text to select in the book when it is opened for editing'))
     return parser
-
-
-class EventAccumulator(object):
-
-    def __init__(self):
-        self.events = []
-
-    def __call__(self, ev):
-        self.events.append(ev)
 
 
 def gui_main(path=None, notify=None):
@@ -49,15 +39,11 @@ def gui_main(path=None, notify=None):
 
 
 def _run(args, notify=None):
+    from calibre.utils.webengine import setup_fake_protocol
     # Ensure we can continue to function if GUI is closed
     os.environ.pop('CALIBRE_WORKER_TEMP_DIR', None)
     reset_base_dir()
-
-    if iswindows:
-        # Ensure that all ebook editor instances are grouped together in the task
-        # bar. This prevents them from being grouped with viewer process when
-        # launched from within calibre, as both use calibre-parallel.exe
-        set_app_uid(EDITOR_APP_UID)
+    setup_fake_protocol()
 
     # The following two lines are needed to prevent circular imports causing
     # errors during initialization of plugins that use the polish container
@@ -69,23 +55,33 @@ def _run(args, notify=None):
     parser = option_parser()
     opts, args = parser.parse_args(args)
     decouple('edit-book-'), set_gui_prefs(tprefs)
-    override = 'calibre-edit-book' if islinux else None
-    app = Application(args, override_program_name=override, color_prefs=tprefs)
-    app.file_event_hook = EventAccumulator()
+    override = 'calibre-ebook-edit' if islinux else None
+    app = Application(args, override_program_name=override, color_prefs=tprefs, windows_app_uid=EDITOR_APP_UID)
+    from calibre.utils.webengine import setup_default_profile
+    setup_default_profile()
     app.load_builtin_fonts()
-    app.setWindowIcon(QIcon(I('tweak.png')))
+    if not ismacos:
+        app.setWindowIcon(QIcon.ic('tweak.png'))
     main = Main(opts, notify=notify)
     main.set_exception_handler()
     main.show()
     app.shutdown_signal_received.connect(main.boss.quit)
     if len(args) > 1:
-        main.boss.open_book(args[1], edit_file=args[2:], clear_notify_data=False)
+        main.boss.open_book(args[1], edit_file=args[2:], clear_notify_data=False, search_text=opts.select_text)
     else:
-        for path in reversed(app.file_event_hook.events):
-            main.boss.open_book(path)
-            break
-        app.file_event_hook = main.boss.open_book
-    app.exec_()
+        paths = app.get_pending_file_open_events()
+        if paths:
+            if len(paths) > 1:
+                from .boss import open_path_in_new_editor_instance
+                for path in paths[1:]:
+                    try:
+                        open_path_in_new_editor_instance(path)
+                    except Exception:
+                        import traceback
+                        traceback.print_exc()
+            main.boss.open_book(paths[0])
+    app.file_event_hook = main.boss.open_book
+    app.exec()
     # Ensure that the parse worker has quit so that temp files can be deleted
     # on windows
     st = time.time()
@@ -95,7 +91,10 @@ def _run(args, notify=None):
 
 
 def main(args=sys.argv):
-    _run(args)
+    try:
+        _run(args)
+    finally:
+        shutdown_css_check_pool()
 
 
 if __name__ == '__main__':

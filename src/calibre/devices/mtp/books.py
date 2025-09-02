@@ -1,7 +1,5 @@
-#!/usr/bin/env python2
-# vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:fdm=marker:ai
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
+#!/usr/bin/env python
+
 
 __license__   = 'GPL v3'
 __copyright__ = '2012, Kovid Goyal <kovid at kovidgoyal.net>'
@@ -14,6 +12,7 @@ from calibre.ebooks.metadata import title_sort
 from calibre.ebooks.metadata.book.base import Metadata
 from calibre.ebooks.metadata.book.json_codec import JsonCodec
 from calibre.utils.date import utcnow
+from calibre.utils.icu import lower as icu_lower
 
 
 class BookList(BL):
@@ -47,7 +46,7 @@ class Book(Metadata):
         Metadata.__init__(self, _('Unknown'), other=other)
         self.storage_id, self.lpath = storage_id, lpath
         self.lpath = self.path = self.lpath.replace(os.sep, '/')
-        self.mtp_relpath = tuple([icu_lower(x) for x in self.lpath.split('/')])
+        self.mtp_relpath = tuple(icu_lower(x) for x in self.lpath.split('/'))
         self.datetime = utcnow().timetuple()
         self.thumbail = None
 
@@ -75,4 +74,3 @@ class Book(Metadata):
 
 class JSONCodec(JsonCodec):
     pass
-

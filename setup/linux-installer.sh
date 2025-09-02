@@ -47,40 +47,57 @@ echo Using python executable: $PYTHON
 $PYTHON -c "import sys; script_launch=lambda:sys.exit('Download of installer failed!'); exec(sys.stdin.read()); script_launch()" "$@" <<'CALIBRE_LINUX_INSTALLER_HEREDOC'
 # {{{
 # HEREDOC_START
-#!/usr/bin/env python2
+#!/usr/bin/env python
 # vim:fileencoding=utf-8
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
+# License: GPLv3 Copyright: 2009, Kovid Goyal <kovid at kovidgoyal.net>
+from __future__ import absolute_import, division, print_function, unicode_literals
 
-__license__   = 'GPL v3'
-__copyright__ = '2009, Kovid Goyal <kovid@kovidgoyal.net>'
-__docformat__ = 'restructuredtext en'
-
-import sys, os, shutil, subprocess, re, platform, signal, tempfile, hashlib, errno
-import ssl, socket, stat
+import errno
+import hashlib
+import os
+import platform
+import re
+import shutil
+import signal
+import socket
+import ssl
+import stat
+import subprocess
+import sys
+import tempfile
 from contextlib import closing
 
 is64bit = platform.architecture()[0] == '64bit'
-DLURL = 'https://calibre-ebook.com/dist/linux'+('64' if is64bit else '32')
-DLURL = os.environ.get('CALIBRE_INSTALLER_LOCAL_URL', DLURL)
 py3 = sys.version_info[0] > 2
 enc = getattr(sys.stdout, 'encoding', 'utf-8') or 'utf-8'
 if enc.lower() == 'ascii':
     enc = 'utf-8'
-calibre_version = signature = None
-urllib = __import__('urllib.request' if py3 else 'urllib', fromlist=1)
+dl_url = calibre_version = signature = None
 has_ssl_verify = hasattr(ssl, 'create_default_context')
+is_linux_arm = is_linux_arm64 = False
+machine = (os.uname()[4] or '').lower()
+arch = 'x86_64'
+if machine.startswith('arm') or machine.startswith('aarch64'):
+    is_linux_arm = True
+    is_linux_arm64 = machine.startswith('arm64') or machine.startswith('aarch64')
+    arch = 'arm64'
+
 
 if py3:
     unicode = str
     raw_input = input
-    from urllib.parse import urlparse
     import http.client as httplib
-    encode_for_subprocess = lambda x:x
+    from urllib.parse import urlparse
+    from urllib.request import BaseHandler, Request, addinfourl, build_opener, getproxies, urlopen
+    def encode_for_subprocess(x):
+        return x
 else:
-    from future_builtins import map
-    from urlparse import urlparse
+    from urllib import addinfourl, getproxies, urlopen
+
     import httplib
+    from future_builtins import map
+    from urllib2 import BaseHandler, Request, build_opener
+    from urlparse import urlparse
 
     def encode_for_subprocess(x):
         if isinstance(x, unicode):
@@ -205,7 +222,7 @@ class TerminalController:  # {{{
         if isinstance(cap_name, bytes):
             cap_name = cap_name.decode('utf-8')
         cap = self._escape_code(curses.tigetstr(cap_name))
-        return re.sub(r'\$<\d+>[/*]?', b'', cap)
+        return re.sub(r'\$<\d+>[/*]?', '', cap)
 
     def render(self, template):
         return re.sub(r'\$\$|\${\w+}', self._render_sub, template)
@@ -315,33 +332,38 @@ def check_signature(dest, signature):
         return raw
 
 
-class URLOpener(urllib.FancyURLopener):
+class RangeHandler(BaseHandler):
 
-    def http_error_206(self, url, fp, errcode, errmsg, headers, data=None):
-        ''' 206 means partial content, ignore it '''
-        pass
+    def http_error_206(self, req, fp, code, msg, hdrs):
+        # 206 Partial Content Response
+        r = addinfourl(fp, hdrs, req.get_full_url())
+        r.code = code
+        r.msg = msg
+        return r
+    https_error_206 = http_error_206
 
 
 def do_download(dest):
     prints('Will download and install', os.path.basename(dest))
     reporter = Reporter(os.path.basename(dest))
     offset = 0
-    urlopener = URLOpener()
     if os.path.exists(dest):
         offset = os.path.getsize(dest)
 
     # Get content length and check if range is supported
-    rq = urllib.urlopen(DLURL)
+    rq = urlopen(dl_url)
     headers = rq.info()
     size = int(headers['content-length'])
     accepts_ranges = headers.get('accept-ranges', None) == 'bytes'
     mode = 'wb'
     if accepts_ranges and offset > 0:
-        rurl = rq.geturl()
+        req = Request(rq.geturl())
+        req.add_header('Range', 'bytes=%s-'%offset)
         mode = 'ab'
         rq.close()
-        urlopener.addheader('Range', 'bytes=%s-'%offset)
-        rq = urlopener.open(rurl)
+        handler = RangeHandler()
+        opener = build_opener(handler)
+        rq = opener.open(req)
     with open(dest, mode) as f:
         while f.tell() < size:
             raw = rq.read(8192)
@@ -351,15 +373,13 @@ def do_download(dest):
             reporter(f.tell(), 1, size)
     rq.close()
     if os.path.getsize(dest) < size:
-        print ('Download failed, try again later')
+        print('Download failed, try again later')
         raise SystemExit(1)
     prints('Downloaded %s bytes'%os.path.getsize(dest))
 
 
 def download_tarball():
-    fname = 'calibre-%s-i686.%s'%(calibre_version, 'txz')
-    if is64bit:
-        fname = fname.replace('i686', 'x86_64')
+    fname = 'calibre-%s-%s.%s'%(calibre_version, arch, 'txz')
     tdir = tempfile.gettempdir()
     cache = os.path.join(tdir, 'calibre-installer-cache')
     if not os.path.exists(cache):
@@ -368,7 +388,7 @@ def download_tarball():
     dest = os.path.join(cache, fname)
     raw = check_signature(dest, signature)
     if raw is not None:
-        print ('Using previously downloaded', fname)
+        print('Using previously downloaded', fname)
         return raw
     cached_sigf = dest +'.signature'
     cached_sig = None
@@ -383,7 +403,7 @@ def download_tarball():
     except IOError as e:
         if e.errno != errno.EACCES:
             raise
-        print ('The installer cache directory has incorrect permissions.'
+        print('The installer cache directory has incorrect permissions.'
                 ' Delete %s and try again.'%cache)
         raise SystemExit(1)
     do_download(dest)
@@ -391,7 +411,7 @@ def download_tarball():
     raw = check_signature(dest, signature)
     if raw is None:
         os.remove(dest)
-        print ('The downloaded files\' signature does not match. '
+        print('The downloaded files\' signature does not match. '
                 'Try the download again later.')
         raise SystemExit(1)
     return raw
@@ -401,7 +421,7 @@ def download_tarball():
 # Get tarball signature securely {{{
 
 def get_proxies(debug=True):
-    proxies = urllib.getproxies()
+    proxies = getproxies()
     for key, proxy in list(proxies.items()):
         if not proxy or '..' in proxy:
             del proxies[key]
@@ -544,6 +564,8 @@ if has_ssl_verify:
 
         def __init__(self, ssl_version, *args, **kwargs):
             kwargs['context'] = ssl.create_default_context(cafile=kwargs.pop('cert_file'))
+            if hasattr(ssl, 'VERIFY_X509_STRICT'):
+                kwargs['context'].verify_flags &= ~ssl.VERIFY_X509_STRICT
             httplib.HTTPSConnection.__init__(self, *args, **kwargs)
 else:
     class HTTPSConnection(httplib.HTTPSConnection):
@@ -680,19 +702,33 @@ def extract_tarball(raw, destdir):
             raise SystemExit(1)
 
 
-def get_tarball_info():
-    global signature, calibre_version
-    print ('Downloading tarball signature securely...')
-    raw = get_https_resource_securely(
-            'https://code.calibre-ebook.com/tarball-info/' + ('x86_64' if is64bit else 'i686'))
-    signature, calibre_version = raw.rpartition(b'@')[::2]
+def get_tarball_info(version):
+    global dl_url, signature, calibre_version
+    print('Downloading tarball signature securely...')
+    if version:
+        sigfname = 'calibre-' + version + '-' + arch + '.txz.sha512'
+        try:
+            signature = get_https_resource_securely('https://code.calibre-ebook.com/signatures/' + sigfname)
+        except HTTPError as err:
+            if err.code != 404:
+                raise
+            signature = get_https_resource_securely('https://code.calibre-ebook.com/signatures/old/' + sigfname)
+        calibre_version = version
+        dl_url = 'https://download.calibre-ebook.com/' + version + '/calibre-' + version + '-' + arch + '.txz'
+    else:
+        raw = get_https_resource_securely(
+                'https://code.calibre-ebook.com/tarball-info/' + arch)
+        signature, calibre_version = raw.rpartition(b'@')[::2]
+        dl_url = 'https://calibre-ebook.com/dist/linux-' + arch
     if not signature or not calibre_version:
         raise ValueError('Failed to get install file signature, invalid signature returned')
-    calibre_version = calibre_version.decode('utf-8')
+    dl_url = os.environ.get('CALIBRE_INSTALLER_LOCAL_URL', dl_url)
+    if isinstance(calibre_version, bytes):
+        calibre_version = calibre_version.decode('utf-8')
 
 
-def download_and_extract(destdir):
-    get_tarball_info()
+def download_and_extract(destdir, version):
+    get_tarball_info(version)
     raw = download_tarball()
 
     if os.path.exists(destdir):
@@ -703,13 +739,7 @@ def download_and_extract(destdir):
     extract_tarball(raw, destdir)
 
 
-def check_version():
-    global calibre_version
-    if calibre_version == '%version':
-        calibre_version = urllib.urlopen('http://code.calibre-ebook.com/latest').read()
-
-
-def run_installer(install_dir, isolated, bin_dir, share_dir):
+def run_installer(install_dir, isolated, bin_dir, share_dir, version):
     destdir = os.path.abspath(os.path.expanduser(install_dir or '/opt'))
     if destdir == '/usr/bin':
         prints(destdir, 'is not a valid install location. Choose', end='')
@@ -720,9 +750,9 @@ def run_installer(install_dir, isolated, bin_dir, share_dir):
         if not os.path.isdir(destdir):
             prints(destdir, 'exists and is not a directory. Choose a location like /opt or /usr/local')
             return 1
-    print ('Installing to', destdir)
+    print('Installing to', destdir)
 
-    download_and_extract(destdir)
+    download_and_extract(destdir, version)
 
     if not isolated:
         pi = [os.path.join(destdir, 'calibre_postinstall')]
@@ -770,16 +800,97 @@ def check_umask():
             raise SystemExit('The system umask is unsuitable, aborting')
 
 
-def main(install_dir=None, isolated=False, bin_dir=None, share_dir=None, ignore_umask=False):
+def check_for_libEGL():
+    import ctypes
+    try:
+        ctypes.CDLL('libEGL.so.1')
+        return
+    except Exception:
+        pass
+    raise SystemExit('You are missing the system library libEGL.so.1. Try installing packages such as libegl1 and libopengl0')
+
+
+def check_for_libOpenGl():
+    import ctypes
+    try:
+        ctypes.CDLL('libOpenGL.so.0')
+        return
+    except Exception:
+        pass
+    raise SystemExit('You are missing the system library libOpenGL.so.0. Try installing packages such as libopengl0')
+
+
+def check_for_libxcb_cursor():
+    import ctypes
+    try:
+        ctypes.CDLL('libxcb-cursor.so.0')
+        return
+    except Exception:
+        pass
+    raise SystemExit('You are missing the system library libxcb-cursor.so.0. Try installing packages such as libxcb-cursor0 or xcb-cursor')
+
+
+def check_glibc_version(min_required=(2, 31), release_date='2020-02-01'):
+    # See https://sourceware.org/glibc/wiki/Glibc%20Timeline
+    import ctypes
+    libc = ctypes.CDLL(None)
+    try:
+        f = libc.gnu_get_libc_version
+    except AttributeError:
+        raise SystemExit('Your system is not based on GNU libc. The calibre binaries require GNU libc')
+    f.restype = ctypes.c_char_p
+    ver = f().decode('ascii')
+    q = tuple(map(int, ver.split('.')))
+    if q < min_required:
+        raise SystemExit(
+            ('Your system has GNU libc version {}. The calibre binaries require at least'
+            ' version: {} (released on {}). Update your system.'
+        ).format(ver, '.'.join(map(str, min_required)), release_date))
+
+
+def check_for_recent_freetype():
+    import ctypes
+    f = None
+    try:
+        f = ctypes.CDLL('libfreetype.so.6')
+    except OSError:
+        raise SystemExit('Your system is missing the FreeType library libfreetype.so. Try installing the freetype package.')
+    try:
+        f.FT_Get_Color_Glyph_Paint
+    except AttributeError:
+        raise SystemExit('Your system has too old a version of the FreeType library.'
+                         ' freetype >= 2.11 is needed for the FT_Get_Color_Glyph_Paint function which is required by Qt WebEngine')
+
+
+def main(install_dir=None, isolated=False, bin_dir=None, share_dir=None, ignore_umask=False, version=None):
     if not ignore_umask and not isolated:
         check_umask()
-    machine = os.uname()[4]
-    if machine and machine.lower().startswith('arm'):
+    if (is_linux_arm and not is_linux_arm64) or not is64bit:
         raise SystemExit(
-            'You are running on an ARM system. The calibre binaries are only'
-            ' available for x86 systems. You will have to compile from'
+            'You are running on a 32-bit system. The calibre binaries are only'
+            ' available for 64-bit systems. You will have to compile from'
             ' source.')
-    run_installer(install_dir, isolated, bin_dir, share_dir)
+    glibc_versions = {
+        (6, 0, 0) : {'min_required': (2, 31), 'release_date': '2020-02-01'},
+        (7, 17, 0) : {'min_required': (2, 35), 'release_date': '2022-02-03'}
+    }
+    if is_linux_arm64:
+        glibc_versions.update({
+            (6, 8, 0) : {'min_required': (2, 34), 'release_date': '2021-08-02'}
+        })
+    q = tuple(map(int, version.split('.'))) if version else (sys.maxsize, 999, 999)
+    for key in sorted(glibc_versions, reverse=True):
+        if q >= key:
+            check_glibc_version(**glibc_versions[key])
+            break
+    if q[0] >= 6:
+        check_for_libEGL()
+        check_for_libOpenGl()
+    if q[0] >= 7:
+        check_for_libxcb_cursor()
+    if q >= (7, 16, 0):
+        check_for_recent_freetype()
+    run_installer(install_dir, isolated, bin_dir, share_dir, version)
 
 
 try:
@@ -789,14 +900,15 @@ except NameError:
     from_file = False
 
 
-def update_intaller_wrapper():
-    # To run: python3 -c "import runpy; runpy.run_path('setup/linux-installer.py', run_name='update_wrapper')"
-    src = open(__file__, 'rb').read().decode('utf-8')
+def update_installer_wrapper():
+    # To update: python3 -c "import runpy; runpy.run_path('setup/linux-installer.py', run_name='update_wrapper')"
+    with open(__file__, 'rb') as f:
+        src = f.read().decode('utf-8')
     wrapper = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'linux-installer.sh')
     with open(wrapper, 'r+b') as f:
         raw = f.read().decode('utf-8')
         nraw = re.sub(r'^# HEREDOC_START.+^# HEREDOC_END', lambda m: '# HEREDOC_START\n{}\n# HEREDOC_END'.format(src), raw, flags=re.MULTILINE | re.DOTALL)
-        if 'update_intaller_wrapper()' not in nraw:
+        if 'update_installer_wrapper()' not in nraw:
             raise SystemExit('regex substitute of HEREDOC failed')
         f.seek(0), f.truncate()
         f.write(nraw.encode('utf-8'))
@@ -809,7 +921,7 @@ def script_launch():
     def to_bool(x):
         return x.lower() in ('y', 'yes', '1', 'true')
 
-    type_map = {x: path for x in 'install_dir isolated bin_dir share_dir ignore_umask'.split()}
+    type_map = {x: path for x in 'install_dir isolated bin_dir share_dir ignore_umask version'.split()}
     type_map['isolated'] = type_map['ignore_umask'] = to_bool
     kwargs = {}
 
@@ -828,7 +940,7 @@ def script_launch():
 if __name__ == '__main__' and from_file:
     main()
 elif __name__ == 'update_wrapper':
-    update_intaller_wrapper()
+    update_installer_wrapper()
 
 # HEREDOC_END
 # }}}

@@ -1,21 +1,21 @@
-#!/usr/bin/env python2
-# vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:fdm=marker:ai
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
+#!/usr/bin/env python
+
 
 __license__   = 'GPL v3'
 __copyright__ = '2012, Kovid Goyal <kovid at kovidgoyal.net>'
 __docformat__ = 'restructuredtext en'
 
-import unittest, gc, io
+import gc
+import io
+import unittest
 
-from calibre.constants import iswindows, islinux
-from calibre.utils.icu import lower
+from calibre.constants import islinux, iswindows
 from calibre.devices.mtp.driver import MTP_DEVICE
 from calibre.devices.scanner import DeviceScanner
+from calibre.utils.icu import lower
 
 
-class ProgressCallback(object):
+class ProgressCallback:
 
     def __init__(self):
         self.count = 0
@@ -172,9 +172,9 @@ class TestDeviceInteraction(unittest.TestCase):
         gc.disable()
         try:
             start_mem = memory()
-            for i in xrange(repetitions):
+            for i in range(repetitions):
                 func(*args, **kwargs)
-            for i in xrange(3):
+            for i in range(3):
                 gc.collect()
             end_mem = memory()
         finally:
@@ -182,7 +182,7 @@ class TestDeviceInteraction(unittest.TestCase):
         return end_mem - start_mem
 
     def check_memory(self, once, many, msg, factor=2):
-        msg += ' for once: %g for many: %g'%(once, many)
+        msg += f' for once: {once:g} for many: {many:g}'
         if once > 0:
             self.assertTrue(many <= once*factor, msg=msg)
         else:
@@ -262,6 +262,6 @@ def tests():
 def run():
     unittest.TextTestRunner(verbosity=2).run(tests())
 
+
 if __name__ == '__main__':
     run()
-

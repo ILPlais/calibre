@@ -1,17 +1,16 @@
-#!/usr/bin/env python2
-# vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
-from __future__ import with_statement
+#!/usr/bin/env python
+
 
 __license__   = 'GPL v3'
 __copyright__ = '2009, Kovid Goyal <kovid@kovidgoyal.net>'
 __docformat__ = 'restructuredtext en'
 
-from PyQt5.Qt import Qt, QAbstractListModel, QModelIndex
+from qt.core import QAbstractListModel, QItemSelectionModel, QModelIndex, Qt
 
-from calibre.gui2.convert.page_setup_ui import Ui_Form
-from calibre.gui2.convert import Widget
 from calibre.customize.ui import input_profiles, output_profiles
 from calibre.ebooks.conversion.config import OPTIONS
+from calibre.gui2.convert import Widget
+from calibre.gui2.convert.page_setup_ui import Ui_Form
 
 
 class ProfileModel(QAbstractListModel):
@@ -25,16 +24,18 @@ class ProfileModel(QAbstractListModel):
 
     def data(self, index, role):
         profile = self.profiles[index.row()]
-        if role == Qt.DisplayRole:
-            return (profile.name)
-        if role in (Qt.ToolTipRole, Qt.StatusTipRole, Qt.WhatsThisRole):
+        if role == Qt.ItemDataRole.DisplayRole:
+            if profile.name.startswith('Default '):
+                return _('Default profile')
+            return __builtins__['_'](profile.name)
+        if role in (Qt.ItemDataRole.StatusTipRole, Qt.ItemDataRole.WhatsThisRole):
             w, h = profile.screen_size
             if w >= 10000:
                 ss = _('unlimited')
             else:
                 ss = _('%(width)d x %(height)d pixels') % dict(width=w, height=h)
             ss = _('Screen size: %s') % ss
-            return ('%s [%s]' % (profile.description, ss))
+            return (f'{profile.description} [{ss}]')
         return None
 
 
@@ -60,13 +61,11 @@ class PageSetupWidget(Widget, Ui_Form):
             x.setMouseTracking(True)
             x.entered[(QModelIndex)].connect(self.show_desc)
         self.initialize_options(get_option, get_help, db, book_id)
-        it = unicode(self.opt_input_profile.toolTip())
-        self.opt_input_profile.setToolTip('<p>'+it.replace('t.','t.\n<br>'))
-        it = unicode(self.opt_output_profile.toolTip())
-        self.opt_output_profile.setToolTip('<p>'+it.replace('t.','ce.\n<br>'))
+        self.opt_input_profile.setToolTip('')
+        self.opt_output_profile.setToolTip('')
 
     def show_desc(self, index):
-        desc = unicode(index.model().data(index, Qt.StatusTipRole) or '')
+        desc = str(index.model().data(index, Qt.ItemDataRole.StatusTipRole) or '')
         self.profile_description.setText(desc)
 
     def connect_gui_obj_handler(self, g, slot):
@@ -83,7 +82,7 @@ class PageSetupWidget(Widget, Ui_Form):
             idx = g.model().index(idx)
             sm = g.selectionModel()
             g.setCurrentIndex(idx)
-            sm.select(idx, sm.SelectCurrent)
+            sm.select(idx, QItemSelectionModel.SelectionFlag.SelectCurrent)
             return True
         return False
 

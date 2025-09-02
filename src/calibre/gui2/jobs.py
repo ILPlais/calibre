@@ -1,4 +1,6 @@
-#!/usr/bin/env  python2
+#!/usr/bin/env python
+
+
 __license__   = 'GPL v3'
 __copyright__ = '2008, Kovid Goyal kovid@kovidgoyal.net'
 __docformat__ = 'restructuredtext en'
@@ -7,29 +9,57 @@ __docformat__ = 'restructuredtext en'
 Job management.
 '''
 
-import re, time
-from Queue import Empty, Queue
+import time
 
-from PyQt5.Qt import (QAbstractTableModel, QModelIndex, Qt, QPainter,
-    QTimer, pyqtSignal, QIcon, QDialog, QAbstractItemDelegate, QApplication,
-    QSize, QStyleOptionProgressBar, QStyle, QToolTip, QWidget, QStyleOption,
-    QHBoxLayout, QVBoxLayout, QSizePolicy, QLabel, QCoreApplication, QAction,
-    QByteArray, QSortFilterProxyModel, QTextBrowser, QPlainTextEdit)
+from qt.core import (
+    QAbstractItemDelegate,
+    QAbstractTableModel,
+    QAction,
+    QApplication,
+    QByteArray,
+    QCoreApplication,
+    QDialog,
+    QDialogButtonBox,
+    QEvent,
+    QHBoxLayout,
+    QIcon,
+    QItemSelectionModel,
+    QKeySequence,
+    QLabel,
+    QModelIndex,
+    QPlainTextEdit,
+    QSize,
+    QSizePolicy,
+    QSortFilterProxyModel,
+    QStyle,
+    QStyleOption,
+    QStyleOptionProgressBar,
+    QStylePainter,
+    Qt,
+    QTextBrowser,
+    QTimer,
+    QToolTip,
+    QVBoxLayout,
+    QWidget,
+    pyqtSignal,
+)
 
-from calibre import strftime
-from calibre.constants import islinux, isbsd
-from calibre.utils.ipc.server import Server
-from calibre.utils.ipc.job import ParallelJob
-from calibre.gui2 import (Dispatcher, error_dialog, question_dialog,
-        config, gprefs)
+from calibre import __appname__, as_unicode, strftime
+from calibre.constants import isbsd, islinux
+from calibre.db.utils import human_readable_interval
+from calibre.gui2 import Dispatcher, config, error_dialog, gprefs, question_dialog
 from calibre.gui2.device import DeviceJob
 from calibre.gui2.dialogs.jobs_ui import Ui_JobsDialog
-from calibre import __appname__, as_unicode
 from calibre.gui2.progress_indicator import ProgressIndicator
-from calibre.gui2.threaded_jobs import ThreadedJobServer, ThreadedJob
+from calibre.gui2.threaded_jobs import ThreadedJob, ThreadedJobServer
 from calibre.gui2.widgets2 import Dialog
-from calibre.utils.search_query_parser import SearchQueryParser, ParseException
+from calibre.startup import connect_lambda
 from calibre.utils.icu import lower
+from calibre.utils.ipc.job import ParallelJob
+from calibre.utils.ipc.server import Server
+from calibre.utils.localization import ngettext
+from calibre.utils.search_query_parser import ParseException, SearchQueryParser
+from polyglot.queue import Empty, Queue
 
 
 class AdaptSQP(SearchQueryParser):
@@ -38,47 +68,30 @@ class AdaptSQP(SearchQueryParser):
         pass
 
 
-def human_readable_interval(secs):
-    secs = int(secs)
-    days = secs // 86400
-    hours = secs // 3600 % 24
-    minutes = secs // 60 % 60
-    seconds = secs % 60
-    parts = []
-    if days > 0:
-        parts.append('%dd' % days)
-    if hours > 0:
-        parts.append('%dh' % hours)
-    if minutes > 0:
-        parts.append('%dm' % minutes)
-    if secs > 0:
-        parts.append('%ds' % seconds)
-    return ' '.join(parts)
-
-
 class JobManager(QAbstractTableModel, AdaptSQP):  # {{{
 
     job_added = pyqtSignal(int)
     job_done  = pyqtSignal(int)
 
     def __init__(self):
+        self.header_titles = _('Job'), _('Status'), _('Progress'), _('Running time'), _('Start time')
         QAbstractTableModel.__init__(self)
         SearchQueryParser.__init__(self, ['all'])
 
-        self.wait_icon     = (QIcon(I('jobs.png')))
-        self.running_icon  = (QIcon(I('exec.png')))
-        self.error_icon    = (QIcon(I('dialog_error.png')))
-        self.done_icon     = (QIcon(I('ok.png')))
+        self.wait_icon     = (QIcon.ic('jobs.png'))
+        self.running_icon  = (QIcon.ic('exec.png'))
+        self.error_icon    = (QIcon.ic('dialog_error.png'))
+        self.done_icon     = (QIcon.ic('ok.png'))
 
         self.jobs          = []
         self.add_job       = Dispatcher(self._add_job)
-        self.server        = Server(limit=int(config['worker_limit']/2.0),
+        self.server        = Server(limit=config['worker_limit']//2,
                                 enforce_cpu_limit=config['enforce_cpu_limit'])
         self.threaded_server = ThreadedJobServer()
         self.changed_queue = Queue()
 
         self.timer         = QTimer(self)
-        self.timer.timeout.connect(self.update, type=Qt.QueuedConnection)
+        self.timer.timeout.connect(self.update, type=Qt.ConnectionType.QueuedConnection)
         self.timer.start(1000)
 
     def columnCount(self, parent=QModelIndex()):
@@ -88,18 +101,13 @@ class JobManager(QAbstractTableModel, AdaptSQP):  # {{{
         return len(self.jobs)
 
     def headerData(self, section, orientation, role):
-        if role != Qt.DisplayRole:
-            return None
-        if orientation == Qt.Horizontal:
-            return ({
-              0: _('Job'),
-              1: _('Status'),
-              2: _('Progress'),
-              3: _('Running time'),
-              4: _('Start time'),
-            }.get(section, ''))
-        else:
-            return (section+1)
+        if role == Qt.ItemDataRole.DisplayRole:
+            if orientation == Qt.Orientation.Horizontal:
+                try:
+                    return self.header_titles[section]
+                except Exception:
+                    pass
+            return str(section + 1)
 
     def show_tooltip(self, arg):
         widget, pos = arg
@@ -114,7 +122,7 @@ class JobManager(QAbstractTableModel, AdaptSQP):  # {{{
             if not desc:
                 desc = _('Unknown job')
             p = 100. if job.is_finished else job.percent
-            lines.append('%s:  %.0f%% done'%(desc, p))
+            lines.append(f'{desc}:  {p:.0f}% done')
         l = ngettext('There is a waiting job', 'There are {} waiting jobs', len(waiting_jobs)).format(len(waiting_jobs))
         lines.extend(['', l])
         for job in waiting_jobs:
@@ -126,12 +134,12 @@ class JobManager(QAbstractTableModel, AdaptSQP):  # {{{
 
     def data(self, index, role):
         try:
-            if role not in (Qt.DisplayRole, Qt.DecorationRole):
+            if role not in (Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.DecorationRole):
                 return None
             row, col = index.row(), index.column()
             job = self.jobs[row]
 
-            if role == Qt.DisplayRole:
+            if role == Qt.ItemDataRole.DisplayRole:
                 if col == 0:
                     desc = job.description
                     if not desc:
@@ -148,8 +156,8 @@ class JobManager(QAbstractTableModel, AdaptSQP):  # {{{
                         return None
                     return human_readable_interval(rtime)
                 if col == 4 and job.start_time is not None:
-                    return (strftime(u'%H:%M -- %d %b', time.localtime(job.start_time)))
-            if role == Qt.DecorationRole and col == 0:
+                    return (strftime('%H:%M -- %d %b', time.localtime(job.start_time)))
+            if role == Qt.ItemDataRole.DecorationRole and col == 0:
                 state = job.run_state
                 if state == job.WAITING:
                     return self.wait_icon
@@ -158,7 +166,7 @@ class JobManager(QAbstractTableModel, AdaptSQP):  # {{{
                 if job.killed or job.failed:
                     return self.error_icon
                 return self.done_icon
-        except:
+        except Exception:
             import traceback
             traceback.print_exc()
         return None
@@ -178,7 +186,7 @@ class JobManager(QAbstractTableModel, AdaptSQP):  # {{{
                 self.dataChanged.emit(idx, idx)
 
         # Update parallel jobs
-        jobs = set([])
+        jobs = set()
         while True:
             try:
                 jobs.add(self.server.changed_jobs_queue.get_nowait())
@@ -221,7 +229,7 @@ class JobManager(QAbstractTableModel, AdaptSQP):  # {{{
         # Kill parallel jobs that have gone on too long
         try:
             wmax_time = gprefs['worker_max_time'] * 60
-        except:
+        except Exception:
             wmax_time = 0
 
         if wmax_time > 0:
@@ -278,9 +286,9 @@ class JobManager(QAbstractTableModel, AdaptSQP):  # {{{
         self.add_job(job)
         self.threaded_server.add_job(job)
 
-    def launch_gui_app(self, name, args=[], kwargs={}, description=''):
+    def launch_gui_app(self, name, args=(), kwargs=None, description=''):
         job = ParallelJob(name, description, lambda x: x,
-                args=args, kwargs=kwargs)
+                args=list(args), kwargs=kwargs or {})
         self.server.run_job(job, gui=True, redirect_output=False)
 
     def _kill_job(self, job):
@@ -300,16 +308,16 @@ class JobManager(QAbstractTableModel, AdaptSQP):  # {{{
     def show_hidden_jobs(self):
         for j in self.jobs:
             j.hidden_in_gui = False
-        for r in xrange(len(self.jobs)):
+        for r in range(len(self.jobs)):
             self.dataChanged.emit(self.index(r, 0), self.index(r, 0))
 
     def kill_job(self, job, view):
         if isinstance(job, DeviceJob):
             return error_dialog(view, _('Cannot kill job'),
-                         _('Cannot kill jobs that communicate with the device')).exec_()
+                         _('Cannot kill jobs that communicate with the device')).exec()
         if job.duration is not None:
             return error_dialog(view, _('Cannot kill job'),
-                         _('Job has already run')).exec_()
+                         _('Job has already run')).exec()
         if not getattr(job, 'killable', True):
             return error_dialog(view, _('Cannot kill job'),
                     _('This job cannot be stopped'), show=True)
@@ -319,14 +327,14 @@ class JobManager(QAbstractTableModel, AdaptSQP):  # {{{
         devjobs = [j for j in jobs if isinstance(j, DeviceJob)]
         if devjobs:
             error_dialog(view, _('Cannot kill job'),
-                         _('Cannot kill jobs that communicate with the device')).exec_()
+                         _('Cannot kill jobs that communicate with the device')).exec()
             jobs = [j for j in jobs if not isinstance(j, DeviceJob)]
         jobs = [j for j in jobs if j.duration is None]
         unkillable = [j for j in jobs if not getattr(j, 'killable', True)]
         if unkillable:
-            names = u'\n'.join(as_unicode(j.description) for j in unkillable)
+            names = '\n'.join(as_unicode(j.description) for j in unkillable)
             error_dialog(view, _('Cannot kill job'),
-                    _('Some of the jobs cannot be stopped. Click Show details'
+                    _('Some of the jobs cannot be stopped. Click "Show details"'
                         ' to see the list of unstoppable jobs.'), det_msg=names,
                     show=True)
             jobs = [j for j in jobs if getattr(j, 'killable', True)]
@@ -390,7 +398,7 @@ class FilterModel(QSortFilterProxyModel):  # {{{
         m = self.sourceModel()
         try:
             job = m.row_to_job(source_row)
-        except:
+        except Exception:
             return False
         return not getattr(job, 'hidden_in_gui', False)
 
@@ -409,8 +417,8 @@ class FilterModel(QSortFilterProxyModel):  # {{{
 
 # }}}
 
-# Jobs UI {{{
 
+# Jobs UI {{{
 
 class ProgressBarDelegate(QAbstractItemDelegate):  # {{{
 
@@ -424,12 +432,12 @@ class ProgressBarDelegate(QAbstractItemDelegate):  # {{{
         opts.maximum = 100
         opts.textVisible = True
         try:
-            percent = int(index.model().data(index, Qt.DisplayRole))
+            percent = int(index.model().data(index, Qt.ItemDataRole.DisplayRole))
         except (TypeError, ValueError):
             percent = 0
         opts.progress = percent
-        opts.text = (_('Unavailable') if percent == 0 else '%d%%'%percent)
-        QApplication.style().drawControl(QStyle.CE_ProgressBar, opts, painter)
+        opts.text = (_('Unavailable') if percent == 0 else f'{percent}%')
+        QApplication.style().drawControl(QStyle.ControlElement.CE_ProgressBar, opts, painter)
 # }}}
 
 
@@ -458,12 +466,12 @@ class DetailView(Dialog):  # {{{
             self.tb = w = QTextBrowser(self)
         else:
             self.log = w = QPlainTextEdit(self)
-            w.setReadOnly(True), w.setLineWrapMode(w.NoWrap)
+            w.setReadOnly(True), w.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         l.addWidget(w)
         l.addWidget(self.bb)
-        self.bb.clear(), self.bb.setStandardButtons(self.bb.Close)
-        self.copy_button = b = self.bb.addButton(_('&Copy to clipboard'), self.bb.ActionRole)
-        b.setIcon(QIcon(I('edit-copy.png')))
+        self.bb.clear(), self.bb.setStandardButtons(QDialogButtonBox.StandardButton.Close)
+        self.copy_button = b = self.bb.addButton(_('&Copy to clipboard'), QDialogButtonBox.ButtonRole.ActionRole)
+        b.setIcon(QIcon.ic('edit-copy.png'))
         b.clicked.connect(self.copy_to_clipboard)
         self.next_pos = 0
         self.update()
@@ -480,14 +488,18 @@ class DetailView(Dialog):  # {{{
             if len(html) > self.next_pos:
                 self.next_pos = len(html)
                 self.tb.setHtml(
-                    '<pre style="font-family:monospace">%s</pre>'%html)
+                    f'<pre style="font-family:monospace">{html}</pre>')
         else:
             f = self.job.log_file
             f.seek(self.next_pos)
             more = f.read()
             self.next_pos = f.tell()
             if more:
+                v = self.log.verticalScrollBar()
+                atbottom = v.value() >= v.maximum() - 1
                 self.log.appendPlainText(more.decode('utf-8', 'replace'))
+                if atbottom:
+                    v.setValue(v.maximum())
 # }}}
 
 
@@ -497,34 +509,48 @@ class JobsButton(QWidget):  # {{{
 
     def __init__(self, parent=None):
         QWidget.__init__(self, parent)
+        self.num_jobs = 0
         self.mouse_over = False
-        self.pi = ProgressIndicator(self, self.style().pixelMetric(QStyle.PM_ToolBarIconSize))
-        self._jobs = QLabel('<b>'+_('Jobs:')+' 0 ')
+        self.pi = ProgressIndicator(self, self.style().pixelMetric(QStyle.PixelMetric.PM_ToolBarIconSize))
+        self.pi.setVisible(False)
+        self._jobs = QLabel('')
         self._jobs.mouseReleaseEvent = self.mouseReleaseEvent
+        self.update_label()
         self.shortcut = 'Alt+Shift+J'
 
         self.l = l = QHBoxLayout(self)
         l.setSpacing(3)
         l.addWidget(self.pi)
         l.addWidget(self._jobs)
-        m = self.style().pixelMetric(QStyle.PM_DefaultFrameWidth)
+        m = self.style().pixelMetric(QStyle.PixelMetric.PM_DefaultFrameWidth)
         self.layout().setContentsMargins(m, m, m, m)
-        self._jobs.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Minimum)
-        self.setCursor(Qt.PointingHandCursor)
+        self._jobs.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Minimum)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
         b = _('Click to see list of jobs')
-        self.setToolTip(b + u' [%s]'%self.shortcut)
         self.action_toggle = QAction(b, parent)
         parent.addAction(self.action_toggle)
         self.action_toggle.triggered.connect(self.toggle)
+        self.action_toggle.changed.connect(self.update_tooltip)
         if hasattr(parent, 'keyboard'):
             parent.keyboard.register_shortcut('toggle jobs list', _('Show/hide the Jobs List'), default_keys=(self.shortcut,), action=self.action_toggle)
+        self.update_tooltip()
+
+    def update_tooltip(self):
+        sc = ', '.join(sc.toString(QKeySequence.SequenceFormat.NativeText) for sc in self.action_toggle.shortcuts())
+        self.shortcut = sc or ''
+        self.setToolTip(_('Click to see list of jobs [{}]').format(self.shortcut))
+
+    def update_label(self):
+        n = self.jobs()
+        prefix = '<b>' if n > 0 else ''
+        self._jobs.setText(prefix + ' ' + _('Jobs:') + f' {n} ')
 
     def event(self, ev):
         m = None
         et = ev.type()
-        if et == ev.Enter:
+        if et == QEvent.Type.Enter:
             m = True
-        elif et == ev.Leave:
+        elif et == QEvent.Type.Leave:
             m = False
         if m is not None and m != self.mouse_over:
             self.mouse_over = m
@@ -552,13 +578,14 @@ class JobsButton(QWidget):  # {{{
 
     def start(self):
         self.pi.startAnimation()
+        self.pi.setVisible(True)
 
     def stop(self):
         self.pi.stopAnimation()
+        self.pi.setVisible(False)
 
     def jobs(self):
-        src = unicode(self._jobs.text())
-        return int(re.search(r'\d+', src).group())
+        return self.num_jobs
 
     def tray_tooltip(self, num=0):
         if num == 0:
@@ -572,20 +599,14 @@ class JobsButton(QWidget):  # {{{
         return text
 
     def job_added(self, nnum):
-        jobs = self._jobs
-        src = unicode(jobs.text())
-        num = self.jobs()
-        text = src.replace(str(num), str(nnum))
-        jobs.setText(text)
+        self.num_jobs = nnum
+        self.update_label()
         self.start()
         self.tray_tooltip_updated.emit(self.tray_tooltip(nnum))
 
     def job_done(self, nnum):
-        jobs = self._jobs
-        src = unicode(jobs.text())
-        num = self.jobs()
-        text = src.replace(str(num), str(nnum))
-        jobs.setText(text)
+        self.num_jobs = nnum
+        self.update_label()
         if nnum == 0:
             self.no_more_jobs()
         self.tray_tooltip_updated.emit(self.tray_tooltip(nnum))
@@ -597,12 +618,12 @@ class JobsButton(QWidget):  # {{{
 
     def paintEvent(self, ev):
         if self.mouse_over:
-            p = QPainter(self)
+            p = QStylePainter(self)
             tool = QStyleOption()
+            tool.initFrom(self)
             tool.rect = self.rect()
-            tool.state = QStyle.State_Raised | QStyle.State_Active | QStyle.State_MouseOver
-            s = self.style()
-            s.drawPrimitive(QStyle.PE_PanelButtonTool, tool, p, self)
+            tool.state = QStyle.StateFlag.State_Raised | QStyle.StateFlag.State_Active | QStyle.StateFlag.State_MouseOver
+            p.drawPrimitive(QStyle.PrimitiveElement.PE_PanelButtonTool, tool)
             p.end()
         QWidget.paintEvent(self, ev)
 
@@ -620,7 +641,7 @@ class JobsDialog(QDialog, Ui_JobsDialog):
         self.proxy_model.setSourceModel(self.model)
         self.proxy_model.search_done.connect(self.search.search_done)
         self.jobs_view.setModel(self.proxy_model)
-        self.setWindowModality(Qt.NonModal)
+        self.setWindowModality(Qt.WindowModality.NonModal)
         self.setWindowTitle(__appname__ + _(' - Jobs'))
         self.details_button.clicked.connect(self.show_details)
         self.kill_button.clicked.connect(self.kill_job)
@@ -640,26 +661,27 @@ class JobsDialog(QDialog, Ui_JobsDialog):
 
     def restore_state(self):
         try:
-            geom = gprefs.get('jobs_dialog_geometry', bytearray(''))
-            self.restoreGeometry(QByteArray(geom))
+            self.restore_geometry(gprefs, 'jobs_dialog_geometry')
             state = gprefs.get('jobs view column layout3', None)
             if state is not None:
                 self.jobs_view.horizontalHeader().restoreState(QByteArray(state))
-        except:
-            pass
+        except Exception:
+            import traceback
+            traceback.print_exc()
         idx = self.jobs_view.model().index(0, 0)
         if idx.isValid():
             sm = self.jobs_view.selectionModel()
-            sm.select(idx, sm.ClearAndSelect|sm.Rows)
+            sm.select(idx, QItemSelectionModel.SelectionFlag.ClearAndSelect|QItemSelectionModel.SelectionFlag.Rows)
 
     def save_state(self):
         try:
-            state = bytearray(self.jobs_view.horizontalHeader().saveState())
-            gprefs['jobs view column layout3'] = state
-            geom = bytearray(self.saveGeometry())
-            gprefs['jobs_dialog_geometry'] = geom
-        except:
-            pass
+            with gprefs:
+                state = bytearray(self.jobs_view.horizontalHeader().saveState())
+                gprefs['jobs view column layout3'] = state
+                self.save_geometry(gprefs, 'jobs_dialog_geometry')
+        except Exception:
+            import traceback
+            traceback.print_exc()
 
     def show_job_details(self, index):
         index = self.proxy_model.mapToSource(index)
@@ -667,10 +689,11 @@ class JobsDialog(QDialog, Ui_JobsDialog):
             row = index.row()
             job = self.model.row_to_job(row)
             d = DetailView(self, job)
-            d.exec_()
+            d.exec()
             d.timer.stop()
 
     def show_details(self, *args):
+        self.jobs_view.setFocus()
         index = self.jobs_view.currentIndex()
         if index.isValid():
             self.show_job_details(index)
@@ -709,8 +732,7 @@ class JobsDialog(QDialog, Ui_JobsDialog):
         self.proxy_model.beginResetModel(), self.proxy_model.endResetModel()
 
     def hide_all(self, *args):
-        self.model.hide_jobs(list(xrange(0,
-            self.model.rowCount(QModelIndex()))))
+        self.model.hide_jobs(list(range(self.model.rowCount(QModelIndex()))))
         self.proxy_model.beginResetModel(), self.proxy_model.endResetModel()
 
     def show_hidden(self, *args):

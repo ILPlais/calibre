@@ -1,29 +1,29 @@
-#!/usr/bin/env python2
-# vim:fileencoding=utf-8
+#!/usr/bin/env python
 # License: GPLv3 Copyright: 2018, Kovid Goyal <kovid at kovidgoyal.net>
 
-from __future__ import absolute_import, division, print_function, unicode_literals
 
 import os
 import shutil
 import tempfile
 from threading import Lock
 
-from calibre.customize.ui import input_profiles, output_profiles
+from calibre.customize.ui import input_profiles, output_profiles, run_plugins_on_postconvert
 from calibre.db.errors import NoSuchBook
 from calibre.srv.changes import formats_added
 from calibre.srv.errors import BookNotFound, HTTPNotFound
 from calibre.srv.routes import endpoint, json
 from calibre.srv.utils import get_library_data
+from calibre.utils.localization import _
 from calibre.utils.monotonic import monotonic
 from calibre.utils.shared_file import share_open
+from polyglot.builtins import iteritems
 
 receive_data_methods = {'GET', 'POST'}
 conversion_jobs = {}
 cache_lock = Lock()
 
 
-class JobStatus(object):
+class JobStatus:
 
     def __init__(self, job_id, book_id, tdir, library_id, pathtoebook, conversion_data):
         self.job_id = job_id
@@ -61,8 +61,7 @@ class JobStatus(object):
 def expire_old_jobs():
     now = monotonic()
     with cache_lock:
-        remove = [job_id for job_id, job_status in conversion_jobs.iteritems(
-        ) if now - job_status.last_check_at >= 360]
+        remove = [job_id for job_id, job_status in iteritems(conversion_jobs) if now - job_status.last_check_at >= 360]
         for job_id in remove:
             job_status = conversion_jobs.pop(job_id)
             job_status.cleanup()
@@ -71,14 +70,14 @@ def expire_old_jobs():
 def safe_delete_file(path):
     try:
         os.remove(path)
-    except EnvironmentError:
+    except OSError:
         pass
 
 
 def safe_delete_tree(path):
     try:
         shutil.rmtree(path, ignore_errors=True)
-    except EnvironmentError:
+    except OSError:
         pass
 
 
@@ -111,7 +110,7 @@ def convert_book(path_to_ebook, opf_path, cover_path, output_fmt, recs):
     status_file = share_open('status', 'wb')
 
     def notification(percent, msg=''):
-        status_file.write('{}:{}|||\n'.format(percent, msg).encode('utf-8'))
+        status_file.write(f'{percent}:{msg}|||\n'.encode())
         status_file.flush()
 
     output_path = os.path.abspath('output.' + output_fmt.lower())
@@ -122,13 +121,13 @@ def convert_book(path_to_ebook, opf_path, cover_path, output_fmt, recs):
 
 
 def queue_job(ctx, rd, library_id, db, fmt, book_id, conversion_data):
-    from calibre.ebooks.metadata.opf2 import metadata_to_opf
-    from calibre.ebooks.conversion.config import GuiRecommendations, save_specifics
     from calibre.customize.conversion import OptionRecommendation
+    from calibre.ebooks.conversion.config import GuiRecommendations, save_specifics
+    from calibre.ebooks.metadata.opf2 import metadata_to_opf
     tdir = tempfile.mkdtemp(dir=rd.tdir)
     with tempfile.NamedTemporaryFile(prefix='', suffix=('.' + fmt.lower()), dir=tdir, delete=False) as src_file:
         db.copy_format_to(book_id, fmt, src_file)
-    with tempfile.NamedTemporaryFile(prefix='', suffix='.jpg', dir=tdir, delete=False) as cover_file:
+    with tempfile.NamedTemporaryFile(prefix='', suffix='.jpeg', dir=tdir, delete=False) as cover_file:
         cover_copied = db.copy_cover_to(book_id, cover_file)
     cover_path = cover_file.name if cover_copied else None
     mi = db.get_metadata(book_id)
@@ -140,10 +139,10 @@ def queue_job(ctx, rd, library_id, db, fmt, book_id, conversion_data):
     recs.update(conversion_data['options'])
     recs['gui_preferred_input_format'] = conversion_data['input_fmt'].lower()
     save_specifics(db, book_id, recs)
-    recs = [(k, v, OptionRecommendation.HIGH) for k, v in recs.iteritems()]
+    recs = [(k, v, OptionRecommendation.HIGH) for k, v in iteritems(recs)]
 
     job_id = ctx.start_job(
-        'Convert book %s (%s)' % (book_id, fmt), 'calibre.srv.convert',
+        f'Convert book {book_id} ({fmt})', 'calibre.srv.convert',
         'convert_book', args=(
             src_file.name, opf_file.name, cover_path, conversion_data['output_fmt'], recs),
         job_done_callback=job_done
@@ -171,7 +170,7 @@ def conversion_status(ctx, rd, job_id):
     with cache_lock:
         job_status = conversion_jobs.get(job_id)
         if job_status is None:
-            raise HTTPNotFound('No job with id: {}'.format(job_id))
+            raise HTTPNotFound(f'No job with id: {job_id}')
         job_status.last_check_at = monotonic()
         if job_status.running:
             percent, msg = job_status.current_status
@@ -194,7 +193,8 @@ def conversion_status(ctx, rd, job_id):
                 db.add_format(job_status.book_id, fmt, job_status.output_path)
             except NoSuchBook:
                 raise HTTPNotFound(
-                    'book_id {} not found in library'.format(job_status.book_id))
+                    f'book_id {job_status.book_id} not found in library')
+            run_plugins_on_postconvert(db, job_status.book_id, fmt)
             formats_added({job_status.book_id: (fmt,)})
             ans['size'] = os.path.getsize(job_status.output_path)
             ans['fmt'] = fmt
@@ -204,10 +204,9 @@ def conversion_status(ctx, rd, job_id):
 
 
 def get_conversion_options(input_fmt, output_fmt, book_id, db):
-    from calibre.ebooks.conversion.plumber import create_dummy_plumber
-    from calibre.ebooks.conversion.config import (
-        load_specifics, load_defaults, OPTIONS, options_for_input_fmt, options_for_output_fmt)
     from calibre.customize.conversion import OptionRecommendation
+    from calibre.ebooks.conversion.config import OPTIONS, load_defaults, load_specifics, options_for_input_fmt, options_for_output_fmt
+    from calibre.ebooks.conversion.plumber import create_dummy_plumber
     plumber = create_dummy_plumber(input_fmt, output_fmt)
     specifics = load_specifics(db, book_id)
     ans = {'options': {}, 'disabled': set(), 'defaults': {}, 'help': {}}
@@ -234,7 +233,7 @@ def get_conversion_options(input_fmt, output_fmt, book_id, db):
         ans['defaults'].update(defaults)
         ans['help'] = plumber.get_all_help()
 
-    for group_name, option_names in OPTIONS['pipe'].iteritems():
+    for group_name, option_names in iteritems(OPTIONS['pipe']):
         merge_group(group_name, option_names)
 
     group_name, option_names = options_for_input_fmt(input_fmt)
@@ -256,7 +255,7 @@ def profiles():
             else:
                 ss = _('%(width)d x %(height)d pixels') % dict(width=w, height=h)
             ss = _('Screen size: %s') % ss
-            return {'name': profile.name, 'description': ('%s [%s]' % (profile.description, ss))}
+            return {'name': profile.name, 'description': (f'{profile.description} [{ss}]')}
 
         ans = profiles.ans = {}
         ans['input'] = {p.short_name: desc(p) for p in input_profiles()}
@@ -266,8 +265,7 @@ def profiles():
 
 @endpoint('/conversion/book-data/{book_id}', postprocess=json, types={'book_id': int})
 def conversion_data(ctx, rd, book_id):
-    from calibre.ebooks.conversion.config import (
-        NoSupportedInputFormats, get_input_format_for_book, get_sorted_output_formats)
+    from calibre.ebooks.conversion.config import NoSupportedInputFormats, get_input_format_for_book, get_sorted_output_formats
     db = get_library_data(ctx, rd)[0]
     if not ctx.has_id(rd, db, book_id):
         raise BookNotFound(book_id, db)

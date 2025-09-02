@@ -1,66 +1,122 @@
-from calibre.web.feeds.recipes import BasicNewsRecipe
+#!/usr/bin/env python
+# vim:fileencoding=utf-8
+from calibre.web.feeds.news import BasicNewsRecipe, classes
 
 
-def class_sel(cls):
-    def f(x):
-        return x and cls in x.split()
-    return f
+def absurl(url):
+    if url.startswith('/'):
+        url = 'https://www.spectator.co.uk' + url
+    return url
 
 
-class Spectator(BasicNewsRecipe):
-
+class spectator(BasicNewsRecipe):
     title = 'Spectator Magazine'
-    __author__ = 'Kovid Goyal'
-    description = 'Magazine'
-    language = 'en'
-
+    __author__ = 'unkn0wn'
+    description = 'The Spectator was established in 1828, and is the best-written and most influential weekly in the English language.'
+    language = 'en_GB'
     no_stylesheets = True
+    remove_attributes = ['height', 'width', 'style']
+    ignore_duplicate_articles = {'url'}
+    masthead_url = 'https://upload.wikimedia.org/wikipedia/commons/thumb/c/c7/The_Spectator_logo.svg/320px-The_Spectator_logo.svg.png'
+    encoding = 'utf-8'
+    remove_empty_feeds = True
+    resolve_internal_links = True
 
-    keep_only_tags = dict(name='div', attrs={
-                          'class': ['article-header__text', 'featured-image', 'article-content']})
+    extra_css = '''
+        .writers-link__text, .author-bio__content {font-size:small; color:#404040;}
+        #fig-c {text-align:center; font-size:small;}
+        blockquote, em, i {color:#202020;}
+        img {display:block; margin:0 auto;}
+    '''
+
+    keep_only_tags = [
+        classes(
+            'writers-link entry-header__author entry-header__title entry-header__thumbnail entry-content '
+            'author-bio__content '
+        )
+    ]
+
     remove_tags = [
-        dict(name='div', attrs={'id': ['disqus_thread']}),
-        dict(attrs={'class': ['middle-promo',
-                              'sharing', 'mejs-player-holder']}),
-        dict(name='a', onclick=lambda x: x and '__gaTracker' in x and 'outbound-article' in x),
-    ]
-    remove_tags_after = [
-        dict(name='hr', attrs={'class': 'sticky-clear'}),
+        dict(name=['svg', 'button']),
+        classes(
+            'entry-meta audio-read-block insert--most-popular ad-slot ad-slot--in-content ad-content '
+            'subscription-banner '
+        )
     ]
 
-    def parse_spec_section(self, div):
-        h2 = div.find('h2')
-        sectitle = self.tag_to_string(h2)
-        self.log('Section:', sectitle)
-        articles = []
-        for div in div.findAll('div', id=lambda x: x and x.startswith('post-')):
-            h2 = div.find('h2', attrs={'class': class_sel('term-item__title')})
-            if h2 is None:
-                h2 = div.find(attrs={'class': class_sel('news-listing__title')})
-            title = self.tag_to_string(h2)
-            a = h2.find('a')
-            url = a['href']
-            desc = ''
-            self.log('\tArticle:', title)
-            p = div.find(attrs={'class': class_sel('term-item__excerpt')})
-            if p is not None:
-                desc = self.tag_to_string(p)
-            articles.append({'title': title, 'url': url, 'description': desc})
-        return sectitle, articles
+    def preprocess_html(self, soup):
+        for fc in soup.findAll('figcaption'):
+            fc['id'] = 'fig-c'
+        return soup
+
+    def get_browser(self, *args, **kwargs):
+        kwargs['user_agent'] = 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)'
+        br = BasicNewsRecipe.get_browser(self, *args, **kwargs)
+        br.addheaders += [
+            ('Referer', 'https://www.google.com/'),
+            ('X-Forwarded-For', '66.249.66.1')
+        ]
+        return br
+
+    recipe_specific_options = {
+        'date': {
+            'short': 'The date of the edition to download (DD-MM-YYYY format)',
+            'long': 'For example, 20-07-2024'
+        }
+    }
 
     def parse_index(self):
-        soup = self.index_to_soup('https://www.spectator.co.uk/magazine/')
-        a = soup.find('a', attrs={'class': 'issue-details__cover-link'})
-        self.timefmt = ' [%s]' % a['title']
-        self.cover_url = a['href']
-        if self.cover_url.startswith('//'):
-            self.cover_url = 'http:' + self.cover_url
+        index = 'https://www.spectator.co.uk/magazine'
+        d = self.recipe_specific_options.get('date')
+        if d and isinstance(d, str):
+            index = index + '/' + d + '/'
+        soup = self.index_to_soup(index)
+        self.cover_url = soup.find(**classes(
+            'magazine-header__container')).img['src'].split('?')[0]
+        issue = self.tag_to_string(soup.find(**classes(
+            'magazine-header__title'))).strip()
+        time = soup.find('time')
+        self.title = 'The Spectator ' + issue
+        self.timefmt = ' [' + self.tag_to_string(time) + ']'
+        self.log('Downloading Issue: ', self.title, self.timefmt)
+        nav_div = soup.find('ul', **classes('archive-entry__nav-list'))
+        section_list = []
 
+        for x in nav_div.findAll(['a']):
+            section_list.append((
+                self.tag_to_string(x).strip(), absurl(x['href'])))
         feeds = []
 
-        div = soup.find(attrs={'class': class_sel('content-area')})
-        for x in div.findAll(attrs={'class': class_sel('magazine-section-holder')}):
-            title, articles = self.parse_spec_section(x)
+        # For each section title, fetch the article urls
+        for section in section_list:
+            section_title = section[0]
+            section_url = section[1]
+            self.log(section_title, section_url)
+            soup = self.index_to_soup(section_url)
+            articles = self.articles_from_soup(soup)
             if articles:
-                feeds.append((title, articles))
+                feeds.append((section_title, articles))
         return feeds
+
+    def articles_from_soup(self, soup):
+        ans = []
+        for div in soup.findAll('div', **classes(
+            'mosaic__tile mosaic__tile--lead-up'
+        )):
+            a = div.find('a', href=True, attrs={'class':'article__title-link'})
+            url = absurl(a['href'])
+            title = self.tag_to_string(a).strip()
+            teaser = div.find('p', **classes('article__excerpt-text'))
+            desc = ''
+            if teaser:
+                desc = self.tag_to_string(teaser).strip()
+            obj = div.find('a', **classes('article__author article__author--link'))
+            if obj:
+                desc = self.tag_to_string(obj).strip() + ' | ' + desc
+            sec = div.findParent('div').find('a', attrs={'class': 'magazine-issue__entry-link'})
+            if sec:
+                desc = self.tag_to_string(sec).strip() + ' | ' + desc
+
+            self.log('\t', title, '\n\t', desc, '\n\t\t', url)
+            ans.append({'title': title, 'description':desc, 'url': url})
+        return ans

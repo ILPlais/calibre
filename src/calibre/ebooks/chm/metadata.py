@@ -1,35 +1,36 @@
-#!/usr/bin/env python2
-# vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
-from __future__ import with_statement
+#!/usr/bin/env python
+
 
 __license__   = 'GPL v3'
 __copyright__ = '2010, Kovid Goyal <kovid@kovidgoyal.net>'
 __docformat__ = 'restructuredtext en'
 
-import re, codecs
+import codecs
+import re
 
+from calibre import force_unicode
 from calibre.ebooks.BeautifulSoup import BeautifulSoup
 from calibre.ebooks.chardet import xml_to_unicode
-from calibre.ebooks.metadata import string_to_authors, MetaInformation
-from calibre.utils.logging import default_log
+from calibre.ebooks.metadata import MetaInformation, string_to_authors
 from calibre.ptempfile import TemporaryFile
-from calibre import force_unicode
+from calibre.utils.logging import default_log
+from polyglot.builtins import iterkeys
 
 
 def _clean(s):
-    return s.replace(u'\u00a0', u' ')
+    return s.replace('\u00a0', ' ')
 
 
 def _detag(tag):
-    str = u""
+    ans = ''
     if tag is None:
-        return str
+        return ans
     for elem in tag:
-        if hasattr(elem, "contents"):
-            str += _detag(elem)
+        if hasattr(elem, 'contents'):
+            ans += _detag(elem)
         else:
-            str += _clean(elem)
-    return str
+            ans += _clean(elem)
+    return ans
 
 
 def _metadata_from_table(soup, searchfor):
@@ -39,9 +40,9 @@ def _metadata_from_table(soup, searchfor):
     td = td.parent
     # there appears to be multiple ways of structuring the metadata
     # on the home page. cue some nasty special-case hacks...
-    if re.match(r'^\s*'+searchfor+r'\s*$', td.renderContents(None), flags=re.I):
+    if re.match(r'^\s*'+searchfor+r'\s*$', td.decode_contents(), flags=re.I):
         meta = _detag(td.findNextSibling('td'))
-        return re.sub('^:', '', meta).strip()
+        return re.sub(r'^:', '', meta).strip()
     else:
         meta = _detag(td)
         return re.sub(r'^[^:]+:', '', meta).strip()
@@ -52,7 +53,7 @@ def _metadata_from_span(soup, searchfor):
     if span is None:
         return None
     # this metadata might need some cleaning up still :/
-    return _detag(span.renderContents(None).strip())
+    return _detag(span.decode_contents().strip())
 
 
 def _get_authors(soup):
@@ -76,11 +77,11 @@ def _get_comments(soup):
     pages = (_metadata_from_span(soup, 'pages') or _metadata_from_table(soup, 'pages'))
     try:
         # date span can have copyright symbols in it...
-        date = date.replace(u'\u00a9', '').strip()
+        date = date.replace('©', '').strip()
         # and pages often comes as '(\d+ pages)'
         pages = re.search(r'\d+', pages).group(0)
-        return u'Published %s, %s pages.' % (date, pages)
-    except:
+        return f'Published {date}, {pages} pages.'
+    except Exception:
         pass
     return None
 
@@ -88,7 +89,7 @@ def _get_comments(soup):
 def _get_cover(soup, rdr):
     ans = None
     try:
-        ans = soup.find('img', alt=re.compile('cover', flags=re.I))['src']
+        ans = soup.find('img', alt=re.compile(r'cover', flags=re.I))['src']
     except TypeError:
         # meeehh, no handy alt-tag goodness, try some hackery
         # the basic idea behind this is that in general, the cover image
@@ -107,37 +108,37 @@ def _get_cover(soup, rdr):
                 # interestingly, occasionally the only image without height
                 # or width attrs is the cover...
                 r[0] = img['src']
-            except:
+            except Exception:
                 # Probably invalid width, height aattributes, ignore
                 continue
-        l = r.keys()
-        l.sort()
-        if l:
+        if r:
+            l = sorted(iterkeys(r))
             ans = r[l[0]]
     # this link comes from the internal html, which is in a subdir
     if ans is not None:
         try:
             ans = rdr.GetFile(ans)
-        except:
-            ans = rdr.root + "/" + ans
+        except Exception:
+            ans = rdr.root + '/' + ans
             try:
                 ans = rdr.GetFile(ans)
-            except:
+            except Exception:
                 ans = None
         if ans is not None:
+            import io
+
             from PIL import Image
-            from cStringIO import StringIO
-            buf = StringIO()
+            buf = io.BytesIO()
             try:
-                Image.open(StringIO(ans)).convert('RGB').save(buf, 'JPEG')
+                Image.open(io.BytesIO(ans)).convert('RGB').save(buf, 'JPEG')
                 ans = buf.getvalue()
-            except:
+            except Exception:
                 ans = None
     return ans
 
 
 def get_metadata_from_reader(rdr):
-    raw = rdr.GetFile(rdr.home)
+    raw = rdr.get_home()
     home = BeautifulSoup(xml_to_unicode(raw, strip_encoding_pats=True,
         resolve_entities=True)[0])
 
@@ -146,7 +147,7 @@ def get_metadata_from_reader(rdr):
         x = rdr.GetEncoding()
         codecs.lookup(x)
         enc = x
-    except:
+    except Exception:
         enc = 'cp1252'
     title = force_unicode(title, enc)
     authors = _get_authors(home)

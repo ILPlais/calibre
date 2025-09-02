@@ -1,6 +1,7 @@
-from calibre.web.feeds.news import BasicNewsRecipe
-from calibre import browser
 import re
+
+from calibre import browser
+from calibre.web.feeds.news import BasicNewsRecipe
 
 
 class AdvancedUserRecipe1306061239(BasicNewsRecipe):
@@ -56,11 +57,11 @@ class AdvancedUserRecipe1306061239(BasicNewsRecipe):
         (u'world News', u'http://www.mirror.co.uk/news/world-news/rss.xml'),
         (u'Sports', u'http://www.mirror.co.uk/sport/rss.xml'),
         (u'3AM', u'http://www.mirror.co.uk/3am/rss.xml'),
-        (u'Lifestyle', u'http://www.mirror.co.uk/lifestyle/rss.xml')
+        (u'Lifestyle', u'http://www.mirror.co.uk/lifestyle/rss.xml'),
 
 
         # example of commented out feed not needed
-        # ,(u'Travel','http://www.mirror.co.uk/advice/travel/rss.xml')
+        # (u'Travel','http://www.mirror.co.uk/advice/travel/rss.xml'),
     ]
     extra_css = '''
     h1{font-family:Arial,Helvetica,sans-serif; font-weight:bold;font-size:large;}
@@ -82,7 +83,7 @@ class AdvancedUserRecipe1306061239(BasicNewsRecipe):
         cov = soup.find(attrs={'id': 'large'})
         cov = str(cov)
         cov2 = re.findall(
-            'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\(\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+', cov)
+            r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\(\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+', cov)
         cov2 = str(cov2)
         cov2 = cov2[2:len(cov2) - 2]
         # cov2 now is pic url, now  go back to original function
@@ -91,7 +92,7 @@ class AdvancedUserRecipe1306061239(BasicNewsRecipe):
         try:
             br.open_novisit(cov2)
             cover_url = cov2
-        except:
+        except Exception:
             cover_url = 'http://profile.ak.fbcdn.net/hprofile-ak-snc4/373019_6149699161_1710984811_n.jpg'
 
         return cover_url

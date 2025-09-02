@@ -37,7 +37,7 @@ class Watcher:
 
         self.ws.onmessage = def(event):
             if event.data is not 'ping':
-                print('Received mesasge from reload server: ' + event.data)
+                print('Received message from reload server: ' + event.data)
             if event.data is 'reload':
                 self.reload_app()
 
@@ -52,20 +52,7 @@ class Watcher:
                 self.reload_app()
 
     def reload_app(self):
-        appcache = window.top.applicationCache
-        for which in 'cached error noupdate obsolete updateready'.split(' '):
-            appcache.addEventListener(which, self.cache_update_done, False)
-        try:
-            appcache.update()
-        except:  # In chrome with devtools open, appcache is sometimes disabled/fails
-            window.location.reload(True)
-
-    def cache_update_done(self):
-        appcache = window.top.applicationCache
-        if appcache.status is appcache.UPDATEREADY:
-            appcache.swapCache()
         window.location.reload(True)
-
 
 def create_auto_reload_watcher(autoreload_port):
     if not create_auto_reload_watcher.watcher:

@@ -1,21 +1,32 @@
-#!/usr/bin/env python2
-# vim:fileencoding=utf-8
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
+#!/usr/bin/env python
+
 
 __license__ = 'GPL v3'
 __copyright__ = '2013, Kovid Goyal <kovid at kovidgoyal.net>'
 
 from collections import OrderedDict
 
-from PyQt5.Qt import (
-    QDialog, QGridLayout, QDialogButtonBox, QListWidget, QApplication, Qt,
-    pyqtSignal, QSize, QPushButton, QIcon, QStyledItemDelegate, QLabel)
+from qt.core import (
+    QAbstractItemView,
+    QApplication,
+    QDialog,
+    QDialogButtonBox,
+    QGridLayout,
+    QIcon,
+    QLabel,
+    QListWidget,
+    QPushButton,
+    QSize,
+    QStyledItemDelegate,
+    Qt,
+    pyqtSignal,
+)
 
-from calibre.utils.config_base import tweaks
+from calibre.ebooks.metadata import string_to_authors
 from calibre.gui2 import gprefs
 from calibre.gui2.complete2 import EditWithComplete
-from calibre.ebooks.metadata import string_to_authors
+from calibre.utils.config_base import tweaks
+from calibre.utils.icu import lower as icu_lower
 
 
 class ItemDelegate(QStyledItemDelegate):
@@ -30,18 +41,18 @@ class ItemDelegate(QStyledItemDelegate):
         return QStyledItemDelegate.sizeHint(self, *args) + QSize(0, 15)
 
     def setEditorData(self, editor, index):
-        name = unicode(index.data(Qt.DisplayRole) or '')
-        editor.setText(name)
-        editor.lineEdit().selectAll()
+        name = str(index.data(Qt.ItemDataRole.DisplayRole) or '')
+        n = editor.metaObject().userProperty().name()
+        editor.setProperty(n, name)
 
     def setModelData(self, editor, model, index):
-        authors = string_to_authors(unicode(editor.text()))
+        authors = string_to_authors(str(editor.text()))
         model.setData(index, authors[0])
         self.edited.emit(index.row())
 
     def createEditor(self, parent, option, index):
         self.ed = EditWithComplete(parent)
-        self.ed.setFocusPolicy(Qt.StrongFocus)
+        self.ed.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         init_line_edit(self.ed, self.all_authors)
         return self.ed
 
@@ -51,12 +62,12 @@ class List(QListWidget):
     def __init__(self, all_authors, parent):
         QListWidget.__init__(self, parent)
         self.setDragEnabled(True)
-        self.setSelectionMode(self.ExtendedSelection)
+        self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.setDropIndicatorShown(True)
-        self.setDragDropMode(self.InternalMove)
+        self.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
         self.setAlternatingRowColors(True)
         self.d = ItemDelegate(all_authors, self)
-        self.d.edited.connect(self.edited, type=Qt.QueuedConnection)
+        self.d.edited.connect(self.edited, type=Qt.ConnectionType.QueuedConnection)
         self.setItemDelegate(self.d)
 
     def delete_selected(self):
@@ -64,7 +75,7 @@ class List(QListWidget):
             self.takeItem(self.row(item))
 
     def keyPressEvent(self, ev):
-        if ev.key() == Qt.Key_Delete:
+        if ev.key() == Qt.Key.Key_Delete:
             self.delete_selected()
             ev.accept()
             return
@@ -83,16 +94,16 @@ class List(QListWidget):
             self.mark_as_editable()
 
     def mark_as_editable(self):
-        for i in xrange(self.count()):
+        for i in range(self.count()):
             item = self.item(i)
-            item.setFlags(item.flags() | Qt.ItemIsEditable)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
 
     def edited(self, i):
         item = self.item(i)
-        q = unicode(item.text())
+        q = str(item.text())
         remove = []
-        for j in xrange(self.count()):
-            if i != j and unicode(self.item(j).text()) == q:
+        for j in range(self.count()):
+            if i != j and str(self.item(j).text()) == q:
                 remove.append(j)
         for x in sorted(remove, reverse=True):
             self.takeItem(x)
@@ -103,7 +114,7 @@ class Edit(EditWithComplete):
     returnPressed = pyqtSignal()
 
     def keyPressEvent(self, ev):
-        if ev.key() in (Qt.Key_Return, Qt.Key_Enter):
+        if ev.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
             ev.accept()
             self.returnPressed.emit()
             return
@@ -141,43 +152,38 @@ class AuthorsEdit(QDialog):
         l.addWidget(a, 2, 0)
 
         self.ab = b = QPushButton(_('&Add'))
-        b.setIcon(QIcon(I('plus.png')))
+        b.setIcon(QIcon.ic('plus.png'))
         l.addWidget(b, 2, 1)
         b.clicked.connect(self.add_author)
 
         self.db = b = QPushButton(_('&Remove selected'))
         l.addWidget(b, 2, 2)
-        b.setIcon(QIcon(I('minus.png')))
+        b.setIcon(QIcon.ic('minus.png'))
         b.clicked.connect(self.al.delete_selected)
 
-        self.bb = bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        self.bb = bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         bb.accepted.connect(self.accept)
         bb.rejected.connect(self.reject)
         l.addWidget(bb, 3, 0, 1, 3)
 
         l.setColumnStretch(0, 10)
         self.resize(self.sizeHint() + QSize(150, 100))
-        geom = gprefs.get('authors-edit-geometry', None)
-        if geom is not None:
-            self.restoreGeometry(geom)
-        self.author.setFocus(Qt.OtherFocusReason)
-
-    def save_geometry(self):
-        gprefs.set('authors-edit-geometry', bytearray(self.saveGeometry()))
+        self.restore_geometry(gprefs, 'authors-edit-geometry')
+        self.author.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def accept(self):
-        self.save_geometry()
+        self.save_geometry(gprefs, 'authors-edit-geometry')
         return QDialog.accept(self)
 
     def reject(self):
-        self.save_geometry()
+        self.save_geometry(gprefs, 'authors-edit-geometry')
         return QDialog.reject(self)
 
     @property
     def authors(self):
         ans = []
-        for i in xrange(self.al.count()):
-            ans.append(unicode(self.al.item(i).text()))
+        for i in range(self.al.count()):
+            ans.append(str(self.al.item(i).text()))
         return ans or [_('Unknown')]
 
     def add_author(self):
@@ -196,8 +202,9 @@ class AuthorsEdit(QDialog):
                     authors[la] = author
         self.author.setText('')
 
+
 if __name__ == '__main__':
     app = QApplication([])
     d = AuthorsEdit(['kovid goyal', 'divok layog', 'other author'], ['kovid goyal', 'other author'])
-    d.exec_()
-    print (d.authors)
+    d.exec()
+    print(d.authors)

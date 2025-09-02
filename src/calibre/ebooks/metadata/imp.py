@@ -1,4 +1,3 @@
-from __future__ import print_function
 __license__   = 'GPL v3'
 __copyright__ = '2008, Ashish Kulkarni <kulkarni.ashish@gmail.com>'
 '''Read meta information from IMP files'''
@@ -7,28 +6,28 @@ import sys
 
 from calibre.ebooks.metadata import MetaInformation, string_to_authors
 
-MAGIC = ['\x00\x01BOOKDOUG', '\x00\x02BOOKDOUG']
+MAGIC = (b'\x00\x01BOOKDOUG', b'\x00\x02BOOKDOUG')
 
 
 def get_metadata(stream):
-    """ Return metadata as a L{MetaInfo} object """
+    ''' Return metadata as a L{MetaInfo} object '''
     title = 'Unknown'
     mi = MetaInformation(title, ['Unknown'])
     stream.seek(0)
     try:
         if stream.read(10) not in MAGIC:
-            print(u'Couldn\'t read IMP header from file', file=sys.stderr)
+            print("Couldn't read IMP header from file", file=sys.stderr)
             return mi
 
         def cString(skip=0):
-            result = ''
+            result = b''
             while 1:
                 data = stream.read(1)
-                if data == '\x00':
+                if data == b'\x00':
                     if not skip:
-                        return result
+                        return result.decode('utf-8')
                     skip -= 1
-                    result, data = '', ''
+                    result, data = b'', b''
                 result += data
 
         stream.read(38)  # skip past some uninteresting headers
@@ -43,6 +42,6 @@ def get_metadata(stream):
         if category:
             mi.category = category
     except Exception as err:
-        msg = u'Couldn\'t read metadata from imp: %s with error %s'%(mi.title, unicode(err))
+        msg = f"Couldn't read metadata from imp: {mi.title} with error {err!s}"
         print(msg.encode('utf8'), file=sys.stderr)
     return mi

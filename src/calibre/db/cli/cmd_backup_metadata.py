@@ -1,8 +1,6 @@
-#!/usr/bin/env python2
-# vim:fileencoding=utf-8
+#!/usr/bin/env python
 # License: GPLv3 Copyright: 2017, Kovid Goyal <kovid at kovidgoyal.net>
 
-from __future__ import absolute_import, division, print_function, unicode_literals
 
 from calibre import prints
 
@@ -22,7 +20,7 @@ def option_parser(get_parser, args):
 %prog backup_metadata [options]
 
 Backup the metadata stored in the database into individual OPF files in each
-books directory. This normally happens automatically, but you can run this
+books folder. This normally happens automatically, but you can run this
 command to force re-generation of the OPF files, with the --all option.
 
 Note that there is normally no need to do this, as the OPF files are backed up
@@ -43,7 +41,7 @@ automatically, every time metadata is changed.
     return parser
 
 
-class BackupProgress(object):
+class BackupProgress:
 
     def __init__(self):
         self.total = 0
@@ -54,16 +52,21 @@ class BackupProgress(object):
             self.total = book_id
         else:
             self.count += 1
-            prints(
-                u'%.1f%% %s - %s' % ((self.count * 100) / float(self.total), book_id,
-                                     getattr(mi, 'title', 'Unknown'))
-            )
+            if ok:
+                prints(
+                    '{:.1f}% {} - {}'.format((self.count * 100) / float(self.total), book_id,
+                                        getattr(mi, 'title', 'Unknown'))
+                )
+            else:
+                prints(
+                    f'{(self.count * 100) / float(self.total):.1f}% {book_id} failed')
 
 
 def main(opts, args, dbctx):
     db = dbctx.db
     book_ids = None
     if opts.all:
-        book_ids = db.all_ids()
+        book_ids = db.new_api.all_book_ids()
+        db.new_api.mark_as_dirty(book_ids)
     db.dump_metadata(book_ids=book_ids, callback=BackupProgress())
     return 0

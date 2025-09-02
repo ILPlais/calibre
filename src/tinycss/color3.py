@@ -13,7 +13,7 @@
     :license: BSD, see LICENSE for more details.
 """
 
-from __future__ import unicode_literals, division
+
 import collections
 import itertools
 import re
@@ -97,7 +97,7 @@ def parse_color(token):
 def parse_alpha(args):
     """
     If args is a list of a single INTEGER or NUMBER token,
-    retur its value clipped to the 0..1 range
+    return its value clipped to the 0..1 range
     Otherwise, return None.
     """
     if len(args) == 1 and args[0].type in ('NUMBER', 'INTEGER'):
@@ -188,8 +188,8 @@ def parse_comma_separated(tokens):
 
 
 HASH_REGEXPS = (
-    (2, re.compile('^#([\da-f])([\da-f])([\da-f])$', re.I).match),
-    (1, re.compile('^#([\da-f]{2})([\da-f]{2})([\da-f]{2})$', re.I).match),
+    (2, re.compile(r'^#([\da-f])([\da-f])([\da-f])$', re.I).match),
+    (1, re.compile(r'^#([\da-f]{2})([\da-f]{2})([\da-f]{2})$', re.I).match),
 )
 
 

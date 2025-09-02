@@ -1,53 +1,58 @@
-#!/usr/bin/env  python2
+#!/usr/bin/env python
 
-from __future__ import print_function
+
 __license__   = 'GPL v3'
 __copyright__ = '2008, Kovid Goyal <kovid at kovidgoyal.net>'
 '''
 Contains the logic for parsing feeds.
 '''
-import time, traceback, copy, re
+import copy
+import re
+import time
+import traceback
+from builtins import _
 
-from calibre.utils.logging import default_log
-from calibre import entity_to_unicode, strftime, force_unicode
-from calibre.utils.date import dt_factory, utcnow, local_tz
+from calibre import force_unicode, replace_entities, strftime
 from calibre.utils.cleantext import clean_ascii_chars, clean_xml_chars
+from calibre.utils.date import dt_factory, local_tz, utcnow
+from calibre.utils.logging import default_log
+from polyglot.builtins import string_or_bytes
 
 
-class Article(object):
+class Article:
 
     def __init__(self, id, title, url, author, summary, published, content):
         from lxml import html
         self.downloaded = False
         self.id = id
-        if not title or not isinstance(title, basestring):
+        if not title or not isinstance(title, string_or_bytes):
             title = _('Unknown')
         title = force_unicode(title, 'utf-8')
         self._title = clean_xml_chars(title).strip()
         try:
-            self._title = re.sub(r'&(\S+?);',
-                entity_to_unicode, self._title)
-        except:
+            self._title = replace_entities(self._title)
+        except Exception:
             pass
         self._title = clean_ascii_chars(self._title)
         self.url = url
         self.author = author
         self.toc_thumbnail = None
-        if author and not isinstance(author, unicode):
+        self.internal_toc_entries = ()
+        if author and not isinstance(author, str):
             author = author.decode('utf-8', 'replace')
-        if summary and not isinstance(summary, unicode):
+        if summary and not isinstance(summary, str):
             summary = summary.decode('utf-8', 'replace')
         summary = clean_xml_chars(summary) if summary else summary
         self.summary = summary
         if summary and '<' in summary:
             try:
                 s = html.fragment_fromstring(summary, create_parent=True)
-                summary = html.tostring(s, method='text', encoding=unicode)
-            except:
+                summary = html.tostring(s, method='text', encoding='unicode')
+            except Exception:
                 print('Failed to process article summary, deleting:')
                 print(summary.encode('utf-8'))
                 traceback.print_exc()
-                summary = u''
+                summary = ''
         self.text_summary = clean_ascii_chars(summary)
         self.author = author
         self.content = content
@@ -56,59 +61,56 @@ class Article(object):
         self.localtime = self.utctime.astimezone(local_tz)
         self._formatted_date = None
 
-    @dynamic_property
+    @property
     def formatted_date(self):
 
-        def fget(self):
-            if self._formatted_date is None:
-                self._formatted_date = strftime(" [%a, %d %b %H:%M]",
-                        t=self.localtime.timetuple())
-            return self._formatted_date
+        if self._formatted_date is None:
+            self._formatted_date = strftime(' [%a, %d %b %H:%M]',
+                    t=self.localtime.timetuple())
+        return self._formatted_date
 
-        def fset(self, val):
-            if isinstance(val, unicode):
-                self._formatted_date = val
+    @formatted_date.setter
+    def formatted_date(self, val):
+        if isinstance(val, str):
+            self._formatted_date = val
 
-        return property(fget=fget, fset=fset)
-
-    @dynamic_property
+    @property
     def title(self):
-        def fget(self):
-            t = self._title
-            if not isinstance(t, unicode) and hasattr(t, 'decode'):
-                t = t.decode('utf-8', 'replace')
-            return t
+        t = self._title
+        if not isinstance(t, str) and hasattr(t, 'decode'):
+            t = t.decode('utf-8', 'replace')
+        return t
 
-        def fset(self, val):
-            self._title = clean_ascii_chars(val)
-        return property(fget=fget, fset=fset)
+    @title.setter
+    def title(self, val):
+        self._title = clean_ascii_chars(val)
 
     def __repr__(self):
         return \
-(u'''\
-Title       : %s
-URL         : %s
-Author      : %s
-Summary     : %s
-Date        : %s
-TOC thumb   : %s
-Has content : %s
-'''%(self.title, self.url, self.author, self.summary[:20]+'...',
+('''\
+Title       : {}
+URL         : {}
+Author      : {}
+Summary     : {}
+Date        : {}
+TOC thumb   : {}
+Has content : {}
+'''.format(self.title, self.url, self.author, self.summary[:20]+'...',
      self.localtime.strftime('%a, %d %b, %Y %H:%M'), self.toc_thumbnail,
-     bool(self.content))).encode('utf-8')
+     bool(self.content)))
 
     def __str__(self):
         return repr(self)
 
     def is_same_as(self, other_article):
         # if self.title != getattr(other_article, 'title', False):
-        #    return False
+        #     return False
         if self.url:
             return self.url == getattr(other_article, 'url', False)
         return self.content == getattr(other_article, 'content', False)
 
 
-class Feed(object):
+class Feed:
 
     def __init__(self, get_article_url=lambda item: item.get('link', None),
             log=default_log):
@@ -143,7 +145,7 @@ class Feed(object):
 
     def populate_from_preparsed_feed(self, title, articles, oldest_article=7,
                            max_articles_per_feed=100):
-        self.title      = unicode(title if title else _('Unknown feed'))
+        self.title      = str(title if title else _('Unknown feed'))
         self.description = ''
         self.image_url  = None
         self.articles   = []
@@ -158,7 +160,7 @@ class Feed(object):
             self.id_counter += 1
             id = item.get('id', None)
             if not id:
-                id = 'internal id#%s'%self.id_counter
+                id = f'internal id#{self.id_counter}'
             if id in self.added_articles:
                 return
             self.added_articles.append(id)
@@ -173,9 +175,8 @@ class Feed(object):
             if delta.days*24*3600 + delta.seconds <= 24*3600*self.oldest_article:
                 self.articles.append(article)
             else:
-                t = strftime(u'%a, %d %b, %Y %H:%M', article.localtime.timetuple())
-                self.logger.debug(u'Skipping article %s (%s) from feed %s as it is too old.'%
-                        (title, t, self.title))
+                t = strftime('%a, %d %b, %Y %H:%M', article.localtime.timetuple())
+                self.logger.debug(f'Skipping article {title} ({t}) from feed {self.title} as it is too old.')
             d = item.get('date', '')
             article.formatted_date = d
 
@@ -183,7 +184,7 @@ class Feed(object):
         self.id_counter += 1
         id = item.get('id', None)
         if not id:
-            id = 'internal id#%s'%self.id_counter
+            id = f'internal id#{self.id_counter}'
         if id in self.added_articles:
             return
         published = None
@@ -193,14 +194,24 @@ class Feed(object):
             if published is not None:
                 break
         if not published:
+            from dateutil.parser import parse
+            for date_field in ('date', 'published', 'updated'):
+                try:
+                    published = parse(item[date_field]).timetuple()
+                except Exception:
+                    continue
+                break
+        if not published:
             published = time.gmtime()
         self.added_articles.append(id)
 
         title = item.get('title', _('Untitled article'))
+        if title.startswith('<'):
+            title = re.sub(r'<.+?>', '', title)
         try:
             link  = self.get_article_url(item)
-        except:
-            self.logger.warning('Failed to get link for %s'%title)
+        except Exception:
+            self.logger.warning(f'Failed to get link for {title}')
             self.logger.debug(traceback.format_exc())
             link = None
 
@@ -208,9 +219,9 @@ class Feed(object):
         author = item.get('author', None)
 
         content = [i.value for i in item.get('content', []) if i.value]
-        content = [i if isinstance(i, unicode) else i.decode('utf-8', 'replace')
+        content = [i if isinstance(i, str) else i.decode('utf-8', 'replace')
                 for i in content]
-        content = u'\n'.join(content)
+        content = '\n'.join(content)
         if not content.strip():
             content = None
         if not link and not content:
@@ -221,12 +232,13 @@ class Feed(object):
             self.articles.append(article)
         else:
             try:
-                self.logger.debug('Skipping article %s (%s) from feed %s as it is too old.'%
-                                  (title, article.localtime.strftime('%a, %d %b, %Y %H:%M'), self.title))
+                self.logger.debug(
+                    'Skipping article {} ({}) from feed {} as it is too old.'.format(
+                        title, article.localtime.strftime('%a, %d %b, %Y %H:%M'), self.title))
             except UnicodeDecodeError:
-                if not isinstance(title, unicode):
+                if not isinstance(title, str):
                     title = title.decode('utf-8', 'replace')
-                self.logger.debug('Skipping article %s as it is too old'%title)
+                self.logger.debug(f'Skipping article {title} as it is too old')
 
     def reverse(self):
         self.articles.reverse()
@@ -238,18 +250,12 @@ class Feed(object):
         return len(self.articles)
 
     def __repr__(self):
-        res = [('%20s\n'%'').replace(' ', '_')+repr(art) for art in self]
+        res = ['_'*20 + f'\n{art!r}' for art in self]
 
         return '\n'+'\n'.join(res)+'\n'
 
     def __str__(self):
         return repr(self)
-
-    def __bool__(self):
-        for article in self:
-            if getattr(article, 'downloaded', False):
-                return True
-        return False
 
     def has_embedded_content(self):
         length = 0
@@ -288,8 +294,8 @@ class FeedCollection(list):
 
     def __init__(self, feeds):
         list.__init__(self, [f for f in feeds if len(f.articles) > 0])
-        found_articles = set([])
-        duplicates = set([])
+        found_articles = set()
+        duplicates = set()
 
         def in_set(s, a):
             for x in s:
@@ -298,7 +304,7 @@ class FeedCollection(list):
             return None
 
         print('#feeds', len(self))
-        print(map(len, self))
+        print(list(map(len, self)))
         for f in self:
             dups = []
             for a in f:
@@ -313,21 +319,21 @@ class FeedCollection(list):
 
         self.duplicates = duplicates
         print(len(duplicates))
-        print(map(len, self))
+        print(list(map(len, self)))
         # raise
 
     def find_article(self, article):
         for j, f in enumerate(self):
             for i, a in enumerate(f):
                 if a is article:
-                    return (j, i)
+                    return j, i
 
     def restore_duplicates(self):
         temp = []
         for article, feed in self.duplicates:
             art = copy.deepcopy(article)
             j, i = self.find_article(article)
-            art.url = '../feed_%d/article_%d/index.html'%(j, i)
+            art.url = f'../feed_{j}/article_{i}/index.html'
             temp.append((feed, art))
         for feed, art in temp:
             feed.articles.append(art)
@@ -338,9 +344,10 @@ def feed_from_xml(raw_xml, title=None, oldest_article=7,
                   get_article_url=lambda item: item.get('link', None),
                   log=default_log):
     from calibre.web.feeds.feedparser import parse
+
     # Handle unclosed escaped entities. They trip up feedparser and HBR for one
     # generates them
-    raw_xml = re.sub(r'(&amp;#\d+)([^0-9;])', r'\1;\2', raw_xml)
+    raw_xml = re.sub(br'(&amp;#\d+)([^0-9;])', br'\1;\2', raw_xml)
     feed = parse(raw_xml)
     pfeed = Feed(get_article_url=get_article_url, log=log)
     pfeed.populate_from_feed(feed, title=title,

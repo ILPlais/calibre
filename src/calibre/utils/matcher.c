@@ -9,15 +9,13 @@
 #define NO_PYTHON_TO_ICU32
 #include "icu_calibre_utils.h"
 #include <float.h>
+#include <stdbool.h>
 
 #ifdef _MSC_VER
 // inline does not work with the visual studio C compiler
 #define inline
 #endif
 
-typedef unsigned char bool;
-#define TRUE 1
-#define FALSE 0
 #define MAX(x, y) ((x > y) ? x : y)
 #define nullfree(x) if(x != NULL) free(x); x = NULL;
 
@@ -78,7 +76,7 @@ typedef struct {
 } StackItem;
 
 typedef struct {
-    ssize_t pos;
+    Py_ssize_t pos;
     int32_t needle_len;
     size_t size;
     StackItem *items;
@@ -164,7 +162,7 @@ static void convert_positions(int32_t *positions, int32_t *final_positions, UCha
     for (i = 0; i < byte_len && final_positions < end; i++) {
         if (positions[i] == -1) continue;
 #if PY_VERSION_HEX >= 0x03030000
-        *final_positions = positions[i];
+        *final_positions = u_countChar32(string, positions[i]);
 #else
 #ifdef Py_UNICODE_WIDE
         *final_positions = u_countChar32(string, positions[i]);
@@ -193,7 +191,7 @@ static double process_item(MatchInfo *m, Stack *stack, int32_t *final_positions,
             // No memoized result, calculate the score
             for (i = nidx; i < m->needle_len;) {
                 nidx = i;
-                U16_FWD_1(m->needle, i, m->needle_len);// i now points to next char in needle 
+                U16_FWD_1(m->needle, i, m->needle_len);// i now points to next char in needle
                 search = searches[nidx];
                 if (search == NULL || m->haystack_len - hidx < m->needle_len - nidx) { score = 0.0; break; }
                 status = U_ZERO_ERROR; // We ignore any errors as we already know that hidx is correct
@@ -201,20 +199,20 @@ static double process_item(MatchInfo *m, Stack *stack, int32_t *final_positions,
                 status = U_ZERO_ERROR;
                 pos = usearch_next(search, &status);
                 if (pos == USEARCH_DONE) { score = 0.0; break; } // No matches found
-                distance = u_countChar32(m->haystack + last_idx, pos - last_idx);  
+                distance = u_countChar32(m->haystack + last_idx, pos - last_idx);
                 if (distance <= 1) score_for_char = m->max_score_per_char;
                 else {
-                    U16_GET(m->haystack, 0, pos, m->haystack_len, hc); 
+                    U16_GET(m->haystack, 0, pos, m->haystack_len, hc);
                     j = pos;
                     U16_PREV(m->haystack, 0, j, lc); // lc is the prev character
                     score_for_char = calc_score_for_char(m, lc, hc, distance);
                 }
                 j = pos;
-                U16_NEXT(m->haystack, j, m->haystack_len, hc); 
+                U16_NEXT(m->haystack, j, m->haystack_len, hc);
                 hidx = j;
                 if (m->haystack_len - hidx >= m->needle_len - nidx) stack_push(stack, hidx, nidx, last_idx, score, positions);
-                last_idx = pos; 
-                positions[nidx] = pos; 
+                last_idx = pos;
+                positions[nidx] = pos;
                 score += score_for_char;
             } // for(i) iterate over needle
             mem.score = score; memcpy(mem.positions, positions, sizeof(*positions) * m->needle_len);
@@ -240,10 +238,10 @@ static bool create_searches(UStringSearch **searches, UChar *haystack, int32_t h
         U16_FWD_1(needle, i, needle_len);
         if (pos == i) break;
         searches[pos] = usearch_openFromCollator(needle + pos, i - pos, haystack, haystack_len, collator, NULL, &status);
-        if (U_FAILURE(status)) { PyErr_SetString(PyExc_ValueError, u_errorName(status)); searches[pos] = NULL; return FALSE; }
+        if (U_FAILURE(status)) { PyErr_SetString(PyExc_ValueError, u_errorName(status)); searches[pos] = NULL; return false; }
     }
 
-    return TRUE;
+    return true;
 }
 
 static void free_searches(UStringSearch **searches, int32_t count) {
@@ -256,17 +254,17 @@ static void free_searches(UStringSearch **searches, int32_t count) {
 
 static bool match(UChar **items, int32_t *item_lengths, uint32_t item_count, UChar *needle, Match *match_results, int32_t *final_positions, int32_t needle_char_len, UCollator *collator, UChar *level1, UChar *level2, UChar *level3) {
     Stack stack = {0};
-    int32_t i = 0, maxhl = 0; 
+    int32_t i = 0, maxhl = 0;
     int32_t r = 0, *positions = NULL;
     MatchInfo *matches = NULL;
-    bool ok = FALSE;
+    bool ok = false;
     MemoryItem ***memo = NULL;
     int32_t needle_len = u_strlen(needle);
     UStringSearch **searches = NULL;
 
     if (needle_len <= 0 || item_count <= 0) {
         for (i = 0; i < (int32_t)item_count; i++) match_results[i].score = 0.0;
-        ok = TRUE;
+        ok = true;
         goto end;
     }
 
@@ -289,7 +287,7 @@ static bool match(UChar **items, int32_t *item_lengths, uint32_t item_count, UCh
 
     if (maxhl <= 0) {
         for (i = 0; i < (int32_t)item_count; i++) match_results[i].score = 0.0;
-        ok = TRUE;
+        ok = true;
         goto end;
     }
 
@@ -308,7 +306,7 @@ static bool match(UChar **items, int32_t *item_lengths, uint32_t item_count, UCh
         convert_positions(positions, final_positions + i * needle_char_len, matches[i].haystack, needle_char_len, needle_len, match_results[i].score);
     }
 
-    ok = TRUE;
+    ok = true;
 end:
     nullfree(positions);
     nullfree(stack.items);
@@ -340,9 +338,9 @@ static void free_matcher(Matcher *self) {
     if (self->items != NULL) {
         for (i = 0; i < self->item_count; i++) { nullfree(self->items[i]); }
     }
-    nullfree(self->items); nullfree(self->item_lengths); 
+    nullfree(self->items); nullfree(self->item_lengths);
     nullfree(self->level1); nullfree(self->level2); nullfree(self->level3);
-    if (self->collator != NULL) ucol_close(self->collator); self->collator = NULL;
+    if (self->collator != NULL) { ucol_close(self->collator); self->collator = NULL; }
 }
 static void
 Matcher_dealloc(Matcher* self)
@@ -361,12 +359,16 @@ Matcher_init(Matcher *self, PyObject *args, PyObject *kwds)
     UCollator *col = NULL;
 
     if (!PyArg_ParseTuple(args, "OOOOO", &items, &collator, &level1, &level2, &level3)) return -1;
-    
+
     // Clone the passed in collator (cloning is needed as collators are not thread safe)
     if (!PyCapsule_CheckExact(collator)) { PyErr_SetString(PyExc_TypeError, "Collator must be a capsule"); return -1; }
     col = (UCollator*)PyCapsule_GetPointer(collator, NULL);
     if (col == NULL) return -1;
+#if U_ICU_VERSION_MAJOR_NUM > 70
+    self->collator = ucol_clone(col, &status);
+#else
     self->collator = ucol_safeClone(col, NULL, NULL, &status);
+#endif
     col = NULL;
     if (U_FAILURE(status)) { self->collator = NULL; PyErr_SetString(PyExc_ValueError, u_errorName(status)); return -1; }
 
@@ -395,13 +397,13 @@ end:
     return (PyErr_Occurred()) ? -1 : 0;
 }
 // Matcher.__init__() }}}
- 
+
 // Matcher.calculate_scores {{{
 static PyObject *
 Matcher_calculate_scores(Matcher *self, PyObject *args) {
     int32_t *final_positions = NULL, *p;
     Match *matches = NULL;
-    bool ok = FALSE;
+    bool ok = false;
     uint32_t i = 0, needle_char_len = 0, j = 0;
     PyObject *items = NULL, *score = NULL, *positions = NULL, *pneedle = NULL;
     UChar *needle = NULL;
@@ -501,41 +503,24 @@ static PyTypeObject MatcherType = { // {{{
     /* tp_new            */ PyType_GenericNew,
 }; // }}}
 
-#if PY_MAJOR_VERSION >= 3
-#define INITERROR return NULL
-static struct PyModuleDef matcher_module = {
-    /* m_base     */ PyModuleDef_HEAD_INIT,
-    /* m_name     */ "matcher",
-    /* m_doc      */ "Find subsequence matches.",
-    /* m_size     */ -1,
-    /* m_methods  */ 0,
-    /* m_slots    */ 0,
-    /* m_traverse */ 0,
-    /* m_clear    */ 0,
-    /* m_free     */ 0,
-};
-
-CALIBRE_MODINIT_FUNC PyInit_matcher(void) {
-    PyObject *mod = PyModule_Create(&matcher_module);
-#else
-#define INITERROR return
-CALIBRE_MODINIT_FUNC initmatcher(void) {
-    PyObject *mod = Py_InitModule3("matcher", NULL, "Find subsequence matches");
-#endif
-
-    if (mod == NULL) INITERROR;
-
-    if (PyType_Ready(&MatcherType) < 0) {
-        INITERROR;
-    }
-
+static int
+exec_module(PyObject *mod) {
+    if (PyType_Ready(&MatcherType) < 0) return -1;
     Py_INCREF(&MatcherType);
     if(PyModule_AddObject(mod, "Matcher", (PyObject *)&MatcherType) < 0) {
         Py_DECREF(&MatcherType);
-        INITERROR;
+        return -1;
     }
-
-#if PY_MAJOR_VERSION >= 3
-    return mod;
-#endif
+	return 0;
 }
+
+static PyModuleDef_Slot slots[] = { {Py_mod_exec, exec_module}, {0, NULL} };
+
+static struct PyModuleDef module_def = {
+    .m_base     = PyModuleDef_HEAD_INIT,
+    .m_name     = "matcher",
+    .m_doc      = "Find subsequence matches.",
+    .m_slots    = slots,
+};
+
+CALIBRE_MODINIT_FUNC PyInit_matcher(void) { return PyModuleDef_Init(&module_def); }

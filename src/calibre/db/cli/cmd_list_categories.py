@@ -1,15 +1,13 @@
-#!/usr/bin/env python2
-# vim:fileencoding=utf-8
+#!/usr/bin/env python
 # License: GPLv3 Copyright: 2017, Kovid Goyal <kovid at kovidgoyal.net>
 
-from __future__ import absolute_import, division, print_function, unicode_literals
 
 import csv
 import sys
 from textwrap import TextWrapper
-from io import BytesIO
 
 from calibre import prints
+from polyglot.builtins import as_bytes
 
 readonly = True
 version = 0  # change this if you change signature of implementation()
@@ -26,7 +24,7 @@ def option_parser(get_parser, args):
 %prog list_categories [options]
 
 Produce a report of the category information in the database. The
-information is the equivalent of what is shown in the tags pane.
+information is the equivalent of what is shown in the Tag browser.
 '''
         )
     )
@@ -56,8 +54,8 @@ information is the equivalent of what is shown in the tags pane.
         '--categories',
         default='',
         dest='report',
-        help=_("Comma-separated list of category lookup names. "
-               "Default: all")
+        help=_('Comma-separated list of category lookup names. '
+               'Default: all')
     )
     parser.add_option(
         '-w',
@@ -73,19 +71,19 @@ information is the equivalent of what is shown in the tags pane.
 
 
 def do_list(fields, data, opts):
-    from calibre.utils.terminal import geometry, ColoredStream
+    from calibre.utils.terminal import ColoredStream, geometry
 
     separator = ' '
-    widths = list(map(lambda x: 0, fields))
+    widths = [0 for x in fields]
     for i in data:
         for j, field in enumerate(fields):
-            widths[j] = max(widths[j], max(len(field), len(unicode(i[field]))))
+            widths[j] = max(widths[j], max(len(field), len(str(i[field]))))
 
     screen_width = geometry()[0]
     if not screen_width:
         screen_width = 80
     field_width = screen_width // len(fields)
-    base_widths = map(lambda x: min(x + 1, field_width), widths)
+    base_widths = [min(x + 1, field_width) for x in widths]
 
     while sum(base_widths) < screen_width:
         adjusted = False
@@ -101,37 +99,43 @@ def do_list(fields, data, opts):
 
     widths = list(base_widths)
     titles = map(
-        lambda x, y: '%-*s%s' % (x - len(separator), y, separator), widths, fields
+        lambda x, y: '%-*s%s' % (x - len(separator), y, separator), widths, fields  # noqa: UP031
     )
     with ColoredStream(sys.stdout, fg='green'):
         prints(''.join(titles))
 
-    wrappers = map(lambda x: TextWrapper(x - 1), widths)
+    wrappers = [TextWrapper(x - 1) for x in widths]
 
     for record in data:
         text = [
-            wrappers[i].wrap(unicode(record[field]))
+            wrappers[i].wrap(str(record[field]))
             for i, field in enumerate(fields)
         ]
         lines = max(map(len, text))
         for l in range(lines):
             for i, field in enumerate(text):
                 ft = text[i][l] if l < len(text[i]) else ''
-                filler = '%*s' % (widths[i] - len(ft) - 1, '')
+                filler = ' '*(widths[i] - len(ft) - 1)
                 print(ft.encode('utf-8') + filler.encode('utf-8'), end=separator)
             print()
 
 
+class StdoutWriter:
+
+    def __init__(self):
+        self.do_write = getattr(sys.stdout, 'buffer', sys.stdout).write
+
+    def write(self, x):
+        x = as_bytes(x)
+        self.do_write(x)
+
+
 def do_csv(fields, data, opts):
-    buf = BytesIO()
-    csv_print = csv.writer(buf, opts.dialect)
+    csv_print = csv.writer(StdoutWriter(), opts.dialect)
     csv_print.writerow(fields)
     for d in data:
         row = [d[f] for f in fields]
-        csv_print.writerow([
-            x if isinstance(x, bytes) else unicode(x).encode('utf-8') for x in row
-        ])
-    print(buf.getvalue())
+        csv_print.writerow(row)
 
 
 def main(opts, args, dbctx):
@@ -148,13 +152,11 @@ def main(opts, args, dbctx):
         (not report_on or k in report_on)
     ]
 
-    categories.sort(
-        cmp=lambda x, y: cmp(x if x[0] != '#' else x[1:], y if y[0] != '#' else y[1:])
-    )
+    categories.sort(key=lambda x: x if x[0] != '#' else x[1:])
 
     def fmtr(v):
         v = v or 0
-        ans = '%.1f' % v
+        ans = f'{v:.1f}'
         if ans.endswith('.0'):
             ans = ans[:-2]
         return ans
@@ -164,11 +166,11 @@ def main(opts, args, dbctx):
             is_rating = category_metadata(category)['datatype'] == 'rating'
             for tag in category_data[category]:
                 if is_rating:
-                    tag.name = unicode(len(tag.name))
+                    tag.name = str(len(tag.name))
                 data.append({
                     'category': category,
                     'tag_name': tag.name,
-                    'count': unicode(tag.count),
+                    'count': str(tag.count),
                     'rating': fmtr(tag.avg_rating),
                 })
     else:
@@ -176,7 +178,7 @@ def main(opts, args, dbctx):
             data.append({
                 'category': category,
                 'tag_name': _('CATEGORY ITEMS'),
-                'count': unicode(len(category_data[category])),
+                'count': str(len(category_data[category])),
                 'rating': ''
             })
 

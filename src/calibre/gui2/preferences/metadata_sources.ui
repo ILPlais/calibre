@@ -39,8 +39,7 @@
           <item>
            <widget class="QLabel" name="label">
             <property name="text">
-             <string>Disable any metadata sources you do not want by unchecking them. You can also set the cover priority. Covers from sources that have a higher (smaller) priority will be preferred when bulk downloading metadata.
-</string>
+             <string>Disable any metadata sources you do not want by unchecking them. You can also set the cover priority. Covers from sources that have a higher (smaller) priority will be preferred when bulk downloading metadata.</string>
             </property>
             <property name="wordWrap">
              <bool>true</bool>
@@ -78,6 +77,17 @@
             </property>
            </widget>
           </item>
+          <item>
+           <widget class="QPushButton" name="add_new_source_button">
+            <property name="text">
+             <string>&amp;Add new source</string>
+            </property>
+            <property name="icon">
+             <iconset resource="../../../../resources/images.qrc">
+              <normaloff>:/images/plus.png</normaloff>:/images/plus.png</iconset>
+            </property>
+           </widget>
+          </item>
          </layout>
         </widget>
        </item>
@@ -91,11 +101,29 @@
            <layout class="QGridLayout" name="gridLayout_2">
             <item row="0" column="0" colspan="2">
              <widget class="QListView" name="fields_view">
+              <property name="sizePolicy">
+               <sizepolicy hsizetype="Expanding" vsizetype="Minimum">
+                <horstretch>0</horstretch>
+                <verstretch>0</verstretch>
+               </sizepolicy>
+              </property>
               <property name="toolTip">
                <string>If you uncheck any fields, metadata for those fields will not be downloaded</string>
               </property>
+              <property name="sizeAdjustPolicy">
+               <enum>QAbstractScrollArea::AdjustToContents</enum>
+              </property>
               <property name="selectionMode">
                <enum>QAbstractItemView::NoSelection</enum>
+              </property>
+              <property name="flow">
+               <enum>QListView::LeftToRight</enum>
+              </property>
+              <property name="isWrapping" stdset="0">
+               <bool>true</bool>
+              </property>
+              <property name="resizeMode">
+               <enum>QListView::Adjust</enum>
               </property>
              </widget>
             </item>
@@ -109,7 +137,7 @@
             <item row="1" column="1">
              <widget class="QPushButton" name="clear_all_button">
               <property name="text">
-               <string>&amp;Clear all</string>
+               <string>Sele&amp;ct none</string>
               </property>
              </widget>
             </item>
@@ -119,7 +147,7 @@
                <string>Restore your own subset of checked fields that you define using the 'Set as default' button</string>
               </property>
               <property name="text">
-               <string>&amp;Select default</string>
+               <string>Select &amp;default</string>
               </property>
              </widget>
             </item>
@@ -146,8 +174,8 @@
              <rect>
               <x>0</x>
               <y>0</y>
-              <width>373</width>
-              <height>341</height>
+              <width>350</width>
+              <height>455</height>
              </rect>
             </property>
             <property name="sizePolicy">
@@ -164,14 +192,14 @@
                </property>
               </widget>
              </item>
-             <item row="3" column="0" colspan="2">
+             <item row="1" column="0" colspan="2">
               <widget class="QCheckBox" name="opt_swap_author_names">
                <property name="text">
                 <string>Swap &amp;author names from FN LN to LN, FN</string>
                </property>
               </widget>
              </item>
-             <item row="5" column="0" colspan="2">
+             <item row="2" column="0" colspan="2">
               <widget class="QCheckBox" name="opt_append_comments">
                <property name="toolTip">
                 <string>&lt;p&gt;When downloading comments, append the downloaded comments to any existing comment, instead of overwriting them.</string>
@@ -184,14 +212,17 @@
                </property>
               </widget>
              </item>
-             <item row="6" column="0" colspan="2">
-              <widget class="QCheckBox" name="opt_find_first_edition_date">
+             <item row="3" column="0" colspan="2">
+              <widget class="QCheckBox" name="opt_keep_dups">
+               <property name="toolTip">
+                <string>&lt;p&gt;Normally, the metadata download system will keep only a single result per metadata source. This option will cause it to keep all results returned from every metadata source. Useful if you only use one or two sources and want to select individual results from them by hand. Note that result with identical title/author/identifiers are still merged.</string>
+               </property>
                <property name="text">
-                <string>Use &amp;published date of &quot;first edition&quot; (from worldcat.org)</string>
+                <string>Keep more than one entry per source</string>
                </property>
               </widget>
              </item>
-             <item row="9" column="0" colspan="2">
+             <item row="4" column="0" colspan="2">
               <widget class="QCheckBox" name="opt_fewer_tags">
                <property name="toolTip">
                 <string>&lt;p&gt;Different metadata sources have different sets of tags for the same book. If this option is checked, then calibre will use the smaller tag sets. These tend to be more like genres, while the larger tag sets tend to describe the books content.
@@ -205,24 +236,26 @@
                </property>
               </widget>
              </item>
-             <item row="10" column="0" colspan="2">
-              <widget class="QPushButton" name="tag_map_rules_button">
+             <item row="5" column="0" colspan="2">
+              <widget class="QToolButton" name="map_rules_button">
+               <property name="sizePolicy">
+                <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
+                 <horstretch>0</horstretch>
+                 <verstretch>0</verstretch>
+                </sizepolicy>
+               </property>
                <property name="text">
-                <string>Create &amp;rules to filter/transform tags</string>
+                <string>Create &amp;rules to transform tags/authors/publishers</string>
+               </property>
+               <property name="popupMode">
+                <enum>QToolButton::InstantPopup</enum>
+               </property>
+               <property name="toolButtonStyle">
+                <enum>Qt::ToolButtonTextOnly</enum>
                </property>
               </widget>
              </item>
-             <item row="12" column="0">
-              <widget class="QPushButton" name="author_map_rules_button">
-               <property name="text">
-                <string>Create rules to &amp;transform author names</string>
-               </property>
-              </widget>
-             </item>
-             <item row="13" column="1">
-              <widget class="QSpinBox" name="opt_max_tags"/>
-             </item>
-             <item row="13" column="0">
+             <item row="6" column="0">
               <widget class="QLabel" name="label_2">
                <property name="text">
                 <string>Max. &amp;number of tags to download:</string>
@@ -232,7 +265,10 @@
                </property>
               </widget>
              </item>
-             <item row="14" column="0">
+             <item row="6" column="1">
+              <widget class="QSpinBox" name="opt_max_tags"/>
+             </item>
+             <item row="7" column="0">
               <widget class="QLabel" name="label_3">
                <property name="text">
                 <string>Max. &amp;time to wait after first match is found:</string>
@@ -242,14 +278,14 @@
                </property>
               </widget>
              </item>
-             <item row="14" column="1">
+             <item row="7" column="1">
               <widget class="QSpinBox" name="opt_wait_after_first_identify_result">
                <property name="suffix">
                 <string> secs</string>
                </property>
               </widget>
              </item>
-             <item row="15" column="0">
+             <item row="8" column="0">
               <widget class="QLabel" name="label_4">
                <property name="text">
                 <string>Max. time to wait after first &amp;cover is found:</string>
@@ -259,7 +295,7 @@
                </property>
               </widget>
              </item>
-             <item row="15" column="1">
+             <item row="8" column="1">
               <widget class="QSpinBox" name="opt_wait_after_first_cover_result">
                <property name="suffix">
                 <string> secs</string>

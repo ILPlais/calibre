@@ -1,29 +1,51 @@
-#!/usr/bin/env python2
-# vim:fileencoding=utf-8
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
+#!/usr/bin/env python
+
 
 __license__ = 'GPL v3'
 __copyright__ = '2014, Kovid Goyal <kovid at kovidgoyal.net>'
 
-import sys, os, re
+import os
+import re
+import sys
+import textwrap
 from functools import partial
 
-from PyQt5.Qt import (
-    QGridLayout, QToolButton, QIcon, QRadioButton, QMenu, QApplication, Qt,
-    QSize, QWidget, QLabel, QStackedLayout, QPainter, QRect, QVBoxLayout,
-    QCursor, QEventLoop, QKeySequence, pyqtSignal, QTimer, QHBoxLayout)
+from qt.core import (
+    QApplication,
+    QCursor,
+    QDialogButtonBox,
+    QEventLoop,
+    QGridLayout,
+    QHBoxLayout,
+    QIcon,
+    QKeySequence,
+    QLabel,
+    QMenu,
+    QPainter,
+    QRadioButton,
+    QRect,
+    QSize,
+    QStackedLayout,
+    Qt,
+    QTimer,
+    QToolButton,
+    QVBoxLayout,
+    QWidget,
+    pyqtSignal,
+)
 
 from calibre.ebooks.oeb.polish.container import Container
 from calibre.ebooks.oeb.polish.utils import guess_type
 from calibre.gui2 import info_dialog
 from calibre.gui2.progress_indicator import ProgressIndicator
-from calibre.gui2.tweak_book.editor import syntax_from_mime
 from calibre.gui2.tweak_book.diff.view import DiffView
+from calibre.gui2.tweak_book.editor import syntax_from_mime
 from calibre.gui2.tweak_book.widgets import Dialog
 from calibre.gui2.widgets2 import HistoryLineEdit2
+from calibre.startup import connect_lambda
 from calibre.utils.filenames import samefile
 from calibre.utils.icu import numeric_sort_key
+from polyglot.builtins import iteritems
 
 
 class BusyWidget(QWidget):  # {{{
@@ -34,10 +56,10 @@ class BusyWidget(QWidget):  # {{{
         self.setLayout(l)
         l.addStretch(10)
         self.pi = ProgressIndicator(self, 128)
-        l.addWidget(self.pi, alignment=Qt.AlignHCenter)
+        l.addWidget(self.pi, alignment=Qt.AlignmentFlag.AlignHCenter)
         self.dummy = QLabel('<h2>\xa0')
         l.addSpacing(10)
-        l.addWidget(self.dummy, alignment=Qt.AlignHCenter)
+        l.addWidget(self.dummy, alignment=Qt.AlignmentFlag.AlignHCenter)
         l.addStretch(10)
         self.text = _('Calculating differences, please wait...')
 
@@ -50,14 +72,14 @@ class BusyWidget(QWidget):  # {{{
         f.setBold(True)
         f.setPointSize(20)
         p.setFont(f)
-        p.setPen(Qt.SolidLine)
+        p.setPen(Qt.PenStyle.SolidLine)
         r = QRect(0, self.dummy.geometry().top() + 10, self.geometry().width(), 150)
-        p.drawText(r, Qt.AlignHCenter | Qt.AlignTop | Qt.TextSingleLine, self.text)
+        p.drawText(r, Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop | Qt.TextFlag.TextSingleLine, self.text)
         p.end()
 # }}}
 
 
-class Cache(object):
+class Cache:
 
     def __init__(self):
         self._left, self._right = {}, {}
@@ -79,11 +101,11 @@ def changed_files(list_of_names1, list_of_names2, get_data1, get_data2):
     removals = list_of_names1 - common_names
     adds = set(list_of_names2 - common_names)
     adata, rdata = {a:get_data2(a) for a in adds}, {r:get_data1(r) for r in removals}
-    ahash = {a:hash(d) for a, d in adata.iteritems()}
-    rhash = {r:hash(d) for r, d in rdata.iteritems()}
+    ahash = {a:hash(d) for a, d in iteritems(adata)}
+    rhash = {r:hash(d) for r, d in iteritems(rdata)}
     renamed_names, removed_names, added_names = {}, set(), set()
-    for name, rh in rhash.iteritems():
-        for n, ah in ahash.iteritems():
+    for name, rh in iteritems(rhash):
+        for n, ah in iteritems(ahash):
             if ah == rh:
                 renamed_names[name] = n
                 adds.discard(n)
@@ -98,7 +120,7 @@ def changed_files(list_of_names1, list_of_names2, get_data1, get_data2):
 
 
 def get_decoded_raw(name):
-    from calibre.ebooks.chardet import xml_to_unicode, force_encoding
+    from calibre.ebooks.chardet import force_encoding, xml_to_unicode
     with open(name, 'rb') as f:
         raw = f.read()
     syntax = syntax_from_mime(name, guess_type(name))
@@ -111,13 +133,15 @@ def get_decoded_raw(name):
         if syntax in {'html', 'xml'}:
             raw = xml_to_unicode(raw, verbose=True)[0]
         else:
-            m = re.search(br"coding[:=]\s*([-\w.]+)", raw[:1024], flags=re.I)
+            m = re.search(br'coding[:=]\s*([-\w.]+)', raw[:1024], flags=re.I)
             if m is not None and m.group(1) != '8bit':
                 enc = m.group(1)
                 if enc == b'unicode':
                     enc = 'utf-8'
             else:
                 enc = force_encoding(raw, verbose=True)
+            if isinstance(enc, bytes):
+                enc = enc.decode('utf-8', 'ignore')
             try:
                 raw = raw.decode(enc)
             except (LookupError, ValueError):
@@ -129,7 +153,7 @@ def get_decoded_raw(name):
 
 
 def string_diff(left, right, left_syntax=None, right_syntax=None, left_name='left', right_name='right'):
-    left, right = unicode(left), unicode(right)
+    left, right = str(left), str(right)
     cache = Cache()
     cache.set_left(left_name, left), cache.set_right(right_name, right)
     changed_names = {} if left == right else {left_name:right_name}
@@ -139,7 +163,8 @@ def string_diff(left, right, left_syntax=None, right_syntax=None, left_name='lef
 def file_diff(left, right):
     (raw1, syntax1), (raw2, syntax2) = map(get_decoded_raw, (left, right))
     if type(raw1) is not type(raw2):
-        raw1, raw2 = open(left, 'rb').read(), open(right, 'rb').read()
+        with open(left, 'rb') as f1, open(right, 'rb') as f2:
+            raw1, raw2 = f1.read(), f2.read()
     cache = Cache()
     cache.set_left(left, raw1), cache.set_right(right, raw2)
     changed_names = {} if raw1 == raw2 else {left:right}
@@ -212,18 +237,20 @@ class Diff(Dialog):
         self.apply_diff_calls = []
         self.show_open_in_editor = show_open_in_editor
         self.revert_button_msg = revert_button_msg
+        self.show_as_window = show_as_window
         Dialog.__init__(self, _('Differences between books'), 'diff-dialog', parent=parent)
-        self.setWindowFlags(self.windowFlags() | Qt.WindowMinMaxButtonsHint)
-        if show_as_window:
-            self.setWindowFlags(Qt.Window)
         self.view.line_activated.connect(self.line_activated)
 
     def sizeHint(self):
-        geom = QApplication.instance().desktop().availableGeometry(self)
+        geom = self.screen().availableSize()
         return QSize(int(0.9 * geom.width()), int(0.8 * geom.height()))
 
     def setup_ui(self):
-        self.setWindowIcon(QIcon(I('diff.png')))
+        self.setWindowIcon(QIcon.ic('diff.png'))
+        if self.show_as_window:
+            self.setWindowFlags(Qt.WindowType.Window)
+        else:
+            self.setWindowFlags(self.windowFlags() | Qt.WindowType.WindowMinMaxButtonsHint)
         self.stacks = st = QStackedLayout(self)
         self.busy = BusyWidget(self)
         self.w = QWidget(self)
@@ -238,17 +265,17 @@ class Diff(Dialog):
 
         r = l.rowCount()
         self.bp = b = QToolButton(self)
-        b.setIcon(QIcon(I('back.png')))
+        b.setIcon(QIcon.ic('back.png'))
         connect_lambda(b.clicked, self, lambda self: self.view.next_change(-1))
         b.setToolTip(_('Go to previous change') + ' [p]')
-        b.setText(_('&Previous change')), b.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        b.setText(_('&Previous change')), b.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         l.addWidget(b, r, 0)
 
         self.bn = b = QToolButton(self)
-        b.setIcon(QIcon(I('forward.png')))
+        b.setIcon(QIcon.ic('forward.png'))
         connect_lambda(b.clicked, self, lambda self: self.view.next_change(1))
         b.setToolTip(_('Go to next change') + ' [n]')
-        b.setText(_('&Next change')), b.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        b.setText(_('&Next change')), b.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         l.addWidget(b, r, 1)
 
         self.search = s = HistoryLineEdit2(self)
@@ -257,16 +284,16 @@ class Diff(Dialog):
         s.setPlaceholderText(_('Search for text'))
         connect_lambda(s.returnPressed, self, lambda self: self.do_search(False))
         self.sbn = b = QToolButton(self)
-        b.setIcon(QIcon(I('arrow-down.png')))
+        b.setIcon(QIcon.ic('arrow-down.png'))
         connect_lambda(b.clicked, self, lambda self: self.do_search(False))
         b.setToolTip(_('Find next match'))
-        b.setText(_('Next &match')), b.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        b.setText(_('Next &match')), b.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         l.addWidget(b, r, 3)
         self.sbp = b = QToolButton(self)
-        b.setIcon(QIcon(I('arrow-up.png')))
+        b.setIcon(QIcon.ic('arrow-up.png'))
         connect_lambda(b.clicked, self, lambda self: self.do_search(True))
         b.setToolTip(_('Find previous match'))
-        b.setText(_('P&revious match')), b.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        b.setText(_('P&revious match')), b.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         l.addWidget(b, r, 4)
         self.lb = b = QRadioButton(_('Left panel'), self)
         b.setToolTip(_('Perform search in the left panel'))
@@ -276,10 +303,10 @@ class Diff(Dialog):
         l.addWidget(b, r, 6)
         b.setChecked(True)
         self.pb = b = QToolButton(self)
-        b.setIcon(QIcon(I('config.png')))
-        b.setText(_('&Options')), b.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        b.setIcon(QIcon.ic('config.png'))
+        b.setText(_('&Options')), b.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         b.setToolTip(_('Change how the differences are displayed'))
-        b.setPopupMode(b.InstantPopup)
+        b.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         m = QMenu(b)
         b.setMenu(m)
         cm = self.cm = QMenu(_('Lines of context around each change'))
@@ -294,29 +321,34 @@ class Diff(Dialog):
         self.hl = QHBoxLayout()
         l.addLayout(self.hl, l.rowCount(), 0, 1, -1)
         self.names = QLabel('')
-        self.hl.addWidget(self.names, r)
+        self.hl.addWidget(self.names, stretch=100)
+        if self.show_open_in_editor:
+            self.edit_msg = QLabel(_('Double click right side to edit'))
+            self.edit_msg.setToolTip(textwrap.fill(_(
+                'Double click on any change in the right panel to edit that location in the editor')))
+            self.hl.addWidget(self.edit_msg)
 
-        self.bb.setStandardButtons(self.bb.Close)
+        self.bb.setStandardButtons(QDialogButtonBox.StandardButton.Close)
         if self.revert_button_msg is not None:
-            self.rvb = b = self.bb.addButton(self.revert_button_msg, self.bb.ActionRole)
-            b.setIcon(QIcon(I('edit-undo.png'))), b.setAutoDefault(False)
+            self.rvb = b = self.bb.addButton(self.revert_button_msg, QDialogButtonBox.ButtonRole.ActionRole)
+            b.setIcon(QIcon.ic('edit-undo.png')), b.setAutoDefault(False)
             b.clicked.connect(self.revert_requested)
             b.clicked.connect(self.reject)
-        self.bb.button(self.bb.Close).setDefault(True)
-        self.hl.addWidget(self.bb, r)
+        self.bb.button(QDialogButtonBox.StandardButton.Close).setDefault(True)
+        self.hl.addWidget(self.bb)
 
-        self.view.setFocus(Qt.OtherFocusReason)
+        self.view.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def break_cycles(self):
         self.view = None
         for x in ('revert_requested', 'line_activated'):
             try:
                 getattr(self, x).disconnect()
-            except:
+            except Exception:
                 pass
 
     def do_search(self, reverse):
-        text = unicode(self.search.text())
+        text = str(self.search.text())
         if not text.strip():
             return
         v = self.view.view.left if self.lb.isChecked() else self.view.view.right
@@ -351,8 +383,8 @@ class Diff(Dialog):
         self.stacks.setCurrentIndex(0)
         self.busy.setVisible(True)
         self.busy.pi.startAnimation()
-        QApplication.setOverrideCursor(QCursor(Qt.WaitCursor))
-        QApplication.processEvents(QEventLoop.ExcludeUserInputEvents | QEventLoop.ExcludeSocketNotifiers)
+        QApplication.setOverrideCursor(QCursor(Qt.CursorShape.WaitCursor))
+        QApplication.processEvents(QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents | QEventLoop.ProcessEventsFlag.ExcludeSocketNotifiers)
 
     def __exit__(self, *args):
         self.busy.pi.stopAnimation()
@@ -360,10 +392,10 @@ class Diff(Dialog):
         QApplication.restoreOverrideCursor()
 
     def set_names(self, names):
+        t = ''
         if isinstance(names, tuple):
-            self.names.setText('%s <--> %s' % names)
-        else:
-            self.names.setText('')
+            t = '{} <--> {}'.format(*names)
+        self.names.setText(t)
 
     def ebook_diff(self, path1, path2, names=None):
         self.set_names(names)
@@ -397,7 +429,7 @@ class Diff(Dialog):
 
     def dir_diff(self, left, right, identical_msg=None):
         with self:
-            identical = self.apply_diff(identical_msg or _('The directories are identical'), *dir_diff(left, right))
+            identical = self.apply_diff(identical_msg or _('The folders are identical'), *dir_diff(left, right))
             self.view.finalize()
         if identical:
             self.reject()
@@ -416,10 +448,11 @@ class Diff(Dialog):
             self.busy.setVisible(True)
             return True
 
-        kwargs = lambda name: {'context':self.context, 'beautify':self.beautify, 'syntax':syntax_map.get(name, None)}
+        def kwargs(name):
+            return {'context': self.context, 'beautify': self.beautify, 'syntax': syntax_map.get(name, None)}
 
         if isinstance(changed_names, dict):
-            for name, other_name in sorted(changed_names.iteritems(), key=lambda x:numeric_sort_key(x[0])):
+            for name, other_name in sorted(iteritems(changed_names), key=lambda x: numeric_sort_key(x[0])):
                 args = (name, other_name, cache.left(name), cache.right(other_name))
                 add(args, kwargs(name))
         else:
@@ -435,25 +468,25 @@ class Diff(Dialog):
             args = (name, _('[%s was removed]') % name, cache.left(name), None)
             add(args, kwargs(name))
 
-        for name, new_name in sorted(renamed_names.iteritems(), key=lambda x:numeric_sort_key(x[0])):
+        for name, new_name in sorted(iteritems(renamed_names), key=lambda x: numeric_sort_key(x[0])):
             args = (name, new_name, None, None)
             add(args, kwargs(name))
 
     def keyPressEvent(self, ev):
         if not self.view.handle_key(ev):
-            if ev.key() in (Qt.Key_Enter, Qt.Key_Return):
+            if ev.key() in (Qt.Key.Key_Enter, Qt.Key.Key_Return):
                 return  # The enter key is used by the search box, so prevent it closing the dialog
-            if ev.key() == Qt.Key_Slash:
-                return self.search.setFocus(Qt.OtherFocusReason)
-            if ev.matches(QKeySequence.Copy):
+            if ev.key() == Qt.Key.Key_Slash:
+                return self.search.setFocus(Qt.FocusReason.OtherFocusReason)
+            if ev.matches(QKeySequence.StandardKey.Copy):
                 text = self.view.view.left.selected_text + self.view.view.right.selected_text
                 if text:
                     QApplication.clipboard().setText(text)
                 return
-            if ev.matches(QKeySequence.FindNext):
+            if ev.matches(QKeySequence.StandardKey.FindNext):
                 self.sbn.click()
                 return
-            if ev.matches(QKeySequence.FindPrevious):
+            if ev.matches(QKeySequence.StandardKey.FindPrevious):
                 self.sbp.click()
                 return
             return Dialog.keyPressEvent(self, ev)
@@ -464,10 +497,10 @@ def compare_books(path1, path2, revert_msg=None, revert_callback=None, parent=No
     if revert_msg is not None:
         d.revert_requested.connect(revert_callback)
     QTimer.singleShot(0, partial(d.ebook_diff, path1, path2, names=names))
-    d.exec_()
+    d.exec()
     try:
         d.revert_requested.disconnect()
-    except:
+    except Exception:
         pass
     d.break_cycles()
 
@@ -486,12 +519,12 @@ def main(args=sys.argv):
         attr = 'ebook_diff'
     else:
         attr = 'file_diff'
-    app = Application([])  # noqa
+    app = Application([])  # noqa: F841
     d = Diff(show_as_window=True)
     func = getattr(d, attr)
-    QTimer.singleShot(0, lambda : func(left, right))
+    QTimer.singleShot(0, lambda: func(left, right))
     d.show()
-    app.exec_()
+    app.exec()
     return 0
 
 

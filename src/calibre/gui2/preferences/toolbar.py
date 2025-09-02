@@ -1,23 +1,33 @@
-#!/usr/bin/env python2
-# vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
+#!/usr/bin/env python
+
 
 __license__   = 'GPL v3'
 __copyright__ = '2010, Kovid Goyal <kovid@kovidgoyal.net>'
 __docformat__ = 'restructuredtext en'
 
-from PyQt5.Qt import QAbstractListModel, Qt, QIcon, \
-        QItemSelectionModel
+from qt.core import QAbstractItemView, QAbstractListModel, QIcon, QItemSelectionModel, Qt
 
+from calibre import force_unicode
+from calibre.gui2 import error_dialog, gprefs, warning_dialog
+from calibre.gui2.preferences import AbortCommit, ConfigWidgetBase, test_widget
 from calibre.gui2.preferences.toolbar_ui import Ui_Form
-from calibre.gui2 import gprefs, warning_dialog, error_dialog
-from calibre.gui2.preferences import ConfigWidgetBase, test_widget, AbortCommit
+from calibre.startup import connect_lambda
 from calibre.utils.icu import primary_sort_key
 
 
-class FakeAction(object):
+def sort_key_for_action(ac):
+    q = getattr(ac, 'action_spec', None)
+    try:
+        q = ac.name if q is None else q[0]
+        return primary_sort_key(force_unicode(q))
+    except Exception:
+        return primary_sort_key('')
+
+
+class FakeAction:
 
     def __init__(self, name, gui_name, icon, tooltip=None,
-            dont_add_to=frozenset([]), dont_remove_from=frozenset([])):
+            dont_add_to=frozenset(), dont_remove_from=frozenset()):
         self.name = name
         self.action_spec = (gui_name, icon, tooltip, None)
         self.dont_remove_from = dont_remove_from
@@ -30,12 +40,12 @@ class BaseModel(QAbstractListModel):
         if name == 'Donate':
             return FakeAction(
                 'Donate', _('Donate'), 'donate.png', tooltip=_('Donate to support the development of calibre'),
-                dont_add_to=frozenset(['context-menu', 'context-menu-device']))
+                dont_add_to=frozenset(['context-menu', 'context-menu-device', 'searchbar']))
         if name == 'Location Manager':
             return FakeAction('Location Manager', _('Location Manager'), 'reader.png',
                     _('Switch between library and device views'),
                     dont_add_to=frozenset(['menubar', 'toolbar',
-                        'toolbar-child', 'context-menu',
+                        'toolbar-child', 'context-menu', 'searchbar',
                         'context-menu-device']))
         if name is None:
             return FakeAction('--- '+('Separator')+' ---',
@@ -43,7 +53,7 @@ class BaseModel(QAbstractListModel):
                     dont_add_to=frozenset(['menubar', 'menubar-device']))
         try:
             return gui.iactions[name]
-        except:
+        except Exception:
             return None
 
     def rowCount(self, parent):
@@ -52,13 +62,13 @@ class BaseModel(QAbstractListModel):
     def data(self, index, role):
         row = index.row()
         action = self._data[row].action_spec
-        if role == Qt.DisplayRole:
+        if role == Qt.ItemDataRole.DisplayRole:
             text = action[0]
             text = text.replace('&', '')
             if text == _('%d books'):
                 text = _('Choose library')
             return (text)
-        if role == Qt.DecorationRole:
+        if role == Qt.ItemDataRole.DecorationRole:
             if hasattr(self._data[row], 'qaction'):
                 icon = self._data[row].qaction.icon()
                 if not icon.isNull():
@@ -66,8 +76,8 @@ class BaseModel(QAbstractListModel):
             ic = action[1]
             if ic is None:
                 ic = 'blank.png'
-            return (QIcon(I(ic)))
-        if role == Qt.ToolTipRole and action[2] is not None:
+            return (QIcon.ic(ic))
+        if role == Qt.ItemDataRole.ToolTipRole and action[2] is not None:
             return (action[2])
         return None
 
@@ -104,12 +114,7 @@ class AllModel(BaseModel):
         all = [self.name_to_action(x, self.gui) for x in all]
         all = [x for x in all if self.key not in x.dont_add_to]
 
-        def sk(ac):
-            try:
-                return primary_sort_key(ac.action_spec[0])
-            except Exception:
-                pass
-        all.sort(key=sk)
+        all.sort(key=sort_key_for_action)
         return all
 
     def add(self, names):
@@ -120,12 +125,12 @@ class AllModel(BaseModel):
             actions.append(self.name_to_action(name, self.gui))
         self.beginResetModel()
         self._data.extend(actions)
-        self._data.sort()
+        self._data.sort(key=sort_key_for_action)
         self.endResetModel()
 
     def remove(self, indices, allowed):
         rows = [i.row() for i in indices]
-        remove = set([])
+        remove = set()
         for row in rows:
             ac = self._data[row]
             if ac.name.startswith('---'):
@@ -158,24 +163,34 @@ class CurrentModel(BaseModel):
         self.key = key
         self.gui = gui
 
-    def move(self, idx, delta):
+    def move_single(self, idx, delta):
         row = idx.row()
-        if row < 0 or row >= len(self._data):
-            return
-        nrow = row + delta
-        if nrow < 0 or nrow >= len(self._data):
-            return
-        t = self._data[row]
-        self._data[row] = self._data[nrow]
-        self._data[nrow] = t
-        ni = self.index(nrow)
-        self.dataChanged.emit(idx, idx)
-        self.dataChanged.emit(ni, ni)
-        return ni
+        nrow = (row + delta + len(self._data)) % len(self._data)
+        if row + delta < 0:
+            x = self._data.pop(row)
+            self._data.append(x)
+        elif row + delta >= len(self._data):
+            x = self._data.pop(row)
+            self._data.insert(0, x)
+        else:
+            self._data[row], self._data[nrow] = self._data[nrow], self._data[row]
+
+    def move_many(self, indices, delta):
+        rows = [i.row() for i in indices]
+        items = [self._data[x.row()] for x in indices]
+        self.beginResetModel()
+        indices = sorted(indices, key=lambda i: i.row(), reverse=delta > 0)
+        for item in items:
+            self.move_single(self.index(self._data.index(item)), delta)
+        self.endResetModel()
+        ans = {}
+        for item, row in zip(items, rows):
+            ans[row] = self.index(self._data.index(item))
+        return ans
 
     def add(self, names):
         actions = []
-        reject = set([])
+        reject = set()
         for name in names:
             ac = self.name_to_action(name, self.gui)
             if self.key in ac.dont_add_to:
@@ -190,7 +205,7 @@ class CurrentModel(BaseModel):
 
     def remove(self, indices):
         rows = [i.row() for i in indices]
-        remove, rejected = set([]), set([])
+        remove, rejected = set(), set()
         for row in rows:
             ac = self._data[row]
             if self.key in ac.dont_remove_from:
@@ -225,7 +240,7 @@ class CurrentModel(BaseModel):
     def restore_defaults(self):
         current = gprefs.defaults[self.gprefs_name]
         self.beginResetModel()
-        self._data =  [self.name_to_action(x, self.gui) for x in current]
+        self._data = [self.name_to_action(x, self.gui) for x in current]
         self.endResetModel()
 
 
@@ -235,6 +250,7 @@ class ConfigWidget(ConfigWidgetBase, Ui_Form):
             ('toolbar', _('The main toolbar')),
             ('toolbar-device', _('The main toolbar when a device is connected')),
             ('toolbar-child', _('The optional second toolbar')),
+            ('searchbar', _('The buttons on the search bar')),
             ('menubar', _('The menubar')),
             ('menubar-device', _('The menubar when a device is connected')),
             ('context-menu', _('The context menu for the books in the '
@@ -247,6 +263,8 @@ class ConfigWidget(ConfigWidgetBase, Ui_Form):
             ]
 
     def genesis(self, gui):
+        self.all_actions.doubleClicked.connect(self.add_single_action)
+        self.current_actions.doubleClicked.connect(self.remove_single_action)
         self.models = {}
         self.what.addItem(_('Click to choose toolbar or menu to customize'),
                 'blank')
@@ -256,7 +274,7 @@ class ConfigWidget(ConfigWidgetBase, Ui_Form):
             current_model = CurrentModel(key, gui)
             self.models[key] = (all_model, current_model)
         self.what.setCurrentIndex(0)
-        self.what.currentIndexChanged[int].connect(self.what_changed)
+        self.what.currentIndexChanged.connect(self.what_changed)
         self.what_changed(0)
 
         self.add_action_button.clicked.connect(self.add_action)
@@ -269,15 +287,15 @@ class ConfigWidget(ConfigWidgetBase, Ui_Form):
         self.current_actions.entered.connect(self.current_entered)
 
     def all_entered(self, index):
-        tt = self.all_actions.model().data(index, Qt.ToolTipRole) or ''
+        tt = self.all_actions.model().data(index, Qt.ItemDataRole.ToolTipRole) or ''
         self.help_text.setText(tt)
 
     def current_entered(self, index):
-        tt = self.current_actions.model().data(index, Qt.ToolTipRole) or ''
+        tt = self.current_actions.model().data(index, Qt.ItemDataRole.ToolTipRole) or ''
         self.help_text.setText(tt)
 
     def what_changed(self, idx):
-        key = unicode(self.what.itemData(idx) or '')
+        key = str(self.what.itemData(idx) or '')
         if key == 'blank':
             self.actions_widget.setVisible(False)
             self.spacer_widget.setVisible(True)
@@ -288,13 +306,18 @@ class ConfigWidget(ConfigWidgetBase, Ui_Form):
             self.current_actions.setModel(self.models[key][1])
 
     def add_action(self, *args):
-        x = self.all_actions.selectionModel().selectedIndexes()
-        names = self.all_actions.model().names(x)
+        self._add_action(self.all_actions.selectionModel().selectedIndexes())
+
+    def add_single_action(self, index):
+        self._add_action([index])
+
+    def _add_action(self, indices):
+        names = self.all_actions.model().names(indices)
         if names:
             not_added = self.current_actions.model().add(names)
             ns = {y.name for y in not_added}
             added = set(names) - ns
-            self.all_actions.model().remove(x, added)
+            self.all_actions.model().remove(indices, added)
             if not_added:
                 warning_dialog(self, _('Cannot add'),
                         _('Cannot add the actions %s to this location') %
@@ -307,10 +330,15 @@ class ConfigWidget(ConfigWidgetBase, Ui_Form):
                 self.changed_signal.emit()
 
     def remove_action(self, *args):
-        x = self.current_actions.selectionModel().selectedIndexes()
-        names = self.current_actions.model().names(x)
+        self._remove_action(self.current_actions.selectionModel().selectedIndexes())
+
+    def remove_single_action(self, index):
+        self._remove_action([index])
+
+    def _remove_action(self, indices):
+        names = self.current_actions.model().names(indices)
         if names:
-            not_removed = self.current_actions.model().remove(x)
+            not_removed = self.current_actions.model().remove(indices)
             ns = {y.name for y in not_removed}
             removed = set(names) - ns
             self.all_actions.model().add(removed)
@@ -323,15 +351,21 @@ class ConfigWidget(ConfigWidgetBase, Ui_Form):
                 self.changed_signal.emit()
 
     def move(self, delta, *args):
-        ci = self.current_actions.currentIndex()
-        m = self.current_actions.model()
-        if ci.isValid():
-            ni = m.move(ci, delta)
-            if ni is not None:
-                self.current_actions.setCurrentIndex(ni)
-                self.current_actions.selectionModel().select(ni,
-                        QItemSelectionModel.ClearAndSelect)
-                self.changed_signal.emit()
+        sm = self.current_actions.selectionModel()
+        x = sm.selectedIndexes()
+        if x and len(x):
+            i = sm.currentIndex().row()
+            m = self.current_actions.model()
+            idx_map = m.move_many(x, delta)
+            newci = idx_map.get(i)
+            sm.clear()
+            for idx in idx_map.values():
+                sm.select(idx, QItemSelectionModel.SelectionFlag.Select)
+            if newci is not None:
+                sm.setCurrentIndex(newci, QItemSelectionModel.SelectionFlag.SelectCurrent)
+            if newci is not None:
+                self.current_actions.scrollTo(newci, QAbstractItemView.ScrollHint.EnsureVisible)
+            self.changed_signal.emit()
 
     def commit(self):
         # Ensure preferences are showing in either the toolbar or

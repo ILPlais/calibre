@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
-
-from __future__ import (unicode_literals, division, absolute_import, print_function)
+from __future__ import absolute_import, division, print_function, unicode_literals
 
 __license__ = 'GPL 3'
 __copyright__ = '2011, John Schember <john@nachtimwald.com>'
@@ -8,9 +7,9 @@ __docformat__ = 'restructuredtext en'
 
 from operator import attrgetter
 
-from PyQt5.Qt import (Qt, QAbstractItemModel, QModelIndex, pyqtSignal)
+from qt.core import QAbstractItemModel, QModelIndex, Qt, pyqtSignal
 
-from calibre.db.search import _match, CONTAINS_MATCH, EQUALS_MATCH, REGEXP_MATCH
+from calibre.db.search import CONTAINS_MATCH, EQUALS_MATCH, REGEXP_MATCH, _match
 from calibre.utils.config_base import prefs
 from calibre.utils.icu import sort_key
 from calibre.utils.search_query_parser import SearchQueryParser
@@ -29,7 +28,7 @@ class BooksModel(QAbstractItemModel):
         self.filter = ''
         self.search_filter = SearchFilter(all_books)
         self.sort_col = 0
-        self.sort_order = Qt.AscendingOrder
+        self.sort_order = Qt.SortOrder.AscendingOrder
 
     def get_book(self, index):
         row = index.row()
@@ -45,7 +44,7 @@ class BooksModel(QAbstractItemModel):
         else:
             try:
                 self.books = list(self.search_filter.parse(self.filter))
-            except:
+            except Exception:
                 self.books = self.all_books
         self.layoutChanged.emit()
         self.sort(self.sort_col, self.sort_order)
@@ -66,10 +65,10 @@ class BooksModel(QAbstractItemModel):
         return len(self.HEADERS)
 
     def headerData(self, section, orientation, role):
-        if role != Qt.DisplayRole:
+        if role != Qt.ItemDataRole.DisplayRole:
             return None
         text = ''
-        if orientation == Qt.Horizontal:
+        if orientation == Qt.Orientation.Horizontal:
             if section < len(self.HEADERS):
                 text = self.HEADERS[section]
             return (text)
@@ -79,7 +78,7 @@ class BooksModel(QAbstractItemModel):
     def data(self, index, role):
         row, col = index.row(), index.column()
         result = self.books[row]
-        if role == Qt.DisplayRole:
+        if role == Qt.ItemDataRole.DisplayRole:
             if col == 0:
                 return (result.title)
             elif col == 1:
@@ -103,10 +102,8 @@ class BooksModel(QAbstractItemModel):
         self.sort_order = order
         if not self.books:
             return
-        descending = order == Qt.DescendingOrder
-        self.books.sort(None,
-            lambda x: sort_key(unicode(self.data_as_text(x, col))),
-            descending)
+        descending = order == Qt.SortOrder.DescendingOrder
+        self.books.sort(key=lambda x: sort_key(type(u'')(self.data_as_text(x, col))), reverse=descending)
         if reset:
             self.beginResetModel(), self.endResetModel()
 
@@ -150,14 +147,14 @@ class SearchFilter(SearchQueryParser):
             query = query.lower()
 
         if location not in self.USABLE_LOCATIONS:
-            return set([])
-        matches = set([])
+            return set()
+        matches = set()
         all_locs = set(self.USABLE_LOCATIONS) - {'all'}
         locations = all_locs if location == 'all' else [location]
         q = {
-             'author': lambda x: x.author.lower(),
-             'format': attrgetter('formats'),
-             'title': lambda x: x.title.lower(),
+            'author': lambda x: x.author.lower(),
+            'format': attrgetter('formats'),
+            'title': lambda x: x.title.lower(),
         }
         for x in ('author', 'format'):
             q[x+'s'] = q[x]

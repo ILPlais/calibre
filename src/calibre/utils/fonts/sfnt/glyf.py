@@ -1,16 +1,15 @@
-#!/usr/bin/env python2
-# vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:fdm=marker:ai
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
+#!/usr/bin/env python
+
 
 __license__   = 'GPL v3'
 __copyright__ = '2012, Kovid Goyal <kovid at kovidgoyal.net>'
 __docformat__ = 'restructuredtext en'
 
-from struct import unpack_from
 from collections import OrderedDict
+from struct import unpack_from
 
 from calibre.utils.fonts.sfnt import UnknownTable
+from polyglot.builtins import iteritems
 
 ARG_1_AND_2_ARE_WORDS      = 0x0001  # if set args are words otherwise they are bytes
 ARGS_ARE_XY_VALUES         = 0x0002  # if set args are xy values, otherwise they are points
@@ -27,7 +26,7 @@ SCALED_COMPONENT_OFFSET    = 0x0800  # composite designed to have the component 
 UNSCALED_COMPONENT_OFFSET  = 0x1000  # composite designed not to have the component offset scaled (designed for MS)
 
 
-class SimpleGlyph(object):
+class SimpleGlyph:
 
     def __init__(self, num_of_countours, raw):
         self.num_of_countours = num_of_countours
@@ -47,7 +46,7 @@ class SimpleGlyph(object):
 class CompositeGlyph(SimpleGlyph):
 
     def __init__(self, num_of_countours, raw):
-        super(CompositeGlyph, self).__init__(num_of_countours, raw)
+        super().__init__(num_of_countours, raw)
         self.is_composite = True
 
         flags = MORE_COMPONENTS
@@ -70,8 +69,10 @@ class CompositeGlyph(SimpleGlyph):
 
 class GlyfTable(UnknownTable):
 
-    def glyph_data(self, offset, length):
+    def glyph_data(self, offset, length, as_raw=False):
         raw = self.raw[offset:offset+length]
+        if as_raw:
+            return raw
         num_of_countours = unpack_from(b'>h', raw)[0] if raw else 0
         if num_of_countours >= 0:
             return SimpleGlyph(num_of_countours, raw)
@@ -81,11 +82,13 @@ class GlyfTable(UnknownTable):
         ans = OrderedDict()
         offset = 0
         block = []
-        for glyph_id, glyph in sorted_glyph_map.iteritems():
+        for glyph_id, glyph in iteritems(sorted_glyph_map):
             raw = glyph()
-            ans[glyph_id] = (offset, len(raw))
+            pad = 4 - (len(raw) % 4)
+            if pad < 4:
+                raw += b'\0' * pad
+            ans[glyph_id] = offset, len(raw)
             offset += len(raw)
             block.append(raw)
         self.raw = b''.join(block)
         return ans
-

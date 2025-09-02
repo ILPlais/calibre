@@ -1,56 +1,69 @@
-#!/usr/bin/env python2
-# vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
-from __future__ import with_statement
-from __future__ import print_function
+#!/usr/bin/env python
+
 
 __license__   = 'GPL v3'
 __copyright__ = '2009, Kovid Goyal <kovid@kovidgoyal.net>'
 __docformat__ = 'restructuredtext en'
 
-import os, cPickle, sys, importlib
-from multiprocessing.connection import Client
+import importlib
+import os
+import sys
 from threading import Thread
-from Queue import Queue
-from contextlib import closing
-from binascii import unhexlify
 from zipimport import ZipImportError
 
 from calibre import prints
-from calibre.constants import iswindows, isosx
+from calibre.constants import ismacos, iswindows
 from calibre.utils.ipc import eintr_retry_call
+from calibre.utils.serialize import pickle_dumps
+from polyglot.binary import from_hex_unicode
+from polyglot.queue import Queue
+
+if iswindows:
+    from multiprocessing.connection import PipeConnection as Connection
+else:
+    from multiprocessing.connection import Connection
 
 PARALLEL_FUNCS = {
-    'lrfviewer'    :
+    'lrfviewer':
     ('calibre.gui2.lrf_renderer.main', 'main', None),
 
-    'ebook-viewer'    :
+    'ebook-viewer':
     ('calibre.gui_launch', 'ebook_viewer', None),
 
-    'ebook-edit' :
+    'ebook-edit':
     ('calibre.gui_launch', 'gui_ebook_edit', None),
 
-    'render_pages' :
+    'store-dialog':
+    ('calibre.gui_launch', 'store_dialog', None),
+
+    'toc-dialog':
+    ('calibre.gui_launch', 'toc_dialog', None),
+
+    'webengine-dialog':
+    ('calibre.gui_launch', 'webengine_dialog', None),
+
+    'render_pages':
     ('calibre.ebooks.comic.input', 'render_pages', 'notification'),
 
-    'gui_convert'     :
+    'gui_convert':
     ('calibre.gui2.convert.gui_conversion', 'gui_convert', 'notification'),
 
-    'gui_convert_recipe'     :
+    'gui_convert_recipe':
     ('calibre.gui2.convert.gui_conversion', 'gui_convert_recipe', 'notification'),
 
-    'gui_polish'     :
+    'gui_polish':
     ('calibre.ebooks.oeb.polish.main', 'gui_polish', None),
 
-    'gui_convert_override'     :
+    'gui_convert_override':
     ('calibre.gui2.convert.gui_conversion', 'gui_convert_override', 'notification'),
 
-    'gui_catalog'     :
+    'gui_catalog':
     ('calibre.gui2.convert.gui_conversion', 'gui_catalog', 'notification'),
 
-    'arbitrary' :
+    'arbitrary':
     ('calibre.utils.ipc.worker', 'arbitrary', None),
 
-    'arbitrary_n' :
+    'arbitrary_n':
     ('calibre.utils.ipc.worker', 'arbitrary_n', 'notification'),
 }
 
@@ -73,7 +86,7 @@ class Progress(Thread):
                 break
             try:
                 eintr_retry_call(self.conn.send, x)
-            except:
+            except Exception:
                 break
 
 
@@ -143,7 +156,7 @@ def get_func(name):
         module = importlib.import_module(module)
     except ZipImportError:
         # Something windows weird happened, try clearing the zip import cache
-        # incase the zipfile was changed from under us
+        # in case the zipfile was changed from under us
         from zipimport import _zip_directory_cache as zdc
         zdc.clear()
         module = importlib.import_module(module)
@@ -152,23 +165,24 @@ def get_func(name):
 
 
 def main():
-    if iswindows:
-        if '--multiprocessing-fork' in sys.argv:
-            # We are using the multiprocessing module on windows to launch a
-            # worker process
-            from multiprocessing import freeze_support
-            freeze_support()
-            return 0
-        # Close open file descriptors inherited from parent
-        # On Unix this is done by the subprocess module
-        os.closerange(3, 256)
-    if isosx and 'CALIBRE_WORKER_ADDRESS' not in os.environ and 'CALIBRE_SIMPLE_WORKER' not in os.environ and '--pipe-worker' not in sys.argv:
+    if '__multiprocessing__' in sys.argv:
+        payload = sys.argv[-1]
+        sys.argv = [sys.argv[0], '--multiprocessing-fork']
+        exec(payload)
+        return 0
+    if ismacos and 'CALIBRE_WORKER_FD' not in os.environ and 'CALIBRE_SIMPLE_WORKER' not in os.environ and '--pipe-worker' not in sys.argv:
         # On some OS X computers launchd apparently tries to
         # launch the last run process from the bundle
         # so launch the gui as usual
         from calibre.gui2.main import main as gui_main
         return gui_main(['calibre'])
-    csw = os.environ.get('CALIBRE_SIMPLE_WORKER', None)
+    niceness = os.environ.pop('CALIBRE_WORKER_NICENESS', None)
+    if niceness:
+        try:
+            os.nice(int(niceness))
+        except Exception:
+            pass
+    csw = os.environ.pop('CALIBRE_SIMPLE_WORKER', None)
     if csw:
         mod, _, func = csw.partition(':')
         mod = importlib.import_module(mod)
@@ -177,15 +191,15 @@ def main():
         return
     if '--pipe-worker' in sys.argv:
         try:
-            exec (sys.argv[-1])
+            exec(sys.argv[-1])
         except Exception:
             print('Failed to run pipe worker with command:', sys.argv[-1])
+            sys.stdout.flush()
             raise
         return
-    address = cPickle.loads(unhexlify(os.environ['CALIBRE_WORKER_ADDRESS']))
-    key     = unhexlify(os.environ['CALIBRE_WORKER_KEY'])
-    resultf = unhexlify(os.environ['CALIBRE_WORKER_RESULT']).decode('utf-8')
-    with closing(Client(address, authkey=key)) as conn:
+    fd = int(os.environ['CALIBRE_WORKER_FD'])
+    resultf = from_hex_unicode(os.environ['CALIBRE_WORKER_RESULT'])
+    with Connection(fd) as conn:
         name, args, kwargs, desc = eintr_retry_call(conn.recv)
         if desc:
             prints(desc)
@@ -197,18 +211,20 @@ def main():
             notifier.start()
 
         result = func(*args, **kwargs)
-        if result is not None and os.path.exists(os.path.dirname(resultf)):
-            cPickle.dump(result, open(resultf, 'wb'), -1)
+        if result is not None:
+            os.makedirs(os.path.dirname(resultf), exist_ok=True)
+            with open(resultf, 'wb') as f:
+                f.write(pickle_dumps(result))
 
         notifier.queue.put(None)
 
     try:
         sys.stdout.flush()
-    except EnvironmentError:
+    except OSError:
         pass  # Happens sometimes on OS X for GUI processes (EPIPE)
     try:
         sys.stderr.flush()
-    except EnvironmentError:
+    except OSError:
         pass  # Happens sometimes on OS X for GUI processes (EPIPE)
     return 0
 

@@ -1,17 +1,20 @@
-#!/usr/bin/env python2
-# vim:fileencoding=utf-8
+#!/usr/bin/env python
 # License: GPLv3 Copyright: 2015, Kovid Goyal <kovid at kovidgoyal.net>
 
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
-import os, json, re
+
+import json
+import os
+import re
+from functools import lru_cache
 from threading import RLock
 
 import apsw
 
 from calibre import as_unicode
 from calibre.constants import config_dir
-from calibre.utils.config import to_json, from_json
+from calibre.utils.config import from_json, to_json
+from calibre.utils.localization import _
+from polyglot.builtins import iteritems
 
 
 def as_json(data):
@@ -25,6 +28,7 @@ def load_json(raw):
         return {}
 
 
+@lru_cache(maxsize=1024)
 def parse_restriction(raw):
     r = load_json(raw)
     if not isinstance(r, dict):
@@ -32,9 +36,9 @@ def parse_restriction(raw):
     lr = r.get('library_restrictions', {})
     if not isinstance(lr, dict):
         lr = {}
-    r['allowed_library_names'] = frozenset(map(lambda x: x.lower(), r.get('allowed_library_names', ())))
-    r['blocked_library_names'] = frozenset(map(lambda x: x.lower(), r.get('blocked_library_names', ())))
-    r['library_restrictions'] = {k.lower(): v or '' for k, v in lr.iteritems()}
+    r['allowed_library_names'] = frozenset(x.lower() for x in r.get('allowed_library_names', ()))
+    r['blocked_library_names'] = frozenset(x.lower() for x in r.get('blocked_library_names', ()))
+    r['library_restrictions'] = {k.lower(): v or '' for k, v in iteritems(lr)}
     return r
 
 
@@ -44,7 +48,7 @@ def serialize_restriction(r):
         v = r.get(x)
         if v:
             ans[x] = list(v)
-    ans['library_restrictions'] = {l.lower(): v or '' for l, v in r.get('library_restrictions', {}).iteritems()}
+    ans['library_restrictions'] = {l.lower(): v or '' for l, v in iteritems(r.get('library_restrictions', {}))}
     return json.dumps(ans)
 
 
@@ -63,9 +67,11 @@ def validate_password(pw):
         return _('The password must contain only ASCII (English) characters and symbols')
 
 
-def create_user_data(pw, readonly=False, restriction=None):
+def create_user_data(pw, readonly=False, restriction=None, misc_data='{}'):
+    misc_data = json.loads(misc_data)
     return {
-        'pw':pw, 'restriction':parse_restriction(restriction or '{}'), 'readonly': readonly
+        'pw':pw, 'restriction':parse_restriction(restriction or '{}').copy(), 'readonly': readonly,
+        'allow_change_password_via_http': bool(misc_data.get('allow_change_password_via_http', True)),
     }
 
 
@@ -75,18 +81,18 @@ def connect(path, exc_class=ValueError):
     except apsw.CantOpenError as e:
         pdir = os.path.dirname(path)
         if os.path.isdir(pdir):
-            raise exc_class('Failed to open userdb database at {} with error: {}'.format(path, as_unicode(e)))
+            raise exc_class(f'Failed to open userdb database at {path} with error: {as_unicode(e)}')
         try:
             os.makedirs(pdir)
-        except EnvironmentError as e:
-            raise exc_class('Failed to make directory for userdb database at {} with error: {}'.format(pdir, as_unicode(e)))
+        except OSError as e:
+            raise exc_class(f'Failed to make directory for userdb database at {pdir} with error: {as_unicode(e)}')
         try:
             return apsw.Connection(path)
         except apsw.CantOpenError as e:
-            raise exc_class('Failed to open userdb database at {} with error: {}'.format(path, as_unicode(e)))
+            raise exc_class(f'Failed to open userdb database at {path} with error: {as_unicode(e)}')
 
 
-class UserManager(object):
+class UserManager:
 
     lock = RLock()
 
@@ -125,8 +131,6 @@ class UserManager(object):
     def __init__(self, path=None):
         self.path = os.path.join(config_dir, 'server-users.sqlite') if path is None else path
         self._conn = None
-        self._restrictions = {}
-        self._readonly = {}
 
     def get_session_data(self, username):
         with self.lock:
@@ -162,15 +166,16 @@ class UserManager(object):
     def validate_password(self, pw):
         return validate_password(pw)
 
-    def add_user(self, username, pw, restriction=None, readonly=False):
+    def add_user(self, username, pw, restriction=None, readonly=False, allow_change_password_via_http=True):
         with self.lock:
             msg = self.validate_username(username) or self.validate_password(pw)
             if msg is not None:
                 raise ValueError(msg)
             restriction = restriction or {}
+            misc_data = {'allow_change_password_via_http': allow_change_password_via_http}
             self.conn.cursor().execute(
-                'INSERT INTO users (name, pw, restriction, readonly) VALUES (?, ?, ?, ?)',
-                (username, pw, serialize_restriction(restriction), ('y' if readonly else 'n')))
+                'INSERT INTO users (name, pw, restriction, readonly, misc_data) VALUES (?, ?, ?, ?, ?)',
+                (username, pw, serialize_restriction(restriction), ('y' if readonly else 'n'), json.dumps(misc_data)))
 
     def remove_user(self, username):
         with self.lock:
@@ -187,8 +192,8 @@ class UserManager(object):
     def user_data(self):
         with self.lock:
             ans = {}
-            for name, pw, restriction, readonly in self.conn.cursor().execute('SELECT name,pw,restriction,readonly FROM users'):
-                ans[name] = create_user_data(pw, readonly.lower() == 'y', restriction)
+            for name, pw, restriction, readonly, misc_data in self.conn.cursor().execute('SELECT name,pw,restriction,readonly,misc_data FROM users'):
+                ans[name] = create_user_data(pw, readonly.lower() == 'y', restriction, misc_data)
         return ans
 
     @user_data.setter
@@ -198,38 +203,29 @@ class UserManager(object):
             remove = self.all_user_names - set(users)
             if remove:
                 c.executemany('DELETE FROM users WHERE name=?', [(n,) for n in remove])
-            for name, data in users.iteritems():
+            for name, data in users.items():
                 res = serialize_restriction(data['restriction'])
+                misc_data = json.dumps({'allow_change_password_via_http': bool(data.get('allow_change_password_via_http', True))})
                 r = 'y' if data['readonly'] else 'n'
-                c.execute('UPDATE users SET pw=?, restriction=?, readonly=? WHERE name=?',
-                        (data['pw'], res, r, name))
-                if self.conn.changes() > 0:
-                    continue
-                c.execute('INSERT INTO USERS (name, pw, restriction, readonly) VALUES (?, ?, ?, ?)',
-                          (name, data['pw'], res, r))
+                c.execute('INSERT INTO USERS (name, pw, restriction, readonly, misc_data) VALUES (?, ?, ?, ?, ?) '
+                          'ON CONFLICT DO UPDATE SET pw=?, restriction=?, readonly=?, misc_data=?',
+                          (name, data['pw'], res, r, misc_data, data['pw'], res, r, misc_data))
             self.refresh()
 
     def refresh(self):
-        self._restrictions.clear()
-        self._readonly.clear()
+        pass  # legacy compat
 
     def is_readonly(self, username):
         with self.lock:
-            try:
-                return self._readonly[username]
-            except KeyError:
-                self._readonly[username] = False
             for readonly, in self.conn.cursor().execute(
                     'SELECT readonly FROM users WHERE name=?', (username,)):
-                self._readonly[username] = readonly == 'y'
-                return self._readonly[username]
-        return False
+                return readonly == 'y'
+            return False
 
     def set_readonly(self, username, value):
         with self.lock:
             self.conn.cursor().execute(
                 'UPDATE users SET readonly=? WHERE name=?', ('y' if value else 'n', username))
-            self._readonly.pop(username, None)
 
     def change_password(self, username, pw):
         with self.lock:
@@ -241,13 +237,9 @@ class UserManager(object):
 
     def restrictions(self, username):
         with self.lock:
-            r = self._restrictions.get(username)
-            if r is None:
-                for restriction, in self.conn.cursor().execute(
-                        'SELECT restriction FROM users WHERE name=?', (username,)):
-                    self._restrictions[username] = r = parse_restriction(restriction)
-                    break
-            return r
+            for restriction, in self.conn.cursor().execute(
+                    'SELECT restriction FROM users WHERE name=?', (username,)):
+                return parse_restriction(restriction).copy()
 
     def allowed_library_names(self, username, all_library_names):
         ' Get allowed library names for specified user from set of all library names '
@@ -266,7 +258,6 @@ class UserManager(object):
         if not isinstance(restrictions, dict):
             raise TypeError('restrictions must be a dict')
         with self.lock:
-            self._restrictions.pop(username, None)
             self.conn.cursor().execute(
                 'UPDATE users SET restriction=? WHERE name=?', (serialize_restriction(restrictions), username))
 
@@ -276,3 +267,20 @@ class UserManager(object):
             return ''
         library_name = os.path.basename(library_path).lower()
         return r['library_restrictions'].get(library_name) or ''
+
+    def misc_data(self, username):
+        with self.lock:
+            for misc_data, in self.conn.cursor().execute(
+                    'SELECT misc_data FROM users WHERE name=?', (username,)):
+                return json.loads(misc_data)
+        return {}
+
+    def is_allowed_to_change_password_via_http(self, username: str) -> bool:
+        return bool(self.misc_data(username).get('allow_change_password_via_http', True))
+
+    def set_allowed_to_change_password_via_http(self, username: str, allow: bool = True) -> None:
+        with self.lock:
+            md = self.misc_data(username)
+            md['allow_change_password_via_http'] = allow
+            self.conn.cursor().execute(
+                'UPDATE users SET misc_data=? WHERE name=?', (json.dumps(md), username))

@@ -1,18 +1,16 @@
 '''
 OPF manifest trimming transform.
 '''
-from __future__ import with_statement
+
 
 __license__   = 'GPL v3'
 __copyright__ = '2008, Marshall T. Vandegrift <llasram@gmail.com>'
 
-from urlparse import urldefrag
-
-from calibre.ebooks.oeb.base import CSS_MIME, OEB_DOCS
-from calibre.ebooks.oeb.base import urlnormalize, iterlinks
+from calibre.ebooks.oeb.base import CSS_MIME, OEB_DOCS, iterlinks, urlnormalize
+from polyglot.urllib import urldefrag
 
 
-class ManifestTrimmer(object):
+class ManifestTrimmer:
 
     @classmethod
     def config(cls, cfg):
@@ -23,7 +21,7 @@ class ManifestTrimmer(object):
         return cls()
 
     def __call__(self, oeb, context):
-        import cssutils
+        import css_parser
         oeb.logger.info('Trimming unused files from manifest...')
         self.opts = context
         used = set()
@@ -53,14 +51,14 @@ class ManifestTrimmer(object):
                             href = href.decode('utf-8')
                         try:
                             href = item.abshref(urlnormalize(href))
-                        except:
+                        except Exception:
                             continue
                         if href in oeb.manifest.hrefs:
                             found = oeb.manifest.hrefs[href]
                             if found not in used:
                                 new.add(found)
                 elif item.media_type == CSS_MIME:
-                    for href in cssutils.getUrls(item.data):
+                    for href in css_parser.getUrls(item.data):
                         href = item.abshref(urlnormalize(href))
                         if href in oeb.manifest.hrefs:
                             found = oeb.manifest.hrefs[href]
@@ -70,5 +68,5 @@ class ManifestTrimmer(object):
             unchecked = new
         for item in oeb.manifest.values():
             if item not in used:
-                oeb.logger.info('Trimming %r from manifest' % item.href)
+                oeb.logger.info(f'Trimming {item.href!r} from manifest')
                 oeb.manifest.remove(item)

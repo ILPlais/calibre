@@ -1,9 +1,6 @@
-# -*- coding: utf-8 -*-
-
-from __future__ import print_function
 __license__   = 'GPL v3'
-__copyright__ = '2009, John Schember <john at nachtimwald.com> ' \
-                '2009, Kovid Goyal <kovid@kovidgoyal.net>'
+__copyright__ = ('2009, John Schember <john at nachtimwald.com> '
+                 '2009, Kovid Goyal <kovid@kovidgoyal.net>')
 __docformat__ = 'restructuredtext en'
 
 '''
@@ -12,20 +9,25 @@ intended to be subclassed with the relevant parts implemented for a particular
 device. This class handles device detection.
 '''
 
-import os, subprocess, time, re, sys, glob
-from itertools import repeat
+import glob
+import os
+import re
+import subprocess
+import sys
+import time
 from collections import namedtuple
+from contextlib import suppress
+from itertools import repeat
 
 from calibre import prints
-from calibre.constants import DEBUG
-from calibre.devices.interface import DevicePlugin
+from calibre.constants import is_debugging, isfreebsd, islinux, ismacos, iswindows
 from calibre.devices.errors import DeviceError
+from calibre.devices.interface import FAKE_DEVICE_SERIAL, DevicePlugin, ModelMetadata
 from calibre.devices.usbms.deviceconfig import DeviceConfig
-from calibre.constants import iswindows, islinux, isosx, isfreebsd, plugins
 from calibre.utils.filenames import ascii_filename as sanitize
+from polyglot.builtins import iteritems, string_or_bytes
 
-if isosx:
-    usbobserver, usbobserver_err = plugins['usbobserver']
+if ismacos:
     osx_sanitize_name_pat = re.compile(r'[.-]')
 
 if iswindows:
@@ -72,7 +74,6 @@ class USBDevice:
 
 
 class Device(DeviceConfig, DevicePlugin):
-
     '''
     This class provides logic common to all drivers for devices that export themselves
     as USB Mass Storage devices. Provides implementations for mounting/ejecting
@@ -85,17 +86,17 @@ class Device(DeviceConfig, DevicePlugin):
 
     VENDOR_NAME = None
 
-    #: String identifying the main memory of the device in the windows PnP id
+    #: String identifying the main memory of the device in the Windows PnP id
     #: strings
     #: This can be None, string, list of strings or compiled regex
     WINDOWS_MAIN_MEM = None
 
-    #: String identifying the first card of the device in the windows PnP id
+    #: String identifying the first card of the device in the Windows PnP id
     #: strings
     #: This can be None, string, list of strings or compiled regex
     WINDOWS_CARD_A_MEM = None
 
-    #: String identifying the second card of the device in the windows PnP id
+    #: String identifying the second card of the device in the Windows PnP id
     #: strings
     #: This can be None, string, list of strings or compiled regex
     WINDOWS_CARD_B_MEM = None
@@ -125,6 +126,48 @@ class Device(DeviceConfig, DevicePlugin):
     #: Put news in its own folder
     NEWS_IN_FOLDER = True
 
+    connected_folder_path = ''  # used internally for fake folder device
+    eject_connected_folder = False
+
+    @classmethod
+    def model_metadata(cls) -> tuple[ModelMetadata, ...]:
+        def get_representative_ids() -> tuple[int, int, int]:
+            vid = pid = bcd = 0
+            if isinstance(cls.VENDOR_ID, dict):
+                for vid, pid_map in cls.VENDOR_ID.items():
+                    for pid, bcds in pid_map.items():
+                        if isinstance(bcds, int):
+                            bcds = (bcds,)
+                        for bcd in bcds:
+                            return vid or 0, pid or 0, bcd or 0
+            elif isinstance(cls.VENDOR_ID, (list, tuple)):
+                vid = cls.VENDOR_ID[-1]
+            else:
+                vid = cls.VENDOR_ID
+            if isinstance(cls.PRODUCT_ID, (list, tuple)):
+                pid = cls.PRODUCT_ID[-1]
+            else:
+                pid = cls.PRODUCT_ID
+            if isinstance(cls.BCD, (list, tuple)):
+                bcd = cls.BCD[-1]
+            else:
+                bcd = cls.BCD
+            return vid or 0, pid or 0, bcd or 0
+        vid, pid, bcd = get_representative_ids()
+        try:
+            model_name = cls.get_gui_name()
+        except TypeError:  # The WAYTEQ driver implements this as non classmethod
+            return ()
+        parts = model_name.split(' ', 1)
+        manufacturer = ''
+        if len(parts) > 1:
+            manufacturer, model_name = parts
+        else:
+            manufacturer = _('Miscellaneous')
+        return (
+            ModelMetadata(manufacturer, model_name, vid, pid, bcd, cls),
+        )
+
     def reset(self, key='-1', log_packets=False, report_progress=None,
             detected_device=None):
         self._main_prefix = self._card_a_prefix = self._card_b_prefix = None
@@ -145,20 +188,17 @@ class Device(DeviceConfig, DevicePlugin):
         if not prefix:
             return 0, 0
         prefix = prefix[:-1]
-        import win32file, winerror
+        from calibre_extensions import winutil
         try:
-            sectors_per_cluster, bytes_per_sector, free_clusters, total_clusters = \
-                win32file.GetDiskFreeSpace(prefix)
-        except Exception as err:
-            if getattr(err, 'args', [None])[0] == winerror.ERROR_NOT_READY:
+            available_space, total_space, free_space = winutil.get_disk_free_space(prefix)
+        except OSError as err:
+            if err.winerror == winutil.ERROR_NOT_READY:
                 # Disk not ready
                 time.sleep(3)
-                sectors_per_cluster, bytes_per_sector, free_clusters, total_clusters = \
-                    win32file.GetDiskFreeSpace(prefix)
+                available_space, total_space, free_space = winutil.get_disk_free_space(prefix)
             else:
                 raise
-        mult = sectors_per_cluster * bytes_per_sector
-        return total_clusters * mult, free_clusters * mult
+        return total_space, available_space
 
     def total_space(self, end_session=True):
         msz = casz = cbsz = 0
@@ -177,7 +217,7 @@ class Device(DeviceConfig, DevicePlugin):
             casz = self._windows_space(self._card_a_prefix)[0]
             cbsz = self._windows_space(self._card_b_prefix)[0]
 
-        return (msz, casz, cbsz)
+        return msz, casz, cbsz
 
     def free_space(self, end_session=True):
         msz = casz = cbsz = 0
@@ -196,7 +236,7 @@ class Device(DeviceConfig, DevicePlugin):
             casz = self._windows_space(self._card_a_prefix)[1]
             cbsz = self._windows_space(self._card_b_prefix)[1]
 
-        return (msz, casz, cbsz)
+        return msz, casz, cbsz
 
     def windows_filter_pnp_id(self, pnp_id):
         return False
@@ -205,13 +245,12 @@ class Device(DeviceConfig, DevicePlugin):
         '''
         Called to disambiguate main memory and storage card for devices that
         do not distinguish between them on the basis of `WINDOWS_CARD_NAME`.
-        For e.g.: The EB600
+        For example: The EB600
         '''
         return drives
 
     def can_handle_windows(self, usbdevice, debug=False):
-        from calibre.devices.interface import DevicePlugin
-        if self.can_handle.im_func is DevicePlugin.can_handle.im_func:
+        if hasattr(self.can_handle, 'is_base_class_implementation'):
             # No custom can_handle implementation
             return True
         # Delegate to the unix can_handle function, creating a unix like
@@ -232,26 +271,26 @@ class Device(DeviceConfig, DevicePlugin):
                 usbdevice.vendor_id, usbdevice.product_id, usbdevice.bcd,
                 data.get('manufacturer') or '', data.get('product') or '', data.get('serial_number') or '')
             if debug:
-                prints('USB Info for device: {}'.format(dev))
+                prints(f'USB Info for device: {dev}')
         return self.can_handle(dev, debug=debug)
 
     def open_windows(self):
         from calibre.devices.scanner import drive_is_ok
         from calibre.devices.winusb import get_drive_letters_for_device
         usbdev = self.device_being_opened
-        debug = DEBUG or getattr(self, 'do_device_debug', False)
+        debug = is_debugging() or getattr(self, 'do_device_debug', False)
         try:
             dlmap = get_drive_letters_for_device(usbdev, debug=debug)
         except Exception:
-            dlmap = []
+            dlmap = {}
 
-        if not dlmap['drive_letters']:
+        if not dlmap.get('drive_letters'):
             time.sleep(7)
             dlmap = get_drive_letters_for_device(usbdev, debug=debug)
 
         if debug:
             from pprint import pformat
-            prints('Drive letters for {}'.format(usbdev))
+            prints(f'Drive letters for {usbdev}')
             prints(pformat(dlmap))
 
         filtered = set()
@@ -260,15 +299,15 @@ class Device(DeviceConfig, DevicePlugin):
             if dl in dlmap['readonly_drives']:
                 filtered.add(dl)
                 if debug:
-                    prints('Ignoring the drive %s as it is readonly' % dl)
+                    prints(f'Ignoring the drive {dl} as it is readonly')
             elif self.windows_filter_pnp_id(pnp_id):
                 filtered.add(dl)
                 if debug:
-                    prints('Ignoring the drive %s because of a PNP filter on %s' % (dl, pnp_id))
+                    prints(f'Ignoring the drive {dl} because of a PNP filter on {pnp_id}')
             elif not drive_is_ok(dl, debug=debug):
                 filtered.add(dl)
                 if debug:
-                    prints('Ignoring the drive %s because failed to get free space for it' % dl)
+                    prints(f'Ignoring the drive {dl} because failed to get free space for it')
         dlmap['drive_letters'] = [dl for dl in dlmap['drive_letters'] if dl not in filtered]
 
         if not dlmap['drive_letters']:
@@ -296,7 +335,7 @@ class Device(DeviceConfig, DevicePlugin):
             try:
                 return subprocess.Popen(cmd,
                                     stdout=subprocess.PIPE).communicate()[0]
-            except IOError:  # Probably an interrupted system call
+            except OSError:  # Probably an interrupted system call
                 if i == 2:
                     raise
             time.sleep(2)
@@ -308,18 +347,16 @@ class Device(DeviceConfig, DevicePlugin):
     def osx_run_mount(cls):
         for i in range(3):
             try:
-                return subprocess.Popen('mount',
-                                    stdout=subprocess.PIPE).communicate()[0]
-            except IOError:  # Probably an interrupted system call
+                return subprocess.Popen('mount', stdout=subprocess.PIPE).communicate()[0].decode('utf-8', 'replace')
+            except OSError:  # Probably an interrupted system call
                 if i == 2:
                     raise
             time.sleep(2)
 
     @classmethod
     def osx_get_usb_drives(cls):
-        if usbobserver_err:
-            raise RuntimeError('Failed to load usbobserver: '+usbobserver_err)
-        return usbobserver.get_usb_drives()
+        from calibre_extensions.usbobserver import get_usb_drives
+        return get_usb_drives()
 
     def _osx_bsd_names(self):
         drives = self.osx_get_usb_drives()
@@ -343,7 +380,7 @@ class Device(DeviceConfig, DevicePlugin):
         if not matches:
             from pprint import pformat
             raise DeviceError(
-                'Could not detect BSD names for %s. Try rebooting.\nOutput from osx_get_usb_drives():\n%s' % (self.name, pformat(drives)))
+                f'Could not detect BSD names for {self.name}. Try rebooting.\nOutput from osx_get_usb_drives():\n{pformat(drives)}')
 
         pat = re.compile(r'(?P<m>\d+)([a-z]+(?P<p>\d+)){0,1}')
 
@@ -355,9 +392,9 @@ class Device(DeviceConfig, DevicePlugin):
             g = m.groupdict()
             if g['p'] is None:
                 g['p'] = 0
-            return map(int, (g.get('m'), g.get('p')))
+            return list(map(int, (g.get('m'), g.get('p'))))
 
-        def dcmp(x, y):
+        def cmp_key(x):
             '''
             Sorting based on the following scheme:
                 - disks without partitions are first
@@ -366,18 +403,11 @@ class Device(DeviceConfig, DevicePlugin):
                   disk number, then on partition number
             '''
             x = x.rpartition('/')[-1]
-            y = y.rpartition('/')[-1]
-            x, y = nums(x), nums(y)
-            if x[1] == 0 and y[1] > 0:
-                return cmp(1, 2)
-            if x[1] > 0 and y[1] == 0:
-                return cmp(2, 1)
-            ans = cmp(x[0], y[0])
-            if ans == 0:
-                ans = cmp(x[1], y[1])
-            return ans
+            disk_num, part_num = nums(x)
+            has_part = 1 if part_num > 0 else 0
+            return has_part, disk_num, part_num
 
-        matches.sort(cmp=dcmp)
+        matches.sort(key=cmp_key)
         drives = {'main':matches[0]}
         if len(matches) > 1:
             drives['carda'] = matches[1]
@@ -400,11 +430,22 @@ class Device(DeviceConfig, DevicePlugin):
         return drives
 
     def open_osx(self):
+        from calibre_extensions.usbobserver import get_mounted_filesystems
         bsd_drives = self.osx_bsd_names()
         drives = self.osx_sort_names(bsd_drives.copy())
-        mount_map = usbobserver.get_mounted_filesystems()
-        drives = {k: mount_map.get(v) for k, v in drives.iteritems()}
-        if DEBUG:
+        mount_map = get_mounted_filesystems()
+        # macOS 13 Ventura uses a weird scheme for mounted FAT devices of the
+        # form fat://basename_of_bsd_name/basename_of_mountpoint
+        # see https://www.mobileread.com/forums/showthread.php?t=347294
+        for dev_node in tuple(mount_map):
+            if ':' in dev_node and '//' in dev_node:
+                val = mount_map[dev_node]
+                dev_node = dev_node.split('/')[-2]
+                dev_node = f'/dev/{dev_node}'
+                if dev_node not in mount_map:
+                    mount_map[dev_node] = val
+        drives = {k: mount_map.get(v) for k, v in iteritems(drives)}
+        if is_debugging():
             print()
             from pprint import pprint
             pprint({'bsd_drives': bsd_drives, 'mount_map': mount_map, 'drives': drives})
@@ -447,8 +488,7 @@ class Device(DeviceConfig, DevicePlugin):
                 isfile = os.path.isfile(p)
                 yield p, isfile
                 if not isfile:
-                    for y, q in walk(p):
-                        yield y, q
+                    yield from walk(p)
 
         def raw2num(raw):
             raw = raw.lower()
@@ -467,15 +507,22 @@ class Device(DeviceConfig, DevicePlugin):
             q = getattr(detected_device, attr)
             return q == val
 
+        def getnum(usb_dir):
+            def rc(q):
+                with open(j(usb_dir, q), 'rb') as f:
+                    return raw2num(f.read().decode('utf-8'))
+            return rc
+
         for x, isfile in walk('/sys/devices'):
             if isfile and x.endswith('idVendor'):
                 usb_dir = d(x)
                 for y in ('idProduct', 'idVendor', 'bcdDevice'):
                     if not os.access(j(usb_dir, y), os.R_OK):
                         usb_dir = None
-                        continue
-                e = lambda q : raw2num(open(j(usb_dir, q)).read())
-                ven, prod, bcd = map(e, ('idVendor', 'idProduct', 'bcdDevice'))
+                        break
+                if usb_dir is None:
+                    continue
+                ven, prod, bcd = map(getnum(usb_dir), ('idVendor', 'idProduct', 'bcdDevice'))
                 if not (test(ven, 'idVendor') and test(prod, 'idProduct') and
                         test(bcd, 'bcdDevice')):
                     usb_dir = None
@@ -496,21 +543,22 @@ class Device(DeviceConfig, DevicePlugin):
                     sz = j(x, 'size')
                     node = parts[idx+1]
                     try:
-                        exists = int(open(sz).read()) > 0
+                        with open(sz, 'rb') as szf:
+                            exists = int(szf.read().decode('utf-8')) > 0
                         if exists:
                             node = self.find_largest_partition(x)
                             ok[node] = True
                         else:
                             ok[node] = False
-                    except:
+                    except Exception:
                         ok[node] = False
-                    if DEBUG and not ok[node]:
-                        print('\nIgnoring the node: %s as could not read size from: %s' % (node, sz))
+                    if is_debugging() and not ok[node]:
+                        print(f'\nIgnoring the node: {node} as could not read size from: {sz}')
 
                     devnodes.append(node)
 
         devnodes += list(repeat(None, 3))
-        ans = ['/dev/'+x if ok.get(x, False) else None for x in devnodes]
+        ans = ['/dev/'+x if ok.get(x) else None for x in devnodes]
         ans.sort(key=lambda x: x[5:] if x else 'zzzzz')
         return self.linux_swap_drives(ans[:3])
 
@@ -530,13 +578,14 @@ class Device(DeviceConfig, DevicePlugin):
             if not os.access(sz, os.R_OK):
                 continue
             try:
-                sz = int(open(sz).read())
-            except:
+                with open(sz, 'rb') as szf:
+                    sz = int(szf.read().decode('utf-8'))
+            except Exception:
                 continue
             if sz > 0:
                 nodes.append((x.split('/')[-1], sz))
 
-        nodes.sort(cmp=lambda x, y: cmp(x[1], y[1]))
+        nodes.sort(key=lambda x: x[1])
         if not nodes:
             return node
         return nodes[-1][0]
@@ -553,7 +602,7 @@ class Device(DeviceConfig, DevicePlugin):
                     from calibre.devices.udisks import mount
                     mount(node)
                     return 0
-                except:
+                except Exception:
                     print('Udisks mount call failed:')
                     import traceback
                     traceback.print_exc()
@@ -570,7 +619,7 @@ class Device(DeviceConfig, DevicePlugin):
             'the device has already been ejected, or your '
             'kernel is exporting a deprecated version of SYSFS.')
                     %self.__class__.__name__)
-        if DEBUG:
+        if is_debugging():
             print('\nFound device nodes:', main, carda, cardb)
 
         self._linux_mount_map = {}
@@ -590,7 +639,7 @@ class Device(DeviceConfig, DevicePlugin):
                 continue
             mp, ret = mount(card, typ)
             if mp is None:
-                print('Unable to mount card (Error code: %d)'%ret, file=sys.stderr)
+                print(f'Unable to mount card (Error code: {ret})', file=sys.stderr)
             else:
                 if not mp.endswith('/'):
                     mp += '/'
@@ -607,16 +656,16 @@ class Device(DeviceConfig, DevicePlugin):
             path = os.path.join(mp, 'calibre_readonly_test')
             ro = True
             try:
-                with lopen(path, 'wb'):
+                with open(path, 'wb'):
                     ro = False
-            except:
+            except Exception:
                 pass
             else:
                 try:
                     os.remove(path)
-                except:
+                except Exception:
                     pass
-            if DEBUG and ro:
+            if is_debugging() and ro:
                 print('\nThe mountpoint', mp, 'is readonly, ignoring it')
             return ro
 
@@ -646,13 +695,14 @@ class Device(DeviceConfig, DevicePlugin):
 #  open for FreeBSD
 #      find the device node or nodes that match the S/N we already have from the scanner
 #      and attempt to mount each one
-#              1.  get list of devices in /dev with matching s/n etc.
+#              1.  get list of devices via DBUS UDisk2 with matching s/n etc.
 #              2.  get list of volumes associated with each
-#              3.  attempt to mount each one using Hal
+#              3.  attempt to mount each one using UDisks2
 #              4.  when finished, we have a list of mount points and associated dbus nodes
 #
     def open_freebsd(self):
-        import dbus
+        from calibre.devices.udisks import find_device_vols_by_serial
+
         # There should be some way to access the -v arg...
         verbose = False
 
@@ -662,115 +712,80 @@ class Device(DeviceConfig, DevicePlugin):
 
         if not d.serial:
             raise DeviceError("Device has no S/N.  Can't continue")
-            return False
 
-        vols=[]
-
-        bus = dbus.SystemBus()
-        manager = dbus.Interface(bus.get_object('org.freedesktop.Hal',
-                      '/org/freedesktop/Hal/Manager'), 'org.freedesktop.Hal.Manager')
-        paths = manager.FindDeviceStringMatch('usb.serial',d.serial)
-        for path in paths:
-            objif = dbus.Interface(bus.get_object('org.freedesktop.Hal', path), 'org.freedesktop.Hal.Device')
-            # Extra paranoia...
-            try:
-                if d.idVendor == objif.GetProperty('usb.vendor_id') and \
-                        d.idProduct == objif.GetProperty('usb.product_id') and \
-                        d.manufacturer == objif.GetProperty('usb.vendor') and \
-                        d.product == objif.GetProperty('usb.product') and \
-                        d.serial == objif.GetProperty('usb.serial'):
-                    midpath = manager.FindDeviceStringMatch('info.parent', path)
-                    dpaths = manager.FindDeviceStringMatch(
-                        'storage.originating_device', path) + manager.FindDeviceStringMatch('storage.originating_device', midpath[0])
-                    for dpath in dpaths:
-                        # devif = dbus.Interface(bus.get_object('org.freedesktop.Hal', dpath), 'org.freedesktop.Hal.Device')
-                        try:
-                            vpaths = manager.FindDeviceStringMatch('block.storage_device', dpath)
-                            for vpath in vpaths:
-                                try:
-                                    vdevif = dbus.Interface(bus.get_object('org.freedesktop.Hal', vpath), 'org.freedesktop.Hal.Device')
-                                    if not vdevif.GetProperty('block.is_volume'):
-                                        continue
-                                    if vdevif.GetProperty('volume.fsusage') != 'filesystem':
-                                        continue
-                                    volif = dbus.Interface(bus.get_object('org.freedesktop.Hal', vpath), 'org.freedesktop.Hal.Device.Volume')
-                                    pdevif = dbus.Interface(bus.get_object('org.freedesktop.Hal', vdevif.GetProperty('info.parent')),
-                                                            'org.freedesktop.Hal.Device')
-                                    vol = {'node': pdevif.GetProperty('block.device'),
-                                            'dev': vdevif,
-                                            'vol': volif,
-                                            'label': vdevif.GetProperty('volume.label')}
-                                    vols.append(vol)
-                                except dbus.exceptions.DBusException as e:
-                                    print(e)
-                                    continue
-                        except dbus.exceptions.DBusException as e:
-                            print(e)
-                            continue
-            except dbus.exceptions.DBusException as e:
-                continue
-
-        def ocmp(x,y):
-            if x['node'] < y['node']:
-                return -1
-            if x['node'] > y['node']:
-                return 1
-            return 0
-
-        vols.sort(cmp=ocmp)
+        vols = find_device_vols_by_serial(d.serial)
 
         if verbose:
-            print("FBSD:	", vols)
+            print('FBSD:\t', vols)
 
-        mtd=0
+        ok, mv = self.freebsd_mount_volumes(vols)
+        if not ok:
+            raise DeviceError(_('Unable to mount the device'))
+        for k, v in mv.items():
+            setattr(self, k, v)
 
-        for vol in vols:
-            mp = ''
-            if vol['dev'].GetProperty('volume.is_mounted'):
-                mp = vol['dev'].GetProperty('volume.mount_point')
-            else:
+    def freebsd_mount_volumes(self, vols):
+        def fmount(node):
+            mp = self.node_mountpoint(node)
+            if mp is not None:
+                # Already mounted
+                return mp
+
+            from calibre.devices.udisks import mount, rescan
+            for i in range(6):
                 try:
-                    vol['vol'].Mount('Calibre-'+vol['label'],
-                            vol['dev'].GetProperty('volume.fstype'), [])
-                    loops = 0
-                    while not vol['dev'].GetProperty('volume.is_mounted'):
+                    mp = mount(node)
+                    break
+                except Exception:
+                    if i < 5:
+                        rescan(node)
                         time.sleep(1)
-                        loops += 1
-                        if loops > 100:
-                            print("ERROR: Timeout waiting for mount to complete")
-                            continue
-                    mp = vol['dev'].GetProperty('volume.mount_point')
-                except dbus.exceptions.DBusException as e:
-                    print("Failed to mount ", e)
-                    continue
+                    else:
+                        print('Udisks mount call failed:')
+                        import traceback
+                        traceback.print_exc()
+
+            return mp
+
+        mp = None
+        mtd = 0
+        ans = {
+            '_main_prefix': None, '_main_vol': None,
+            '_card_a_prefix': None, '_card_a_vol': None,
+            '_card_b_prefix': None, '_card_b_vol': None,
+        }
+        for vol in vols:
+            try:
+                mp = fmount(vol['Device'])
+            except Exception:
+                print('Failed to mount: ' + vol['Device'])
+                import traceback
+                traceback.print_exc()
+
+            if mp is None:
+                continue
 
             # Mount Point becomes Mount Path
             mp += '/'
-
-            if verbose:
-                print("FBSD:	  mounted", vol['label'], "on", mp)
+            DEBUG = is_debugging()
+            if DEBUG:
+                print('FBSD:\tmounted', vol['Device'], 'on', mp)
             if mtd == 0:
-                self._main_prefix = mp
-                self._main_vol = vol['vol']
-                if verbose:
-                    print("FBSD:	main = ", self._main_prefix)
-            if mtd == 1:
-                self._card_a_prefix = mp
-                self._card_a_vol = vol['vol']
-                if verbose:
-                    print("FBSD:	card a = ", self._card_a_prefix)
-            if mtd == 2:
-                self._card_b_prefix = mp
-                self._card_b_vol = vol['vol']
-                if verbose:
-                    print("FBSD:	card b = ", self._card_b_prefix)
-                # Note that mtd is used as a bool... not incrementing is fine.
+                ans['_main_prefix'], ans['_main_vol'] = mp, vol['Device']
+                if DEBUG:
+                    print('FBSD:\tmain = ', mp)
+            elif mtd == 1:
+                ans['_card_a_prefix'], ans['_card_a_vol'] = mp, vol['Device']
+                if DEBUG:
+                    print('FBSD:\tcard a = ', mp)
+            elif mtd == 2:
+                ans['_card_b_prefix'], ans['_card_b_vol'] = mp, vol['Device']
+                if DEBUG:
+                    print('FBSD:\tcard b = ', mp)
                 break
             mtd += 1
 
-        if mtd > 0:
-            return True
-        raise DeviceError(_('Unable to mount the device'))
+        return mtd > 0, ans
 
 #
 # ------------------------------------------------------
@@ -780,42 +795,50 @@ class Device(DeviceConfig, DevicePlugin):
 #        mounted filesystems, using the stored volume object
 #
     def eject_freebsd(self):
-        import dbus
-        # There should be some way to access the -v arg...
-        verbose = False
-
+        from calibre.devices.udisks import umount
         if self._main_prefix:
-            if verbose:
-                print("FBSD:	umount main:", self._main_prefix)
-            try:
-                self._main_vol.Unmount([])
-            except dbus.exceptions.DBusException as e:
-                print('Unable to eject ', e)
-
+            umount(self._main_vol)
         if self._card_a_prefix:
-            if verbose:
-                print("FBSD:	umount card a:", self._card_a_prefix)
-            try:
-                self._card_a_vol.Unmount([])
-            except dbus.exceptions.DBusException as e:
-                print('Unable to eject ', e)
-
+            umount(self._card_a_vol)
         if self._card_b_prefix:
-            if verbose:
-                print("FBSD:	umount card b:", self._card_b_prefix)
-            try:
-                self._card_b_vol.Unmount([])
-            except dbus.exceptions.DBusException as e:
-                print('Unable to eject ', e)
+            umount(self._card_b_vol)
 
-        self._main_prefix = None
-        self._card_a_prefix = None
-        self._card_b_prefix = None
+        self._main_prefix = self._main_vol = None
+        self._card_a_prefix = self._card_a_vol = None
+        self._card_b_prefix = self._card_b_vol = None
 # ------------------------------------------------------
 
+    def is_folder_still_available(self):
+        if self.eject_connected_folder:
+            self.eject_connected_folder = False
+            self.connected_folder_path = ''
+        with suppress(OSError):
+            if self.connected_folder_path:
+                return os.path.isdir(self.connected_folder_path)
+        return False
+
     def open(self, connected_device, library_uuid):
-        time.sleep(5)
         self._main_prefix = self._card_a_prefix = self._card_b_prefix = None
+        self.connected_folder_path = ''
+        if getattr(connected_device, 'serial', None) and connected_device.serial.startswith(FAKE_DEVICE_SERIAL):
+            folder_path = connected_device.serial[len(FAKE_DEVICE_SERIAL):]
+            if not os.path.isdir(folder_path):
+                raise DeviceError(f'The path {folder_path} is not a folder cannot connect to it')
+            if not os.access(folder_path, os.R_OK | os.W_OK):
+                raise DeviceError(f'You do not have permission to read and write to {folder_path} cannot connect to it')
+            if not folder_path.endswith(os.sep) and not folder_path.endswith('/'):
+                folder_path += os.sep
+            self._main_prefix = folder_path
+            self.current_library_uuid = library_uuid
+            self.device_being_opened = connected_device
+            try:
+                self.post_open_callback()
+            finally:
+                self.device_being_opened = None
+            self.connected_folder_path = folder_path
+            return
+
+        time.sleep(5)
         self.device_being_opened = connected_device
         try:
             if islinux:
@@ -826,14 +849,10 @@ class Device(DeviceConfig, DevicePlugin):
                     self.open_linux()
             if isfreebsd:
                 self._main_vol = self._card_a_vol = self._card_b_vol = None
-                try:
-                    self.open_freebsd()
-                except DeviceError:
-                    time.sleep(2)
-                    self.open_freebsd()
+                self.open_freebsd()
             if iswindows:
                 self.open_windows()
-            if isosx:
+            if ismacos:
                 try:
                     self.open_osx()
                 except DeviceError:
@@ -857,8 +876,7 @@ class Device(DeviceConfig, DevicePlugin):
                 drives.append(x[0].upper())
 
         def do_it(drives):
-            import win32process
-            subprocess.Popen([eject_exe()] + drives, creationflags=win32process.CREATE_NO_WINDOW).wait()
+            subprocess.Popen([eject_exe()] + drives, creationflags=subprocess.CREATE_NO_WINDOW).wait()
 
         t = Thread(target=do_it, args=[drives])
         t.daemon = True
@@ -871,7 +889,7 @@ class Device(DeviceConfig, DevicePlugin):
             if x is not None:
                 try:
                     subprocess.Popen(self.OSX_EJECT_COMMAND + [x])
-                except:
+                except Exception:
                     pass
 
     def eject_linux(self):
@@ -880,7 +898,7 @@ class Device(DeviceConfig, DevicePlugin):
         for d in drives:
             try:
                 umount(d)
-            except:
+            except Exception:
                 pass
         for d in drives:
             try:
@@ -889,28 +907,36 @@ class Device(DeviceConfig, DevicePlugin):
                 print('Udisks eject call for:', d, 'failed:')
                 print('\t', e)
 
+    def on_device_close(self):
+        pass
+
+    def unmount_device(self):
+        if self.connected_folder_path:
+            self.eject_connected_folder = True
+
     def eject(self):
         if islinux:
             try:
                 self.eject_linux()
-            except:
+            except Exception:
                 pass
         if isfreebsd:
             try:
                 self.eject_freebsd()
-            except:
+            except Exception:
                 pass
         if iswindows:
             try:
                 self.eject_windows()
-            except:
+            except Exception:
                 pass
-        if isosx:
+        if ismacos:
             try:
                 self.eject_osx()
-            except:
+            except Exception:
                 pass
         self._main_prefix = self._card_a_prefix = self._card_b_prefix = None
+        self.on_device_close()
 
     def linux_post_yank(self):
         self._linux_mount_map = {}
@@ -919,10 +945,11 @@ class Device(DeviceConfig, DevicePlugin):
         if islinux:
             try:
                 self.linux_post_yank()
-            except:
+            except Exception:
                 import traceback
                 traceback.print_exc()
         self._main_prefix = self._card_a_prefix = self._card_b_prefix = None
+        self.on_device_close()
 
     def get_main_ebook_dir(self, for_upload=False):
         return self.EBOOK_DIR_MAIN
@@ -938,7 +965,7 @@ class Device(DeviceConfig, DevicePlugin):
         sanity_check(on_card, files, self.card_prefix(), self.free_space())
 
         def get_dest_dir(prefix, candidates):
-            if isinstance(candidates, basestring):
+            if isinstance(candidates, string_or_bytes):
                 candidates = [candidates]
             if not candidates:
                 candidates = ['']

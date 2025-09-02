@@ -1,22 +1,19 @@
-# -*- coding: utf-8 -*-
-
-from __future__ import (unicode_literals, division, absolute_import, print_function)
-
 __license__ = 'GPL 3'
 __copyright__ = '2011, John Schember <john@nachtimwald.com>'
 __docformat__ = 'restructuredtext en'
 
-import traceback, base64
+import traceback
 from contextlib import closing
 from threading import Thread
-from Queue import Queue
 
 from calibre import browser
 from calibre.constants import DEBUG
 from calibre.utils.img import scale_image
+from polyglot.binary import from_base64_bytes
+from polyglot.queue import Queue
 
 
-class GenericDownloadThreadPool(object):
+class GenericDownloadThreadPool:
     '''
     add_task must be implemented in a subclass and must
     GenericDownloadThreadPool.add_task must be called
@@ -44,7 +41,7 @@ class GenericDownloadThreadPool(object):
         starts any threads necessary to fill the pool if it is
         not already full.
         '''
-        for i in xrange(self.thread_count - self.running_threads_count()):
+        for i in range(self.thread_count - self.running_threads_count()):
             t = self.thread_type(self.tasks, self.results)
             self.threads.append(t)
             t.start()
@@ -126,7 +123,7 @@ class SearchThread(Thread):
                     res.create_browser = store_plugin.create_browser
                     self.results.put((res, store_plugin))
                 self.tasks.task_done()
-            except:
+            except Exception:
                 if DEBUG:
                     traceback.print_exc()
 
@@ -142,7 +139,7 @@ class CoverThreadPool(GenericDownloadThreadPool):
 
 
 def decode_data_url(url):
-    return base64.standard_b64decode(url.partition(',')[2])
+    return from_base64_bytes(url.partition(',')[2])
 
 
 class CoverThread(Thread):
@@ -172,7 +169,7 @@ class CoverThread(Thread):
                     result.cover_data = scale_image(result.cover_data, 256, 256)[2]
                     callback()
                 self.tasks.task_done()
-            except:
+            except Exception:
                 if DEBUG:
                     traceback.print_exc()
 
@@ -207,7 +204,7 @@ class DetailsThread(Thread):
                     store_plugin.get_details(result, timeout)
                     callback(result)
                 self.tasks.task_done()
-            except:
+            except Exception:
                 if DEBUG:
                     traceback.print_exc()
 
@@ -238,6 +235,6 @@ class CacheUpdateThread(Thread):
             try:
                 store_plugin, timeout = self.tasks.get()
                 store_plugin.update_cache(timeout=timeout, suppress_progress=True)
-            except:
+            except Exception:
                 if DEBUG:
                     traceback.print_exc()

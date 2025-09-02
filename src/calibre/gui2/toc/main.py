@@ -1,29 +1,58 @@
-#!/usr/bin/env python2
-# vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:fdm=marker:ai
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
+#!/usr/bin/env python
+# License: GPLv3 Copyright: 2013, Kovid Goyal <kovid at kovidgoyal.net>
 
-__license__   = 'GPL v3'
-__copyright__ = '2013, Kovid Goyal <kovid at kovidgoyal.net>'
-__docformat__ = 'restructuredtext en'
 
-import sys, os, textwrap
-from threading import Thread
+import os
+import sys
+import tempfile
+import textwrap
 from functools import partial
-from polyglot.builtins import map
+from threading import Thread
+from time import monotonic
 
-from PyQt5.Qt import (QPushButton, QFrame, QMenu, QInputDialog, QCheckBox,
-    QDialog, QVBoxLayout, QDialogButtonBox, QSize, QStackedWidget, QWidget,
-    QLabel, Qt, pyqtSignal, QIcon, QTreeWidget, QGridLayout, QTreeWidgetItem,
-    QToolButton, QItemSelectionModel, QCursor, QKeySequence, QSizePolicy)
+from qt.core import (
+    QAbstractItemView,
+    QCheckBox,
+    QCursor,
+    QDialog,
+    QDialogButtonBox,
+    QEvent,
+    QFrame,
+    QGridLayout,
+    QIcon,
+    QInputDialog,
+    QItemSelectionModel,
+    QKeySequence,
+    QLabel,
+    QMenu,
+    QPushButton,
+    QScrollArea,
+    QSize,
+    QSizePolicy,
+    QStackedWidget,
+    Qt,
+    QTimer,
+    QToolButton,
+    QTreeWidget,
+    QTreeWidgetItem,
+    QVBoxLayout,
+    QWidget,
+    pyqtSignal,
+)
 
-from calibre.ebooks.oeb.polish.container import get_container, AZW3Container
-from calibre.ebooks.oeb.polish.toc import (
-    get_toc, add_id, TOC, commit_toc, from_xpaths, from_links, from_files)
-from calibre.gui2 import Application, error_dialog, gprefs, info_dialog
+from calibre.constants import TOC_DIALOG_APP_UID, islinux, ismacos, iswindows
+from calibre.ebooks.oeb.polish.container import AZW3Container, get_container
+from calibre.ebooks.oeb.polish.toc import TOC, add_id, commit_toc, from_files, from_links, from_xpaths, get_toc
+from calibre.gui2 import Application, error_dialog, info_dialog, set_app_uid
+from calibre.gui2.convert.xpath_wizard import XPathEdit
 from calibre.gui2.progress_indicator import ProgressIndicator
 from calibre.gui2.toc.location import ItemEdit
-from calibre.gui2.convert.xpath_wizard import XPathEdit
+from calibre.ptempfile import reset_base_dir
+from calibre.startup import connect_lambda
+from calibre.utils.config import JSONConfig
+from calibre.utils.filenames import atomic_rename
+from calibre.utils.icu import lower as icu_lower
+from calibre.utils.icu import upper as icu_upper
 from calibre.utils.logging import GUILog
 
 ICON_SIZE = 24
@@ -44,19 +73,19 @@ class XPathDialog(QDialog):  # {{{
         la.setWordWrap(True)
         l.addWidget(la)
         self.widgets = []
-        for i in xrange(5):
-            la = _('Level %s ToC:')%('&%d'%(i+1))
+        for i in range(5):
+            la = _('Level %s ToC:')%(f'&{i + 1}')
             xp = XPathEdit(self)
             xp.set_msg(la)
             self.widgets.append(xp)
             l.addWidget(xp)
 
-        self.bb = bb = QDialogButtonBox(QDialogButtonBox.Ok|QDialogButtonBox.Cancel)
+        self.bb = bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok|QDialogButtonBox.StandardButton.Cancel)
         bb.accepted.connect(self.accept)
         bb.rejected.connect(self.reject)
-        self.ssb = b = bb.addButton(_('&Save settings'), bb.ActionRole)
+        self.ssb = b = bb.addButton(_('&Save settings'), QDialogButtonBox.ButtonRole.ActionRole)
         b.clicked.connect(self.save_settings)
-        self.load_button = b = bb.addButton(_('&Load settings'), bb.ActionRole)
+        self.load_button = b = bb.addButton(_('&Load settings'), QDialogButtonBox.ButtonRole.ActionRole)
         self.load_menu = QMenu(b)
         b.setMenu(self.load_menu)
         self.setup_load_button()
@@ -77,7 +106,7 @@ class XPathDialog(QDialog):  # {{{
         name, ok = QInputDialog.getText(self, _('Choose name'),
                 _('Choose a name for these settings'))
         if ok:
-            name = unicode(name).strip()
+            name = str(name).strip()
             if name:
                 saved = self.prefs.get('xpath_toc_settings', {})
                 # in JSON all keys have to be strings
@@ -119,7 +148,7 @@ class XPathDialog(QDialog):  # {{{
     def accept(self):
         if self.check():
             self.prefs.set('xpath_toc_remove_duplicates', self.remove_duplicates_cb.isChecked())
-            super(XPathDialog, self).accept()
+            super().accept()
 
     @property
     def xpaths(self):
@@ -127,31 +156,32 @@ class XPathDialog(QDialog):  # {{{
 # }}}
 
 
-class ItemView(QFrame):  # {{{
+class ItemView(QStackedWidget):  # {{{
 
     add_new_item = pyqtSignal(object, object)
     delete_item = pyqtSignal()
     flatten_item = pyqtSignal()
     go_to_root = pyqtSignal()
-    create_from_xpath = pyqtSignal(object, object)
+    create_from_xpath = pyqtSignal(object, object, object)
     create_from_links = pyqtSignal()
     create_from_files = pyqtSignal()
     flatten_toc = pyqtSignal()
 
     def __init__(self, parent, prefs):
-        QFrame.__init__(self, parent)
+        QStackedWidget.__init__(self, parent)
         self.prefs = prefs
-        self.setFrameShape(QFrame.StyledPanel)
         self.setMinimumWidth(250)
-        self.stack = s = QStackedWidget(self)
-        self.l = l = QVBoxLayout()
-        self.setLayout(l)
-        l.addWidget(s)
         self.root_pane = rp = QWidget(self)
         self.item_pane = ip = QWidget(self)
         self.current_item = None
-        s.addWidget(rp)
-        s.addWidget(ip)
+        sa = QScrollArea(self)
+        sa.setWidgetResizable(True)
+        sa.setWidget(rp)
+        self.addWidget(sa)
+        sa = QScrollArea(self)
+        sa.setWidgetResizable(True)
+        sa.setWidget(ip)
+        self.addWidget(sa)
 
         self.l1 = la = QLabel('<p>'+_(
             'You can edit existing entries in the Table of Contents by clicking them'
@@ -240,59 +270,59 @@ class ItemView(QFrame):  # {{{
         l.addWidget(la, 1, 0, 1, 2)
 
         # Item status
-        ip.hl1 = hl =  QFrame()
-        hl.setFrameShape(hl.HLine)
+        ip.hl1 = hl = QFrame()
+        hl.setFrameShape(QFrame.Shape.HLine)
         l.addWidget(hl, l.rowCount(), 0, 1, 2)
         self.icon_label = QLabel()
         self.status_label = QLabel()
         self.status_label.setWordWrap(True)
         l.addWidget(self.icon_label, l.rowCount(), 0)
         l.addWidget(self.status_label, l.rowCount()-1, 1)
-        ip.hl2 = hl =  QFrame()
-        hl.setFrameShape(hl.HLine)
+        ip.hl2 = hl = QFrame()
+        hl.setFrameShape(QFrame.Shape.HLine)
         l.addWidget(hl, l.rowCount(), 0, 1, 2)
 
         # Edit/remove item
         rs = l.rowCount()
-        ip.b1 = b = QPushButton(QIcon(I('edit_input.png')),
+        ip.b1 = b = QPushButton(QIcon.ic('edit_input.png'),
             _('Change the &location this entry points to'), self)
         b.clicked.connect(self.edit_item)
         l.addWidget(b, l.rowCount()+1, 0, 1, 2)
-        ip.b2 = b = QPushButton(QIcon(I('trash.png')),
+        ip.b2 = b = QPushButton(QIcon.ic('trash.png'),
             _('&Remove this entry'), self)
         l.addWidget(b, l.rowCount(), 0, 1, 2)
         b.clicked.connect(self.delete_item)
-        ip.hl3 = hl =  QFrame()
-        hl.setFrameShape(hl.HLine)
+        ip.hl3 = hl = QFrame()
+        hl.setFrameShape(QFrame.Shape.HLine)
         l.addWidget(hl, l.rowCount(), 0, 1, 2)
         l.setRowMinimumHeight(rs, 20)
 
         # Add new item
         rs = l.rowCount()
-        ip.b3 = b = QPushButton(QIcon(I('plus.png')), _('New entry &inside this entry'))
+        ip.b3 = b = QPushButton(QIcon.ic('plus.png'), _('New entry &inside this entry'))
         connect_lambda(b.clicked, self, lambda self: self.add_new('inside'))
         l.addWidget(b, l.rowCount()+1, 0, 1, 2)
-        ip.b4 = b = QPushButton(QIcon(I('plus.png')), _('New entry &above this entry'))
+        ip.b4 = b = QPushButton(QIcon.ic('plus.png'), _('New entry &above this entry'))
         connect_lambda(b.clicked, self, lambda self: self.add_new('before'))
         l.addWidget(b, l.rowCount(), 0, 1, 2)
-        ip.b5 = b = QPushButton(QIcon(I('plus.png')), _('New entry &below this entry'))
+        ip.b5 = b = QPushButton(QIcon.ic('plus.png'), _('New entry &below this entry'))
         connect_lambda(b.clicked, self, lambda self: self.add_new('after'))
         l.addWidget(b, l.rowCount(), 0, 1, 2)
         # Flatten entry
-        ip.b3 = b = QPushButton(QIcon(I('heuristics.png')), _('&Flatten this entry'))
+        ip.b3 = b = QPushButton(QIcon.ic('heuristics.png'), _('&Flatten this entry'))
         b.clicked.connect(self.flatten_item)
         b.setToolTip(_('All children of this entry are brought to the same '
                        'level as this entry.'))
         l.addWidget(b, l.rowCount()+1, 0, 1, 2)
 
-        ip.hl4 = hl =  QFrame()
-        hl.setFrameShape(hl.HLine)
+        ip.hl4 = hl = QFrame()
+        hl.setFrameShape(QFrame.Shape.HLine)
         l.addWidget(hl, l.rowCount(), 0, 1, 2)
         l.setRowMinimumHeight(rs, 20)
 
         # Return to welcome
         rs = l.rowCount()
-        ip.b4 = b = QPushButton(QIcon(I('back.png')), _('&Return to welcome screen'))
+        ip.b4 = b = QPushButton(QIcon.ic('back.png'), _('&Return to welcome screen'))
         b.clicked.connect(self.go_to_root)
         b.setToolTip(_('Go back to the top level view'))
         l.addWidget(b, l.rowCount()+1, 0, 1, 2)
@@ -306,16 +336,42 @@ class ItemView(QFrame):  # {{{
         self.w2.setWordWrap(True)
         l.addWidget(la, l.rowCount(), 0, 1, 2)
 
+    def headings_question(self, xpaths):
+        from calibre.gui2.widgets2 import Dialog
+
+        class D(Dialog):
+            def __init__(self, parent):
+                super().__init__(_('Configure ToC generation'), 'configure-toc-from-headings', parent=parent)
+
+            def setup_ui(s):
+                s.l = l = QVBoxLayout(s)
+                s.remove_duplicates_cb = rd = QCheckBox(_('Remove &duplicated headings at the same ToC level'))
+                l.addWidget(rd)
+                rd.setChecked(bool(self.prefs.get('toc_from_headings_remove_duplicates', True)))
+                s.prefer_title_cb = pt = QCheckBox(_('Use the &title attribute for ToC text'))
+                l.addWidget(pt)
+                pt.setToolTip(textwrap.fill(_(
+                    'When a heading tag has the "title" attribute use its contents as the text for the ToC entry,'
+                    ' instead of the text inside the heading tag itself.')))
+                pt.setChecked(bool(self.prefs.get('toc_from_headings_prefer_title')))
+                l.addWidget(s.bb)
+
+        d = D(self)
+        if d.exec() == QDialog.DialogCode.Accepted:
+            self.create_from_xpath.emit(xpaths, d.remove_duplicates_cb.isChecked(), d.prefer_title_cb.isChecked())
+        self.prefs.set('toc_from_headings_remove_duplicates', d.remove_duplicates_cb.isChecked())
+        self.prefs.set('toc_from_headings_prefer_title', d.prefer_title_cb.isChecked())
+
     def create_from_major_headings(self):
-        self.create_from_xpath.emit(['//h:h%d'%i for i in xrange(1, 4)], True)
+        self.headings_question([f'//h:h{i}' for i in range(1, 4)])
 
     def create_from_all_headings(self):
-        self.create_from_xpath.emit(['//h:h%d'%i for i in xrange(1, 7)], True)
+        self.headings_question([f'//h:h{i}' for i in range(1, 7)])
 
     def create_from_user_xpath(self):
         d = XPathDialog(self, self.prefs)
-        if d.exec_() == d.Accepted and d.xpaths:
-            self.create_from_xpath.emit(d.xpaths, d.remove_duplicates_cb.isChecked())
+        if d.exec() == QDialog.DialogCode.Accepted and d.xpaths:
+            self.create_from_xpath.emit(d.xpaths, d.remove_duplicates_cb.isChecked(), False)
 
     def hide_azw3_warning(self):
         self.w1.setVisible(False), self.w2.setVisible(False)
@@ -332,20 +388,20 @@ class ItemView(QFrame):  # {{{
     def __call__(self, item):
         if item is None:
             self.current_item = None
-            self.stack.setCurrentIndex(0)
+            self.setCurrentIndex(0)
         else:
             self.current_item = item
-            self.stack.setCurrentIndex(1)
+            self.setCurrentIndex(1)
             self.populate_item_pane()
 
     def populate_item_pane(self):
         item = self.current_item
-        name = unicode(item.data(0, Qt.DisplayRole) or '')
-        self.item_pane.heading.setText('<h2>%s</h2>'%name)
-        self.icon_label.setPixmap(item.data(0, Qt.DecorationRole
+        name = str(item.data(0, Qt.ItemDataRole.DisplayRole) or '')
+        self.item_pane.heading.setText(f'<h2>{name}</h2>')
+        self.icon_label.setPixmap(item.data(0, Qt.ItemDataRole.DecorationRole
                                             ).pixmap(32, 32))
         tt = _('This entry points to an existing destination')
-        toc = item.data(0, Qt.UserRole)
+        toc = item.data(0, Qt.ItemDataRole.UserRole)
         if toc.dest_exists is False:
             tt = _('The location this entry points to does not exist')
         elif toc.dest_exists is None:
@@ -359,7 +415,7 @@ class ItemView(QFrame):  # {{{
 # }}}
 
 
-NODE_FLAGS = (Qt.ItemIsDragEnabled|Qt.ItemIsEditable|Qt.ItemIsEnabled|Qt.ItemIsSelectable|Qt.ItemIsDropEnabled)
+NODE_FLAGS = (Qt.ItemFlag.ItemIsDragEnabled|Qt.ItemFlag.ItemIsEditable|Qt.ItemFlag.ItemIsEnabled|Qt.ItemFlag.ItemIsSelectable|Qt.ItemFlag.ItemIsDropEnabled)
 
 
 class TreeWidget(QTreeWidget):  # {{{
@@ -373,19 +429,19 @@ class TreeWidget(QTreeWidget):  # {{{
         self.setHeaderLabel(_('Table of Contents'))
         self.setIconSize(QSize(ICON_SIZE, ICON_SIZE))
         self.setDragEnabled(True)
-        self.setSelectionMode(self.ExtendedSelection)
+        self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.viewport().setAcceptDrops(True)
         self.setDropIndicatorShown(True)
-        self.setDragDropMode(self.InternalMove)
+        self.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
         self.setAutoScroll(True)
         self.setAutoScrollMargin(ICON_SIZE*2)
-        self.setDefaultDropAction(Qt.MoveAction)
+        self.setDefaultDropAction(Qt.DropAction.MoveAction)
         self.setAutoExpandDelay(1000)
         self.setAnimated(True)
         self.setMouseTracking(True)
         self.in_drop_event = False
         self.root = self.invisibleRootItem()
-        self.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self.show_context_menu)
 
     def push_history(self):
@@ -401,17 +457,16 @@ class TreeWidget(QTreeWidget):  # {{{
         self.push_history()
         return QTreeWidget.commitData(self, editor)
 
-    def iteritems(self, parent=None):
+    def iter_items(self, parent=None):
         if parent is None:
             parent = self.invisibleRootItem()
-        for i in xrange(parent.childCount()):
+        for i in range(parent.childCount()):
             child = parent.child(i)
             yield child
-            for gc in self.iteritems(parent=child):
-                yield gc
+            yield from self.iter_items(parent=child)
 
     def update_status_tip(self, item):
-        c = item.data(0, Qt.UserRole)
+        c = item.data(0, Qt.ItemDataRole.UserRole)
         if c is not None:
             frag = c.frag or ''
             if frag:
@@ -423,10 +478,10 @@ class TreeWidget(QTreeWidget):  # {{{
 
         def serialize_node(node):
             return {
-                'title': node.data(0, Qt.DisplayRole),
-                'toc_node': node.data(0, Qt.UserRole),
-                'icon': node.data(0, Qt.DecorationRole),
-                'tooltip': node.data(0, Qt.ToolTipRole),
+                'title': node.data(0, Qt.ItemDataRole.DisplayRole),
+                'toc_node': node.data(0, Qt.ItemDataRole.UserRole),
+                'icon': node.data(0, Qt.ItemDataRole.DecorationRole),
+                'tooltip': node.data(0, Qt.ItemDataRole.ToolTipRole),
                 'is_selected': node.isSelected(),
                 'is_expanded': node.isExpanded(),
                 'children': list(map(serialize_node, (node.child(i) for i in range(node.childCount())))),
@@ -439,11 +494,11 @@ class TreeWidget(QTreeWidget):  # {{{
 
         def unserialize_node(dict_node, parent):
             n = QTreeWidgetItem(parent)
-            n.setData(0, Qt.DisplayRole, dict_node['title'])
-            n.setData(0, Qt.UserRole, dict_node['toc_node'])
+            n.setData(0, Qt.ItemDataRole.DisplayRole, dict_node['title'])
+            n.setData(0, Qt.ItemDataRole.UserRole, dict_node['toc_node'])
             n.setFlags(NODE_FLAGS)
-            n.setData(0, Qt.DecorationRole, dict_node['icon'])
-            n.setData(0, Qt.ToolTipRole, dict_node['tooltip'])
+            n.setData(0, Qt.ItemDataRole.DecorationRole, dict_node['icon'])
+            n.setData(0, Qt.ItemDataRole.ToolTipRole, dict_node['tooltip'])
             self.update_status_tip(n)
             n.setExpanded(dict_node['is_expanded'])
             n.setSelected(dict_node['is_selected'])
@@ -459,120 +514,245 @@ class TreeWidget(QTreeWidget):  # {{{
         self.in_drop_event = True
         self.push_history()
         try:
-            super(TreeWidget, self).dropEvent(event)
+            super().dropEvent(event)
         finally:
             self.in_drop_event = False
 
     def selectedIndexes(self):
-        ans = super(TreeWidget, self).selectedIndexes()
+        ans = super().selectedIndexes()
         if self.in_drop_event:
-            # For order to be be preserved when moving by drag and drop, we
+            # For order to be preserved when moving by drag and drop, we
             # have to ensure that selectedIndexes returns an ordered list of
             # indexes.
-            sort_map = {self.indexFromItem(item):i for i, item in enumerate(self.iteritems())}
-            ans = sorted(ans, key=lambda x:sort_map.get(x, -1))
+            sort_map = {self.indexFromItem(item):i for i, item in enumerate(self.iter_items())}
+            ans = sorted(ans, key=lambda x: sort_map.get(x, -1))
         return ans
 
     def highlight_item(self, item):
-        self.setCurrentItem(item, 0, QItemSelectionModel.ClearAndSelect)
+        self.setCurrentItem(item, 0, QItemSelectionModel.SelectionFlag.ClearAndSelect)
         self.scrollToItem(item)
 
-    def check_multi_selection(self):
-        if len(self.selectedItems()) > 1:
-            info_dialog(self, _('Multiple items selected'), _(
-                'You are trying to move multiple items at once, this is not supported. Instead use'
-                ' Drag and Drop to move multiple items'), show=True)
-            return False
-        return True
+    def _sort_items_by_index(self, items, reverse=False):
+        def get_index(item):
+            result = []
+
+            parent = item.parent()
+            while parent is not None:
+                result.append(parent.indexOfChild(item))
+                item, parent = parent, parent.parent()
+
+            result.reverse()
+            return result
+
+        items.sort(key=get_index, reverse=reverse)
+
+    def _get_root_items(self, items):
+        items_ = []
+        for item in items:
+            if item is None:
+                continue
+
+            parent = item
+            while (parent := parent.parent()) is not None:
+                if parent in items:
+                    break
+            else:
+                items_.append(item)
+
+        return items_
+
+    def _move_indent_left(self, items):
+        self._sort_items_by_index(items)
+
+        for item in items:
+            old_parent = item.parent()
+            if old_parent is None:
+                return
+
+            old_index = old_parent.indexOfChild(item)
+            was_expanded = item.isExpanded() or item.childCount() == 0
+
+            new_parent = old_parent.parent() or self.invisibleRootItem()
+            new_index = new_parent.indexOfChild(old_parent) + 1
+
+            # all former lower siblings become children of indented item
+            for _ in range(old_parent.childCount() - old_index - 1):
+                lower_sibling = old_parent.child(old_index+1)
+                old_parent.removeChild(lower_sibling)
+                item.addChild(lower_sibling)
+
+                if lower_sibling not in items:
+                    was_expanded = True
+
+            old_parent.removeChild(item)
+            new_parent.insertChild(new_index, item)
+
+            self.expandItem(new_parent)
+            if was_expanded:
+                self.expandItem(item)
+
+    def _move_indent_right(self, items):
+        self._sort_items_by_index(items)
+
+        failed_parent = None
+        for item in items:
+            # indent right == become child of upper sibling
+            old_parent = item.parent() or self.invisibleRootItem()
+            old_idx = old_parent.indexOfChild(item)
+            was_expanded = item.isExpanded()
+
+            if old_idx <= 0:
+                # no upper sibling exists; cannot become child
+                failed_parent = old_parent
+                continue
+            elif failed_parent and old_parent is failed_parent:
+                # this prevents siblings at the same level from
+                # nesting into each other forming a "staircase"
+                continue
+            else:
+                failed_parent = None
+
+            new_parent = old_parent.child(old_idx-1)
+            old_parent.removeChild(item)
+            new_parent.addChild(item)
+
+            self.expandItem(new_parent)
+            if was_expanded:
+                self.expandItem(item)
+
+    def _move_indent(self, items, indent):
+        if not items or indent == 0:
+            return
+
+        # indent offsets are absolute (as opposed to relative to parent)
+        # child indented with parent automatically, no need for manual
+        items_ = self._get_root_items(items)
+        if len(items_) <= 0 or indent == 0:
+            return
+
+        focus_item = self.currentItem()
+
+        self.push_history()
+        if indent < 0:
+            self._move_indent_left(items_)
+        elif indent > 0:
+            self._move_indent_right(items_)
+
+        # restore previous focused item
+        if focus_item is None and items_:
+            focus_item = items_[0]
+
+        if focus_item:
+            self.setCurrentItem(
+                focus_item,
+                0,
+                QItemSelectionModel.SelectionFlag.ClearAndSelect
+            )
+
+        for item in items:
+            item.setSelected(True)
 
     def move_left(self):
-        if not self.check_multi_selection():
+        selected_items = self.selectedItems()
+        if len(selected_items) <= 0:
             return
-        self.push_history()
-        item = self.currentItem()
-        if item is not None:
-            parent = item.parent()
-            if parent is not None:
-                is_expanded = item.isExpanded() or item.childCount() == 0
-                gp = parent.parent() or self.invisibleRootItem()
-                idx = gp.indexOfChild(parent)
-                for gc in [parent.child(i) for i in xrange(parent.indexOfChild(item)+1, parent.childCount())]:
-                    parent.removeChild(gc)
-                    item.addChild(gc)
-                parent.removeChild(item)
-                gp.insertChild(idx+1, item)
-                if is_expanded:
-                    self.expandItem(item)
-                self.highlight_item(item)
+
+        self._move_indent(selected_items, -1)
 
     def move_right(self):
-        if not self.check_multi_selection():
+        selected_items = self.selectedItems()
+        if len(selected_items) <= 0:
             return
-        self.push_history()
-        item = self.currentItem()
-        if item is not None:
-            parent = item.parent() or self.invisibleRootItem()
-            idx = parent.indexOfChild(item)
-            if idx > 0:
-                is_expanded = item.isExpanded()
-                np = parent.child(idx-1)
-                parent.removeChild(item)
-                np.addChild(item)
-                if is_expanded:
-                    self.expandItem(item)
-                self.highlight_item(item)
+
+        self._move_indent(selected_items, 1)
 
     def move_down(self):
-        if not self.check_multi_selection():
+        selected_items = self.selectedItems()
+        if len(selected_items) <= 0:
             return
+
         self.push_history()
-        item = self.currentItem()
-        if item is None:
-            if self.root.childCount() == 0:
-                return
-            item = self.root.child(0)
-            self.highlight_item(item)
-            return
-        parent = item.parent() or self.root
-        idx = parent.indexOfChild(item)
-        if idx == parent.childCount() - 1:
-            # At end of parent, need to become sibling of parent
-            if parent is self.root:
-                return
-            gp = parent.parent() or self.root
-            parent.removeChild(item)
-            gp.insertChild(gp.indexOfChild(parent)+1, item)
-        else:
-            sibling = parent.child(idx+1)
-            parent.removeChild(item)
-            sibling.insertChild(0, item)
-        self.highlight_item(item)
+
+        items_ = self._get_root_items(selected_items)
+        self._sort_items_by_index(items_)
+
+        focus_item = self.currentItem()
+
+        for item in reversed(items_):
+            old_parent = item.parent() or self.invisibleRootItem()
+            old_index = old_parent.indexOfChild(item)
+            was_expanded = item.isExpanded() or item.childCount() == 0
+
+            new_parent = None
+            if old_index + 1 < old_parent.childCount():
+                # there is still space in parent; move down in same parent
+                old_parent.removeChild(item)
+                old_parent.insertChild(old_index + 1, item)
+            elif old_parent is not self.invisibleRootItem():
+                # move down past bottom of parent, become child of grandparent
+                new_parent = old_parent.parent() or self.invisibleRootItem()
+                old_parent.removeChild(item)
+                new_index = new_parent.indexOfChild(old_parent) + 1
+                new_parent.insertChild(new_index, item)
+                self.expandItem(new_parent)
+
+            self.expandItem(new_parent or old_parent)
+            if was_expanded:
+                self.expandItem(item)
+
+        if focus_item:
+            self.setCurrentItem(
+                focus_item,
+                0,
+                QItemSelectionModel.SelectionFlag.ClearAndSelect
+            )
+
+        for item in selected_items:
+            item.setSelected(True)
 
     def move_up(self):
-        if not self.check_multi_selection():
+        selected_items = self.selectedItems()
+        if len(selected_items) <= 0:
             return
+
         self.push_history()
-        item = self.currentItem()
-        if item is None:
-            if self.root.childCount() == 0:
-                return
-            item = self.root.child(self.root.childCount()-1)
-            self.highlight_item(item)
-            return
-        parent = item.parent() or self.root
-        idx = parent.indexOfChild(item)
-        if idx == 0:
-            # At end of parent, need to become sibling of parent
-            if parent is self.root:
-                return
-            gp = parent.parent() or self.root
-            parent.removeChild(item)
-            gp.insertChild(gp.indexOfChild(parent), item)
-        else:
-            sibling = parent.child(idx-1)
-            parent.removeChild(item)
-            sibling.addChild(item)
-        self.highlight_item(item)
+
+        items_ = self._get_root_items(selected_items)
+        self._sort_items_by_index(items_)
+
+        focus_item = self.currentItem()
+
+        for item in items_:
+            old_parent = item.parent() or self.invisibleRootItem()
+            old_index = old_parent.indexOfChild(item)
+            was_expanded = item.isExpanded() or item.childCount() == 0
+
+            new_parent = None
+            if old_index - 1 >= 0:
+                # there is still space in parent; move up within parent
+                old_parent.removeChild(item)
+                old_parent.insertChild(old_index - 1, item)
+            elif old_parent is not self.invisibleRootItem():
+                # move up past top of parent, become upper sibling of parent
+                new_parent = old_parent.parent() or self.invisibleRootItem()
+                old_parent.removeChild(item)
+                new_index = new_parent.indexOfChild(old_parent)
+                new_parent.insertChild(new_index, item)
+                self.expandItem(new_parent)
+
+            self.expandItem(new_parent or old_parent)
+            if was_expanded:
+                self.expandItem(item)
+
+        if focus_item:
+            self.setCurrentItem(
+                focus_item,
+                0,
+                QItemSelectionModel.SelectionFlag.ClearAndSelect
+            )
+
+        for item in selected_items:
+            item.setSelected(True)
 
     def del_items(self):
         self.push_history()
@@ -584,93 +764,93 @@ class TreeWidget(QTreeWidget):  # {{{
         self.push_history()
         from calibre.utils.titlecase import titlecase
         for item in self.selectedItems():
-            t = unicode(item.data(0, Qt.DisplayRole) or '')
-            item.setData(0, Qt.DisplayRole, titlecase(t))
+            t = str(item.data(0, Qt.ItemDataRole.DisplayRole) or '')
+            item.setData(0, Qt.ItemDataRole.DisplayRole, titlecase(t))
 
     def upper_case(self):
         self.push_history()
         for item in self.selectedItems():
-            t = unicode(item.data(0, Qt.DisplayRole) or '')
-            item.setData(0, Qt.DisplayRole, icu_upper(t))
+            t = str(item.data(0, Qt.ItemDataRole.DisplayRole) or '')
+            item.setData(0, Qt.ItemDataRole.DisplayRole, icu_upper(t))
 
     def lower_case(self):
         self.push_history()
         for item in self.selectedItems():
-            t = unicode(item.data(0, Qt.DisplayRole) or '')
-            item.setData(0, Qt.DisplayRole, icu_lower(t))
+            t = str(item.data(0, Qt.ItemDataRole.DisplayRole) or '')
+            item.setData(0, Qt.ItemDataRole.DisplayRole, icu_lower(t))
 
     def swap_case(self):
         self.push_history()
         from calibre.utils.icu import swapcase
         for item in self.selectedItems():
-            t = unicode(item.data(0, Qt.DisplayRole) or '')
-            item.setData(0, Qt.DisplayRole, swapcase(t))
+            t = str(item.data(0, Qt.ItemDataRole.DisplayRole) or '')
+            item.setData(0, Qt.ItemDataRole.DisplayRole, swapcase(t))
 
     def capitalize(self):
         self.push_history()
         from calibre.utils.icu import capitalize
         for item in self.selectedItems():
-            t = unicode(item.data(0, Qt.DisplayRole) or '')
-            item.setData(0, Qt.DisplayRole, capitalize(t))
+            t = str(item.data(0, Qt.ItemDataRole.DisplayRole) or '')
+            item.setData(0, Qt.ItemDataRole.DisplayRole, capitalize(t))
 
     def bulk_rename(self):
         from calibre.gui2.tweak_book.file_list import get_bulk_rename_settings
-        sort_map = {item:i for i, item in enumerate(self.iteritems())}
-        items = sorted(self.selectedItems(), key=lambda x:sort_map.get(x, -1))
+        sort_map = {id(item):i for i, item in enumerate(self.iter_items())}
+        items = sorted(self.selectedItems(), key=lambda x: sort_map.get(id(x), -1))
         settings = get_bulk_rename_settings(self, len(items), prefix=_('Chapter '), msg=_(
             'All selected items will be renamed to the form prefix-number'), sanitize=lambda x:x, leading_zeros=False)
         fmt, num = settings['prefix'], settings['start']
         if fmt is not None and num is not None:
             self.push_history()
             for i, item in enumerate(items):
-                item.setData(0, Qt.DisplayRole, fmt % (num + i))
+                item.setData(0, Qt.ItemDataRole.DisplayRole, fmt % (num + i))
 
     def keyPressEvent(self, ev):
-        if ev.key() == Qt.Key_Left and ev.modifiers() & Qt.CTRL:
+        if ev.key() == Qt.Key.Key_Left and ev.modifiers() & Qt.KeyboardModifier.ControlModifier:
             self.move_left()
             ev.accept()
-        elif ev.key() == Qt.Key_Right and ev.modifiers() & Qt.CTRL:
+        elif ev.key() == Qt.Key.Key_Right and ev.modifiers() & Qt.KeyboardModifier.ControlModifier:
             self.move_right()
             ev.accept()
-        elif ev.key() == Qt.Key_Up and (ev.modifiers() & Qt.CTRL or ev.modifiers() & Qt.ALT):
+        elif ev.key() == Qt.Key.Key_Up and (ev.modifiers() & Qt.KeyboardModifier.ControlModifier or ev.modifiers() & Qt.KeyboardModifier.AltModifier):
             self.move_up()
             ev.accept()
-        elif ev.key() == Qt.Key_Down and (ev.modifiers() & Qt.CTRL or ev.modifiers() & Qt.ALT):
+        elif ev.key() == Qt.Key.Key_Down and (ev.modifiers() & Qt.KeyboardModifier.ControlModifier or ev.modifiers() & Qt.KeyboardModifier.AltModifier):
             self.move_down()
             ev.accept()
-        elif ev.key() in (Qt.Key_Delete, Qt.Key_Backspace):
+        elif ev.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
             self.del_items()
             ev.accept()
         else:
-            return super(TreeWidget, self).keyPressEvent(ev)
+            return super().keyPressEvent(ev)
 
     def show_context_menu(self, point):
         item = self.currentItem()
 
         def key(k):
-            sc = unicode(QKeySequence(k | Qt.CTRL).toString(QKeySequence.NativeText))
-            return ' [%s]'%sc
+            sc = str(QKeySequence(k | Qt.KeyboardModifier.ControlModifier).toString(QKeySequence.SequenceFormat.NativeText))
+            return f' [{sc}]'
 
         if item is not None:
-            m = QMenu()
-            m.addAction(QIcon(I('edit_input.png')), _('Change the location this entry points to'), self.edit_item)
-            m.addAction(QIcon(I('modified.png')), _('Bulk rename all selected items'), self.bulk_rename)
-            m.addAction(QIcon(I('trash.png')), _('Remove all selected items'), self.del_items)
+            m = QMenu(self)
+            m.addAction(QIcon.ic('edit_input.png'), _('Change the location this entry points to'), self.edit_item)
+            m.addAction(QIcon.ic('modified.png'), _('Bulk rename all selected items'), self.bulk_rename)
+            m.addAction(QIcon.ic('trash.png'), _('Remove all selected items'), self.del_items)
             m.addSeparator()
-            ci = unicode(item.data(0, Qt.DisplayRole) or '')
+            ci = str(item.data(0, Qt.ItemDataRole.DisplayRole) or '')
             p = item.parent() or self.invisibleRootItem()
             idx = p.indexOfChild(item)
             if idx > 0:
-                m.addAction(QIcon(I('arrow-up.png')), (_('Move "%s" up')%ci)+key(Qt.Key_Up), self.move_up)
+                m.addAction(QIcon.ic('arrow-up.png'), (_('Move "%s" up')%ci)+key(Qt.Key.Key_Up), self.move_up)
             if idx + 1 < p.childCount():
-                m.addAction(QIcon(I('arrow-down.png')), (_('Move "%s" down')%ci)+key(Qt.Key_Down), self.move_down)
+                m.addAction(QIcon.ic('arrow-down.png'), (_('Move "%s" down')%ci)+key(Qt.Key.Key_Down), self.move_down)
             if item.parent() is not None:
-                m.addAction(QIcon(I('back.png')), (_('Unindent "%s"')%ci)+key(Qt.Key_Left), self.move_left)
+                m.addAction(QIcon.ic('back.png'), (_('Unindent "%s"')%ci)+key(Qt.Key.Key_Left), self.move_left)
             if idx > 0:
-                m.addAction(QIcon(I('forward.png')), (_('Indent "%s"')%ci)+key(Qt.Key_Right), self.move_right)
+                m.addAction(QIcon.ic('forward.png'), (_('Indent "%s"')%ci)+key(Qt.Key.Key_Right), self.move_right)
 
             m.addSeparator()
-            case_menu = QMenu(_('Change case'))
+            case_menu = QMenu(_('Change case'), m)
             case_menu.addAction(_('Upper case'), self.upper_case)
             case_menu.addAction(_('Lower case'), self.lower_case)
             case_menu.addAction(_('Swap case'), self.swap_case)
@@ -678,7 +858,7 @@ class TreeWidget(QTreeWidget):  # {{{
             case_menu.addAction(_('Capitalize'), self.capitalize)
             m.addMenu(case_menu)
 
-            m.exec_(QCursor.pos())
+            m.exec(QCursor.pos())
 # }}}
 
 
@@ -696,35 +876,35 @@ class TOCView(QWidget):  # {{{
         self.tocw.edit_item.connect(self.edit_item)
         l.addWidget(t, 0, 0, 7, 3)
         self.up_button = b = QToolButton(self)
-        b.setIcon(QIcon(I('arrow-up.png')))
+        b.setIcon(QIcon.ic('arrow-up.png'))
         b.setIconSize(QSize(ICON_SIZE, ICON_SIZE))
         l.addWidget(b, 0, 3)
         b.setToolTip(_('Move current entry up [Ctrl+Up]'))
         b.clicked.connect(self.move_up)
 
         self.left_button = b = QToolButton(self)
-        b.setIcon(QIcon(I('back.png')))
+        b.setIcon(QIcon.ic('back.png'))
         b.setIconSize(QSize(ICON_SIZE, ICON_SIZE))
         l.addWidget(b, 2, 3)
         b.setToolTip(_('Unindent the current entry [Ctrl+Left]'))
         b.clicked.connect(self.tocw.move_left)
 
         self.del_button = b = QToolButton(self)
-        b.setIcon(QIcon(I('trash.png')))
+        b.setIcon(QIcon.ic('trash.png'))
         b.setIconSize(QSize(ICON_SIZE, ICON_SIZE))
         l.addWidget(b, 3, 3)
         b.setToolTip(_('Remove all selected entries'))
         b.clicked.connect(self.del_items)
 
         self.right_button = b = QToolButton(self)
-        b.setIcon(QIcon(I('forward.png')))
+        b.setIcon(QIcon.ic('forward.png'))
         b.setIconSize(QSize(ICON_SIZE, ICON_SIZE))
         l.addWidget(b, 4, 3)
         b.setToolTip(_('Indent the current entry [Ctrl+Right]'))
         b.clicked.connect(self.tocw.move_right)
 
         self.down_button = b = QToolButton(self)
-        b.setIcon(QIcon(I('arrow-down.png')))
+        b.setIcon(QIcon.ic('arrow-down.png'))
         b.setIconSize(QSize(ICON_SIZE, ICON_SIZE))
         l.addWidget(b, 6, 3)
         b.setToolTip(_('Move current entry down [Ctrl+Down]'))
@@ -738,7 +918,7 @@ class TOCView(QWidget):  # {{{
         l.addWidget(b, col, 1)
         self.default_msg = _('Double click on an entry to change the text')
         self.hl = hl = QLabel(self.default_msg)
-        hl.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
+        hl.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
         l.addWidget(hl, col, 2, 1, -1)
         self.item_view = i = ItemView(self, self.prefs)
         self.item_view.delete_item.connect(self.delete_current_item)
@@ -757,13 +937,13 @@ class TOCView(QWidget):  # {{{
         self.item_view.edit_item()
 
     def event(self, e):
-        if e.type() == e.StatusTip:
-            txt = unicode(e.tip()) or self.default_msg
+        if e.type() == QEvent.Type.StatusTip:
+            txt = str(e.tip()) or self.default_msg
             self.hl.setText(txt)
-        return super(TOCView, self).event(e)
+        return super().event(e)
 
     def item_title(self, item):
-        return unicode(item.data(0, Qt.DisplayRole) or '')
+        return str(item.data(0, Qt.ItemDataRole.DisplayRole) or '')
 
     def del_items(self):
         self.tocw.del_items()
@@ -775,16 +955,15 @@ class TOCView(QWidget):  # {{{
             p = item.parent() or self.root
             p.removeChild(item)
 
-    def iteritems(self, parent=None):
-        for item in self.tocw.iteritems(parent=parent):
-            yield item
+    def iter_items(self, parent=None):
+        yield from self.tocw.iter_items(parent=parent)
 
     def flatten_toc(self):
         self.tocw.push_history()
         found = True
         while found:
             found = False
-            for item in self.iteritems():
+            for item in self.iter_items():
                 if item.childCount() > 0:
                     self._flatten_item(item)
                     found = True
@@ -798,7 +977,7 @@ class TOCView(QWidget):  # {{{
         if item is not None:
             p = item.parent() or self.root
             idx = p.indexOfChild(item)
-            children = [item.child(i) for i in xrange(item.childCount())]
+            children = [item.child(i) for i in range(item.childCount())]
             for child in reversed(children):
                 item.removeChild(child)
                 p.insertChild(idx+1, child)
@@ -816,10 +995,10 @@ class TOCView(QWidget):  # {{{
         self.tocw.move_down()
 
     def data_changed(self, top_left, bottom_right):
-        for r in xrange(top_left.row(), bottom_right.row()+1):
+        for r in range(top_left.row(), bottom_right.row()+1):
             idx = self.tocw.model().index(r, 0, top_left.parent())
-            new_title = unicode(idx.data(Qt.DisplayRole) or '').strip()
-            toc = idx.data(Qt.UserRole)
+            new_title = str(idx.data(Qt.ItemDataRole.DisplayRole) or '').strip()
+            toc = idx.data(Qt.ItemDataRole.UserRole)
             if toc is not None:
                 toc.title = new_title or _('(Untitled)')
             item = self.tocw.itemFromIndex(idx)
@@ -836,16 +1015,16 @@ class TOCView(QWidget):  # {{{
         return c
 
     def populate_item(self, c, child):
-        c.setData(0, Qt.DisplayRole, child.title or _('(Untitled)'))
-        c.setData(0, Qt.UserRole, child)
+        c.setData(0, Qt.ItemDataRole.DisplayRole, child.title or _('(Untitled)'))
+        c.setData(0, Qt.ItemDataRole.UserRole, child)
         c.setFlags(NODE_FLAGS)
-        c.setData(0, Qt.DecorationRole, self.icon_map[child.dest_exists])
+        c.setData(0, Qt.ItemDataRole.DecorationRole, self.icon_map[child.dest_exists])
         if child.dest_exists is False:
-            c.setData(0, Qt.ToolTipRole, _(
+            c.setData(0, Qt.ItemDataRole.ToolTipRole, _(
                 'The location this entry point to does not exist:\n%s')
                 %child.dest_error)
         else:
-            c.setData(0, Qt.ToolTipRole, None)
+            c.setData(0, Qt.ItemDataRole.ToolTipRole, None)
 
         self.tocw.update_status_tip(c)
 
@@ -856,9 +1035,9 @@ class TOCView(QWidget):  # {{{
         self.toc = get_toc(self.ebook)
         self.toc_lang, self.toc_uid = self.toc.lang, self.toc.uid
         self.toc_title = self.toc.toc_title
-        self.blank = QIcon(I('blank.png'))
-        self.ok = QIcon(I('ok.png'))
-        self.err = QIcon(I('dot_red.png'))
+        self.blank = QIcon.ic('blank.png')
+        self.ok = QIcon.ic('ok.png')
+        self.err = QIcon.ic('dot_red.png')
         self.icon_map = {None:self.blank, True:self.ok, False:self.err}
 
         def process_item(toc_node, parent):
@@ -867,7 +1046,7 @@ class TOCView(QWidget):  # {{{
                 process_item(child, c)
 
         root = self.root = self.tocw.invisibleRootItem()
-        root.setData(0, Qt.UserRole, self.toc)
+        root.setData(0, Qt.ItemDataRole.UserRole, self.toc)
         process_item(self.toc, root)
         self.tocw.model().dataChanged.connect(self.data_changed)
         self.tocw.currentItemChanged.connect(self.current_item_changed)
@@ -885,7 +1064,7 @@ class TOCView(QWidget):  # {{{
         if item is None:
             # New entry at root level
             c = self.create_item(self.root, child)
-            self.tocw.setCurrentItem(c, 0, QItemSelectionModel.ClearAndSelect)
+            self.tocw.setCurrentItem(c, 0, QItemSelectionModel.SelectionFlag.ClearAndSelect)
             self.tocw.scrollToItem(c)
         else:
             if where is None:
@@ -901,17 +1080,17 @@ class TOCView(QWidget):  # {{{
                     if where == 'after':
                         idx += 1
                 c = self.create_item(parent, child, idx=idx)
-                self.tocw.setCurrentItem(c, 0, QItemSelectionModel.ClearAndSelect)
+                self.tocw.setCurrentItem(c, 0, QItemSelectionModel.SelectionFlag.ClearAndSelect)
                 self.tocw.scrollToItem(c)
 
     def create_toc(self):
         root = TOC()
 
         def process_node(parent, toc_parent):
-            for i in xrange(parent.childCount()):
+            for i in range(parent.childCount()):
                 item = parent.child(i)
-                title = unicode(item.data(0, Qt.DisplayRole) or '').strip()
-                toc = item.data(0, Qt.UserRole)
+                title = str(item.data(0, Qt.ItemDataRole.DisplayRole) or '').strip()
+                toc = item.data(0, Qt.ItemDataRole.UserRole)
                 dest, frag = toc.dest, toc.frag
                 toc = toc_parent.add(title, dest, frag)
                 process_node(item, toc)
@@ -932,9 +1111,8 @@ class TOCView(QWidget):  # {{{
         process_node(self.root, toc, nodes)
         self.highlight_item(nodes[0])
 
-    def create_from_xpath(self, xpaths, remove_duplicates=True):
-        toc = from_xpaths(self.ebook, xpaths)
-        print(1111111, remove_duplicates)
+    def create_from_xpath(self, xpaths, remove_duplicates=True, prefer_title=False):
+        toc = from_xpaths(self.ebook, xpaths, prefer_title=prefer_title)
         if len(toc) == 0:
             return error_dialog(self, _('No items found'),
                 _('No items were found that could be added to the Table of Contents.'), show=True)
@@ -959,24 +1137,29 @@ class TOCView(QWidget):  # {{{
     def undo(self):
         self.tocw.pop_history()
 
-
 # }}}
+
+
+te_prefs = JSONConfig('toc-editor')
+
 
 class TOCEditor(QDialog):  # {{{
 
     explode_done = pyqtSignal(object)
     writing_done = pyqtSignal(object)
 
-    def __init__(self, pathtobook, title=None, parent=None, prefs=None):
+    def __init__(self, pathtobook, title=None, parent=None, prefs=None, write_result_to=None):
         QDialog.__init__(self, parent)
-        self.prefs = prefs or gprefs
+        self.last_reject_at = self.last_accept_at = -1000
+        self.write_result_to = write_result_to
+        self.prefs = prefs or te_prefs
         self.pathtobook = pathtobook
         self.working = True
 
         t = title or os.path.basename(pathtobook)
         self.book_title = t
         self.setWindowTitle(_('Edit the ToC in %s')%t)
-        self.setWindowIcon(QIcon(I('highlight_only_on.png')))
+        self.setWindowIcon(QIcon.ic('highlight_only_on.png'))
 
         l = self.l = QVBoxLayout()
         self.setLayout(l)
@@ -985,17 +1168,16 @@ class TOCEditor(QDialog):  # {{{
         l.addWidget(s)
         self.loading_widget = lw = QWidget(self)
         s.addWidget(lw)
-        ll = self.ll = QVBoxLayout()
-        lw.setLayout(ll)
+        ll = self.ll = QVBoxLayout(lw)
         self.pi = pi = ProgressIndicator()
-        pi.setDisplaySize(200)
+        pi.setDisplaySize(QSize(200, 200))
         pi.startAnimation()
-        ll.addWidget(pi, alignment=Qt.AlignHCenter|Qt.AlignCenter)
+        ll.addWidget(pi, alignment=Qt.AlignmentFlag.AlignHCenter|Qt.AlignmentFlag.AlignCenter)
         la = self.wait_label = QLabel(_('Loading %s, please wait...')%t)
         la.setWordWrap(True)
         f = la.font()
         f.setPointSize(20), la.setFont(f)
-        ll.addWidget(la, alignment=Qt.AlignHCenter|Qt.AlignTop)
+        ll.addWidget(la, alignment=Qt.AlignmentFlag.AlignHCenter|Qt.AlignmentFlag.AlignTop)
         self.toc_view = TOCView(self, self.prefs)
         self.toc_view.add_new_item.connect(self.add_new_item)
         self.toc_view.tocw.history_state_changed.connect(self.update_history_buttons)
@@ -1003,24 +1185,24 @@ class TOCEditor(QDialog):  # {{{
         self.item_edit = ItemEdit(self)
         s.addWidget(self.item_edit)
 
-        bb = self.bb = QDialogButtonBox(QDialogButtonBox.Ok|QDialogButtonBox.Cancel)
+        bb = self.bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok|QDialogButtonBox.StandardButton.Cancel)
         l.addWidget(bb)
         bb.accepted.connect(self.accept)
         bb.rejected.connect(self.reject)
-        self.undo_button = b = bb.addButton(_('&Undo'), bb.ActionRole)
+        self.undo_button = b = bb.addButton(_('&Undo'), QDialogButtonBox.ButtonRole.ActionRole)
         b.setToolTip(_('Undo the last action, if any'))
-        b.setIcon(QIcon(I('edit-undo.png')))
+        b.setIcon(QIcon.ic('edit-undo.png'))
         b.clicked.connect(self.toc_view.undo)
 
-        self.explode_done.connect(self.read_toc, type=Qt.QueuedConnection)
-        self.writing_done.connect(self.really_accept, type=Qt.QueuedConnection)
+        self.explode_done.connect(self.read_toc, type=Qt.ConnectionType.QueuedConnection)
+        self.writing_done.connect(self.really_accept, type=Qt.ConnectionType.QueuedConnection)
 
-        self.resize(950, 630)
-        geom = self.prefs.get('toc_editor_window_geom', None)
-        if geom is not None:
-            self.restoreGeometry(bytes(geom))
+        self.restore_geometry(self.prefs, 'toc_editor_window_geom')
         self.stacks.currentChanged.connect(self.update_history_buttons)
         self.update_history_buttons()
+
+    def sizeHint(self):
+        return QSize(900, 600)
 
     def update_history_buttons(self):
         self.undo_button.setVisible(self.stacks.currentIndex() == 1)
@@ -1029,8 +1211,20 @@ class TOCEditor(QDialog):  # {{{
     def add_new_item(self, item, where):
         self.item_edit(item, where)
         self.stacks.setCurrentIndex(2)
+        if ismacos:
+            QTimer.singleShot(0, self.workaround_macos_mouse_with_webview_bug)
+
+    def workaround_macos_mouse_with_webview_bug(self):
+        # macOS is weird: https://bugs.launchpad.net/calibre/+bug/2004639
+        # needed as of Qt 6.4.2
+        d = info_dialog(self, _('Loading...'), _('Loading table of contents view, please wait...'), show_copy_button=False)
+        QTimer.singleShot(0, d.reject)
+        d.exec()
 
     def accept(self):
+        if monotonic() - self.last_accept_at < 1:
+            return
+        self.last_accept_at = monotonic()
         if self.stacks.currentIndex() == 2:
             self.toc_view.update_item(*self.item_edit.result)
             self.prefs['toc_edit_splitter_state'] = bytearray(self.item_edit.splitter.saveState())
@@ -1045,27 +1239,38 @@ class TOCEditor(QDialog):  # {{{
             self.bb.setEnabled(False)
 
     def really_accept(self, tb):
-        self.prefs['toc_editor_window_geom'] = bytearray(self.saveGeometry())
+        self.save_geometry(self.prefs, 'toc_editor_window_geom')
         if tb:
             error_dialog(self, _('Failed to write book'),
                 _('Could not write %s. Click "Show details" for'
                   ' more information.')%self.book_title, det_msg=tb, show=True)
-            self.prefs['toc_editor_window_geom'] = bytearray(self.saveGeometry())
-            super(TOCEditor, self).reject()
+            super().reject()
             return
-
-        super(TOCEditor, self).accept()
+        self.write_result(0)
+        super().accept()
 
     def reject(self):
         if not self.bb.isEnabled():
             return
+        if monotonic() - self.last_reject_at < 1:
+            return
+        self.last_reject_at = monotonic()
         if self.stacks.currentIndex() == 2:
             self.prefs['toc_edit_splitter_state'] = bytearray(self.item_edit.splitter.saveState())
             self.stacks.setCurrentIndex(1)
         else:
             self.working = False
-            self.prefs['toc_editor_window_geom'] = bytearray(self.saveGeometry())
-            super(TOCEditor, self).reject()
+            self.save_geometry(self.prefs, 'toc_editor_window_geom')
+            self.write_result(1)
+            super().reject()
+
+    def write_result(self, res):
+        if self.write_result_to:
+            with tempfile.NamedTemporaryFile(dir=os.path.dirname(self.write_result_to), delete=False) as f:
+                src = f.name
+                f.write(str(res).encode('utf-8'))
+                f.flush()
+            atomic_rename(src, self.write_result_to)
 
     def start(self):
         t = Thread(target=self.explode)
@@ -1077,7 +1282,7 @@ class TOCEditor(QDialog):  # {{{
         tb = None
         try:
             self.ebook = get_container(self.pathtobook, log=self.log)
-        except:
+        except Exception:
             import traceback
             tb = traceback.format_exc()
         if self.working:
@@ -1104,7 +1309,7 @@ class TOCEditor(QDialog):  # {{{
             commit_toc(self.ebook, toc, lang=self.toc_view.toc_lang,
                     uid=self.toc_view.toc_uid)
             self.ebook.commit()
-        except:
+        except Exception:
             import traceback
             tb = traceback.format_exc()
         self.writing_done.emit(tb)
@@ -1112,10 +1317,60 @@ class TOCEditor(QDialog):  # {{{
 # }}}
 
 
-if __name__ == '__main__':
-    app = Application([], force_calibre_style=True)
-    app
+def develop():
+    from calibre.gui2 import Application
+    app = Application([])
+    from calibre.utils.webengine import setup_default_profile, setup_fake_protocol
+    setup_fake_protocol()
+    setup_default_profile()
     d = TOCEditor(sys.argv[-1])
     d.start()
-    d.exec_()
-    del d  # Needed to prevent sigsegv in exit cleanup
+    d.open()
+    app.exec()
+    del app
+
+
+def main(shm_name=None):
+    import json
+    import struct
+
+    from calibre.utils.shm import SharedMemory
+
+    # Ensure we can continue to function if GUI is closed
+    os.environ.pop('CALIBRE_WORKER_TEMP_DIR', None)
+    reset_base_dir()
+    if iswindows:
+        # Ensure that all instances are grouped together in the task bar. This
+        # prevents them from being grouped with viewer/editor process when
+        # launched from within calibre, as both use calibre-parallel.exe
+        set_app_uid(TOC_DIALOG_APP_UID)
+    with SharedMemory(name=shm_name) as shm:
+        pos = struct.calcsize('>II')
+        state, ok = struct.unpack('>II', shm.read(pos))
+        data = json.loads(shm.read_data_with_size())
+        title = data['title']
+        path = data['path']
+        s = struct.pack('>I', 1)
+        shm.seek(0), shm.write(s), shm.flush()
+
+        override = 'calibre-gui' if islinux else None
+        app = Application([], override_program_name=override)
+        from calibre.utils.webengine import setup_default_profile, setup_fake_protocol
+        setup_fake_protocol()
+        setup_default_profile()
+        d = TOCEditor(path, title=title, write_result_to=path + '.result')
+        d.start()
+        # Using d.exec() causes showing the webview to hide the dialog
+        d.open()
+        app.exec()
+        ok = 1 if d.result() == QDialog.DialogCode.Accepted else 0
+        s = struct.pack('>II', 2, ok)
+        shm.seek(0), shm.write(s), shm.flush()
+
+    del d
+    del app
+    raise SystemExit(0 if ok else 1)
+
+
+if __name__ == '__main__':
+    develop()

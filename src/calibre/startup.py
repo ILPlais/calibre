@@ -1,4 +1,3 @@
-from __future__ import print_function
 __license__   = 'GPL v3'
 __copyright__ = '2008, Kovid Goyal kovid@kovidgoyal.net'
 __docformat__ = 'restructuredtext en'
@@ -7,69 +6,79 @@ __docformat__ = 'restructuredtext en'
 Perform various initialization tasks.
 '''
 
-import locale, sys
+import locale
+import os
+import sys
 
 # Default translation is NOOP
-import __builtin__
-__builtin__.__dict__['_'] = lambda s: s
+from polyglot.builtins import builtins
+
+builtins.__dict__['_'] = lambda s: s
 
 # For strings which belong in the translation tables, but which shouldn't be
 # immediately translated to the environment language
-__builtin__.__dict__['__'] = lambda s: s
+builtins.__dict__['__'] = lambda s: s
 
-from calibre.constants import iswindows, preferred_encoding, plugins, isosx, islinux, isfrozen, DEBUG
+# For backwards compat with some third party plugins
+builtins.__dict__['dynamic_property'] = lambda func: func(None)
 
-_run_once = False
-winutil = winutilerror = None
+from calibre.constants import DEBUG, isfreebsd, islinux, ismacos, iswindows
 
-if not _run_once:
-    _run_once = True
 
-    if not isfrozen:
-        # Prevent PyQt4 from being loaded
-        class PyQt4Ban(object):
+def get_debug_executable(headless=False, exe_name='calibre-debug'):
+    exe_name = exe_name + ('.exe' if iswindows else '')
+    if hasattr(sys, 'frameworks_dir'):
+        base = os.path.dirname(sys.frameworks_dir)
+        if headless:
+            from calibre.utils.ipc.launch import headless_exe_path
+            return [headless_exe_path(exe_name)]
+        return [os.path.join(base, 'MacOS', exe_name)]
+    if getattr(sys, 'run_local', None):
+        return [sys.run_local, exe_name]
+    nearby = os.path.join(os.path.dirname(os.path.abspath(sys.executable)), exe_name)
+    if getattr(sys, 'frozen', False):
+        return [nearby]
+    exloc = getattr(sys, 'executables_location', None)
+    if exloc:
+        ans = os.path.join(exloc, exe_name)
+        if os.path.exists(ans):
+            return [ans]
+    if os.path.exists(nearby):
+        return [nearby]
+    return [exe_name]
 
-            def find_module(self, fullname, path=None):
-                if fullname.startswith('PyQt4'):
-                    return self
 
-            def load_module(self, fullname):
-                raise ImportError('Importing PyQt4 is not allowed as calibre uses PyQt5')
+def connect_lambda(bound_signal, self, func, **kw):
+    import weakref
+    r = weakref.ref(self)
+    del self
+    num_args = func.__code__.co_argcount - 1
+    if num_args < 0:
+        raise TypeError('lambda must take at least one argument')
 
-        sys.meta_path.insert(0, PyQt4Ban())
+    def slot(*args):
+        ctx = r()
+        if ctx is not None:
+            if len(args) != num_args:
+                args = args[:num_args]
+            func(ctx, *args)
 
-    #
-    # Platform specific modules
-    if iswindows:
-        winutil, winutilerror = plugins['winutil']
-        if not winutil:
-            raise RuntimeError('Failed to load the winutil plugin: %s'%winutilerror)
-        if len(sys.argv) > 1 and not isinstance(sys.argv[1], unicode):
-            sys.argv[1:] = winutil.argv()[1-len(sys.argv):]
+    bound_signal.connect(slot, **kw)
 
-    #
+
+def initialize_calibre():
+    if hasattr(initialize_calibre, 'initialized'):
+        return
+    initialize_calibre.initialized = True
     # Ensure that all temp files/dirs are created under a calibre tmp dir
-    from calibre.ptempfile import base_dir
-    try:
-        base_dir()
-    except EnvironmentError:
-        pass  # Ignore this error during startup, so we can show a better error message to the user later.
+    from calibre.ptempfile import fix_tempfile_module
+    fix_tempfile_module()
 
-    #
-    # Convert command line arguments to unicode
-    enc = preferred_encoding
-    if isosx:
-        enc = 'utf-8'
-    for i in range(1, len(sys.argv)):
-        if not isinstance(sys.argv[i], unicode):
-            sys.argv[i] = sys.argv[i].decode(enc, 'replace')
-
-    #
     # Ensure that the max number of open files is at least 1024
     if iswindows:
         # See https://msdn.microsoft.com/en-us/library/6e3b887c.aspx
-        if hasattr(winutil, 'setmaxstdio'):
-            winutil.setmaxstdio(max(1024, winutil.getmaxstdio()))
+        from calibre_extensions import winutil
+        winutil.setmaxstdio(max(1024, winutil.getmaxstdio()))
     else:
         import resource
         soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
@@ -82,13 +91,58 @@ if not _run_once:
                     traceback.print_exc()
 
     #
+    # Fix multiprocessing
+    from multiprocessing import spawn, util
+
+    def get_executable() -> list[str]:
+        return get_debug_executable(headless=True, exe_name='calibre-parallel')
+
+    def get_command_line(**kwds):
+        prog = ', '.join('{}={!r}'.format(*item) for item in kwds.items())
+        prog = f'from multiprocessing.spawn import spawn_main; spawn_main({prog})'
+        return get_executable() + ['__multiprocessing__', prog]
+    spawn.get_command_line = get_command_line
+    spawn._fixup_main_from_path = lambda *a: None
+    if iswindows:
+        # On windows multiprocessing does not run the result of
+        # get_command_line directly, see popen_spawn_win32.py
+        spawn.set_executable(get_executable()[-1])
+    orig_spawn_passfds = util.spawnv_passfds
+    orig_remove_temp_dir = util._remove_temp_dir
+
+    def safe_rmtree(rmtree):
+        def r(tdir, *a, **kw):
+            if tdir and os.path.exists(tdir):
+                rmtree(tdir, *a, **kw)
+        return r
+
+    def safe_remove_temp_dir(rmtree, tdir):
+        orig_remove_temp_dir(safe_rmtree(rmtree), tdir)
+
+    def wrapped_orig_spawn_fds(args, passfds):
+        # as of python 3.11 util.spawnv_passfds expects bytes args
+        if sys.version_info >= (3, 11):
+            args = [x.encode('utf-8') if isinstance(x, str) else x for x in args]
+        return orig_spawn_passfds(args[0], args, passfds)
+
+    def spawnv_passfds(path, args, passfds):
+        try:
+            idx = args.index('-c')
+        except ValueError:
+            return wrapped_orig_spawn_fds(args, passfds)
+        patched_args = get_executable() + ['__multiprocessing__'] + args[idx + 1:]
+        return wrapped_orig_spawn_fds(patched_args, passfds)
+    util.spawnv_passfds = spawnv_passfds
+    util._remove_temp_dir = safe_remove_temp_dir
+
+    #
     # Setup resources
     import calibre.utils.resources as resources
     resources
 
     #
     # Setup translations
-    from calibre.utils.localization import set_translators
+    from calibre.utils.localization import getlangcode_from_envvars, set_translators
 
     set_translators()
 
@@ -102,154 +156,45 @@ if not _run_once:
     string
     try:
         locale.setlocale(locale.LC_ALL, '')  # set the locale to the user's default locale
-    except:
-        dl = locale.getdefaultlocale()
+    except Exception:
         try:
+            dl = getlangcode_from_envvars()
             if dl:
-                locale.setlocale(locale.LC_ALL, dl[0])
-        except:
+                locale.setlocale(locale.LC_ALL, dl)
+        except Exception:
             pass
 
-    # local_open() opens a file that wont be inherited by child processes
-    if iswindows:
-        def local_open(name, mode='r', bufsize=-1):
-            mode += 'N'
-            return open(name, mode, bufsize)
-    elif isosx:
-        import fcntl
-        FIOCLEX = 0x20006601
+    builtins.__dict__['lopen'] = open  # legacy compatibility
+    from calibre.utils.icu import lower as icu_lower
+    from calibre.utils.icu import title_case
+    from calibre.utils.icu import upper as icu_upper
+    builtins.__dict__['icu_lower'] = icu_lower
+    builtins.__dict__['icu_upper'] = icu_upper
+    builtins.__dict__['icu_title'] = title_case
 
-        def local_open(name, mode='r', bufsize=-1):
-            ans = open(name, mode, bufsize)
-            try:
-                fcntl.ioctl(ans.fileno(), FIOCLEX)
-            except EnvironmentError:
-                fcntl.fcntl(ans, fcntl.F_SETFD, fcntl.fcntl(ans, fcntl.F_GETFD) | fcntl.FD_CLOEXEC)
-            return ans
-    else:
-        import fcntl
-        try:
-            cloexec_flag = fcntl.FD_CLOEXEC
-        except AttributeError:
-            cloexec_flag = 1
-        supports_mode_e = False
+    builtins.__dict__['connect_lambda'] = connect_lambda
 
-        def local_open(name, mode='r', bufsize=-1):
-            global supports_mode_e
-            mode += 'e'
-            ans = open(name, mode, bufsize)
-            if supports_mode_e:
-                return ans
-            old = fcntl.fcntl(ans, fcntl.F_GETFD)
-            if not (old & cloexec_flag):
-                fcntl.fcntl(ans, fcntl.F_SETFD, old | cloexec_flag)
-            else:
-                supports_mode_e = True
-            return ans
-
-    __builtin__.__dict__['lopen'] = local_open
-
-    from calibre.utils.icu import title_case, lower as icu_lower, upper as icu_upper
-    __builtin__.__dict__['icu_lower'] = icu_lower
-    __builtin__.__dict__['icu_upper'] = icu_upper
-    __builtin__.__dict__['icu_title'] = title_case
-
-    def connect_lambda(bound_signal, self, func, **kw):
-        import weakref
-        r = weakref.ref(self)
-        del self
-        num_args = func.__code__.co_argcount - 1
-        if num_args < 0:
-            raise TypeError('lambda must take at least one argument')
-
-        def slot(*args):
-            ctx = r()
-            if ctx is not None:
-                if len(args) != num_args:
-                    args = args[:num_args]
-                func(ctx, *args)
-
-        bound_signal.connect(slot, **kw)
-    __builtin__.__dict__['connect_lambda'] = connect_lambda
-
-    if islinux:
+    if sys.version_info[:2] < (3, 14) and (islinux or ismacos or isfreebsd):
         # Name all threads at the OS level created using the threading module, see
-        # http://bugs.python.org/issue15500
-        import ctypes, ctypes.util, threading
-        libpthread_path = ctypes.util.find_library("pthread")
-        if libpthread_path:
-            libpthread = ctypes.CDLL(libpthread_path)
-            if hasattr(libpthread, "pthread_setname_np"):
-                pthread_setname_np = libpthread.pthread_setname_np
-                pthread_setname_np.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
-                pthread_setname_np.restype = ctypes.c_int
-                orig_start = threading.Thread.start
+        # https://github.com/python/cpython/issues/59705
+        import threading
 
-                def new_start(self):
-                    orig_start(self)
-                    try:
+        from calibre_extensions import speedup
+
+        orig_start = threading.Thread.start
+
+        def new_start(self):
+            orig_start(self)
+            try:
+                name = self.name
+                if not name or name.startswith('Thread-'):
+                    name = self.__class__.__name__
+                    if name == 'Thread':
                         name = self.name
-                        if not name or name.startswith('Thread-'):
-                            name = self.__class__.__name__
-                            if name == 'Thread':
-                                name = self.name
-                        if name:
-                            if isinstance(name, unicode):
-                                name = name.encode('ascii', 'replace')
-                            ident = getattr(self, "ident", None)
-                            if ident is not None:
-                                pthread_setname_np(ident, name[:15])
-                    except Exception:
-                        pass  # Don't care about failure to set name
-                threading.Thread.start = new_start
-
-
-def test_lopen():
-    from calibre.ptempfile import TemporaryDirectory
-    from calibre import CurrentDir
-    n = u'f\xe4llen'
-    print('testing lopen()')
-
-    if iswindows:
-        import msvcrt, win32api
-
-        def assert_not_inheritable(f):
-            if win32api.GetHandleInformation(msvcrt.get_osfhandle(f.fileno())) & 0b1:
-                raise SystemExit('File handle is inheritable!')
-    else:
-        def assert_not_inheritable(f):
-            if not fcntl.fcntl(f, fcntl.F_GETFD) & fcntl.FD_CLOEXEC:
-                raise SystemExit('File handle is inheritable!')
-
-    def copen(*args):
-        ans = lopen(*args)
-        assert_not_inheritable(ans)
-        return ans
-
-    with TemporaryDirectory() as tdir, CurrentDir(tdir):
-        with copen(n, 'w') as f:
-            f.write('one')
-
-        print('O_CREAT tested')
-        with copen(n, 'w+b') as f:
-            f.write('two')
-        with copen(n, 'r') as f:
-            if f.read() == 'two':
-                print('O_TRUNC tested')
-            else:
-                raise Exception('O_TRUNC failed')
-        with copen(n, 'ab') as f:
-            f.write('three')
-        with copen(n, 'r+') as f:
-            if f.read() == 'twothree':
-                print('O_APPEND tested')
-            else:
-                raise Exception('O_APPEND failed')
-        with copen(n, 'r+') as f:
-            f.seek(3)
-            f.write('xxxxx')
-            f.seek(0)
-            if f.read() == 'twoxxxxx':
-                print('O_RANDOM tested')
-            else:
-                raise Exception('O_RANDOM failed')
+                if name:
+                    if isinstance(name, str):
+                        name = name.encode('ascii', 'replace').decode('ascii')
+                    speedup.set_thread_name(name[:15])
+            except Exception:
+                pass  # Don't care about failure to set name
+        threading.Thread.start = new_start

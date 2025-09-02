@@ -1,28 +1,35 @@
-#!/usr/bin/env python2
-# vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
-from __future__ import with_statement
-from __future__ import print_function
+#!/usr/bin/env python
+
 
 __license__   = 'GPL v3'
 __copyright__ = '2009, Kovid Goyal <kovid@kovidgoyal.net>'
 __docformat__ = 'restructuredtext en'
 
-import sys, os, cPickle, time, tempfile, errno, itertools
-from math import ceil
-from threading import Thread, RLock
-from Queue import Queue, Empty
-from multiprocessing.connection import Listener, arbitrary_address
-from collections import deque
-from binascii import hexlify
 
+import os
+import sys
+import tempfile
+import time
+from collections import deque
+from itertools import count
+from math import ceil
+from multiprocessing import Pipe
+from threading import Thread
+
+from calibre import detect_ncpus as cpu_count
+from calibre import force_unicode
+from calibre.constants import DEBUG
+from calibre.ptempfile import base_dir
 from calibre.utils.ipc import eintr_retry_call
 from calibre.utils.ipc.launch import Worker
 from calibre.utils.ipc.worker import PARALLEL_FUNCS
-from calibre import detect_ncpus as cpu_count
-from calibre.constants import iswindows, DEBUG, islinux
-from calibre.ptempfile import base_dir
+from calibre.utils.serialize import pickle_loads
+from polyglot.binary import as_hex_unicode
+from polyglot.builtins import environ_item, string_or_bytes
+from polyglot.queue import Empty, Queue
 
-_counter = 0
+server_counter = count()
+_name_counter = count()
 
 
 class ConnectedWorker(Thread):
@@ -88,156 +95,62 @@ class CriticalError(Exception):
     pass
 
 
-_name_counter = itertools.count()
-
-if islinux:
-    import fcntl
-
-    class LinuxListener(Listener):
-
-        def __init__(self, *args, **kwargs):
-            Listener.__init__(self, *args, **kwargs)
-            # multiprocessing tries to call unlink even on abstract
-            # named sockets, prevent it from doing so.
-            self._listener._unlink.cancel()
-            # Prevent child processes from inheriting this socket
-            # If we dont do this child processes not created by calibre, will
-            # inherit this socket, preventing the calibre GUI from being restarted.
-            # Examples of such processes are external viewers launched by Qt
-            # using openUrl().
-            fd = self._listener._socket.fileno()
-            old_flags = fcntl.fcntl(fd, fcntl.F_GETFD)
-            fcntl.fcntl(fd, fcntl.F_SETFD, old_flags | fcntl.FD_CLOEXEC)
-
-        def close(self):
-            # To ensure that the socket is released, we have to call
-            # shutdown() not close(). This is needed to allow calibre to
-            # restart using the same socket address.
-            import socket
-            self._listener._socket.shutdown(socket.SHUT_RDWR)
-            self._listener._socket.close()
-
-        def accept(self, *args, **kwargs):
-            ans = Listener.accept(self, *args, **kwargs)
-            fd = ans.fileno()
-            old_flags = fcntl.fcntl(fd, fcntl.F_GETFD)
-            fcntl.fcntl(fd, fcntl.F_SETFD, old_flags | fcntl.FD_CLOEXEC)
-            return ans
-
-    def create_listener(authkey, backlog=4):
-        # Use abstract named sockets on linux to avoid creating unnecessary temp files
-        prefix = u'\0calibre-ipc-listener-%d-%%d' % os.getpid()
-        while True:
-            address = (prefix % next(_name_counter)).encode('ascii')
-            try:
-                l = LinuxListener(address=address, authkey=authkey, backlog=backlog)
-                return address, l
-            except EnvironmentError as err:
-                if err.errno == errno.EADDRINUSE:
-                    continue
-                raise
-elif iswindows:
-
-    def create_listener(authkey, backlog=4):
-        address = arbitrary_address('AF_PIPE')
-        if address[1] == ':':
-            address = address[2:]
-        return address, Listener(address=address, authkey=authkey, backlog=backlog)
-else:
-
-    def create_listener(authkey, backlog=4):
-        prefix = os.path.join(base_dir(), 'ipc-socket-%d-%%d' % os.getpid())
-        max_tries = 20
-        while max_tries > 0:
-            max_tries -= 1
-            address = prefix % next(_name_counter)
-            if not isinstance(address, bytes):
-                address = address.encode('utf-8')  # multiprocessing needs bytes in python 2
-            try:
-                return address, Listener(address=address, authkey=authkey, backlog=backlog)
-            except EnvironmentError as err:
-                if max_tries < 1:
-                    raise
-
-                if err.errno == errno.ENOENT:
-                    # Some OS X machines have software that deletes temp
-                    # files/dirs after prolonged inactivity. See for
-                    # example, https://bugs.launchpad.net/bugs/1541356
-                    try:
-                        os.makedirs(os.path.dirname(prefix))
-                    except EnvironmentError as e:
-                        if e.errno != errno.EEXIST:
-                            raise
-                    continue
-
-                if err.errno != errno.EADDRINUSE:
-                    raise
-
-
 class Server(Thread):
 
     def __init__(self, notify_on_job_done=lambda x: x, pool_size=None,
-            limit=sys.maxint, enforce_cpu_limit=True):
+            limit=sys.maxsize, enforce_cpu_limit=True):
         Thread.__init__(self)
         self.daemon = True
-        global _counter
-        self.id = _counter+1
-        _counter += 1
+        self.id = next(server_counter) + 1
 
         if enforce_cpu_limit:
             limit = min(limit, cpu_count())
         self.pool_size = limit if pool_size is None else pool_size
         self.notify_on_job_done = notify_on_job_done
-        self.auth_key = os.urandom(32)
-        self.address, self.listener = create_listener(self.auth_key, backlog=4)
         self.add_jobs_queue, self.changed_jobs_queue = Queue(), Queue()
         self.kill_queue = Queue()
         self.waiting_jobs = []
         self.workers = deque()
-        self.launched_worker_count = 0
-        self._worker_launch_lock = RLock()
-
+        self.launched_worker_counter = count()
+        next(self.launched_worker_counter)
         self.start()
 
     def launch_worker(self, gui=False, redirect_output=None, job_name=None):
-        start = time.time()
-        with self._worker_launch_lock:
-            self.launched_worker_count += 1
-            id = self.launched_worker_count
-        fd, rfile = tempfile.mkstemp(prefix=u'ipc_result_%d_%d_'%(self.id, id),
-                dir=base_dir(), suffix=u'.pickle')
+        start = time.monotonic()
+        id = next(self.launched_worker_counter)
+        fd, rfile = tempfile.mkstemp(prefix=f'ipc_result_{self.id}_{id}_',
+                dir=base_dir(), suffix='.pickle')
         os.close(fd)
         if redirect_output is None:
             redirect_output = not gui
 
-        env = {
-                'CALIBRE_WORKER_ADDRESS' : hexlify(cPickle.dumps(self.listener.address, -1)),
-                'CALIBRE_WORKER_KEY' : hexlify(self.auth_key),
-                'CALIBRE_WORKER_RESULT' : hexlify(rfile.encode('utf-8')),
-              }
-        cw = self.do_launch(env, gui, redirect_output, rfile, job_name=job_name)
-        if isinstance(cw, basestring):
-            raise CriticalError('Failed to launch worker process:\n'+cw)
+        cw = self.do_launch(gui, redirect_output, rfile, job_name=job_name)
+        if isinstance(cw, string_or_bytes):
+            raise CriticalError('Failed to launch worker process:\n'+force_unicode(cw))
         if DEBUG:
-            print('Worker Launch took:', time.time() - start)
+            print(f'Worker Launch took: {time.monotonic() - start:.2f} seconds')
         return cw
 
-    def do_launch(self, env, gui, redirect_output, rfile, job_name=None):
-        w = Worker(env, gui=gui, job_name=job_name)
+    def do_launch(self, gui, redirect_output, rfile, job_name=None):
+        a, b = Pipe()
+        with a:
+            env = {
+                'CALIBRE_WORKER_FD': str(a.fileno()),
+                'CALIBRE_WORKER_RESULT': environ_item(as_hex_unicode(rfile))
+            }
+            w = Worker(env, gui=gui, job_name=job_name)
 
-        try:
-            w(redirect_output=redirect_output)
-            conn = eintr_retry_call(self.listener.accept)
-            if conn is None:
-                raise Exception('Failed to launch worker process')
-        except BaseException:
             try:
-                w.kill()
-            except:
-                pass
-            import traceback
-            return traceback.format_exc()
-        return ConnectedWorker(w, conn, rfile)
+                w(pass_fds=(a.fileno(),), redirect_output=redirect_output)
+            except BaseException:
+                try:
+                    w.kill()
+                except Exception:
+                    pass
+                b.close()
+                import traceback
+                return traceback.format_exc()
+        return ConnectedWorker(w, b, rfile)
 
     def add_job(self, job):
         job.done2 = self.notify_on_job_done
@@ -271,7 +184,7 @@ class Server(Thread):
             for worker in [w for w in self.workers if not w.is_alive]:
                 try:
                     worker.close_log_file()
-                except:
+                except Exception:
                     pass
                 self.workers.remove(worker)
                 job = worker.job
@@ -280,9 +193,10 @@ class Server(Thread):
                     job.returncode = worker.returncode
                 elif os.path.exists(worker.rfile):
                     try:
-                        job.result = cPickle.load(open(worker.rfile, 'rb'))
+                        with open(worker.rfile, 'rb') as f:
+                            job.result = pickle_loads(f.read())
                         os.remove(worker.rfile)
-                    except:
+                    except Exception:
                         pass
                 job.duration = time.time() - job.start_time
                 self.changed_jobs_queue.put(job)
@@ -354,7 +268,7 @@ class Server(Thread):
         and i is the index of the element x in the original list.
         '''
         ans, count, pos = [], 0, 0
-        delta = int(ceil(len(tasks)/float(self.pool_size)))
+        delta = ceil(len(tasks)/float(self.pool_size))
         while count < len(tasks):
             section = []
             for t in tasks[pos:pos+delta]:
@@ -367,17 +281,17 @@ class Server(Thread):
     def close(self):
         try:
             self.add_jobs_queue.put(None)
-        except:
+        except Exception:
             pass
         try:
             self.listener.close()
-        except:
+        except Exception:
             pass
         time.sleep(0.2)
         for worker in list(self.workers):
             try:
                 worker.kill()
-            except:
+            except Exception:
                 pass
 
     def __enter__(self):

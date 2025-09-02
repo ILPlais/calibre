@@ -1,26 +1,25 @@
-#!/usr/bin/env python2
-# vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
-from __future__ import with_statement
+#!/usr/bin/env python
+
 
 __license__   = 'GPL v3'
 __copyright__ = '2009, Kovid Goyal <kovid@kovidgoyal.net>'
 __docformat__ = 'restructuredtext en'
 
-import os, re, errno
+import os
+import re
 
-from PyQt5.Qt import QPixmap
+from qt.core import QApplication, QPixmap
 
-from calibre.gui2 import choose_images, error_dialog
-from calibre.gui2.convert.metadata_ui import Ui_Form
-from calibre.ebooks.metadata import (string_to_authors, MetaInformation,
-        title_sort)
-from calibre.ebooks.metadata.opf2 import metadata_to_opf
-from calibre.ptempfile import PersistentTemporaryFile
-from calibre.gui2.convert import Widget
-from calibre.utils.icu import sort_key
-from calibre.library.comments import comments_to_html
-from calibre.utils.config import tweaks
 from calibre.ebooks.conversion.config import OPTIONS
+from calibre.ebooks.metadata import MetaInformation, string_to_authors, title_sort
+from calibre.ebooks.metadata.opf2 import metadata_to_opf
+from calibre.gui2 import choose_images, error_dialog
+from calibre.gui2.convert import Widget
+from calibre.gui2.convert.metadata_ui import Ui_Form
+from calibre.library.comments import comments_to_html
+from calibre.ptempfile import PersistentTemporaryFile
+from calibre.utils.config import tweaks
+from calibre.utils.icu import sort_key
 
 
 def create_opf_file(db, book_id, opf_file=None):
@@ -50,7 +49,7 @@ def create_cover_file(db, book_id):
 class MetadataWidget(Widget, Ui_Form):
 
     TITLE = _('Metadata')
-    ICON  = I('dialog_information.png')
+    ICON  = 'dialog_information.png'
     HELP  = _('Set the metadata. The output file will contain as much of this '
             'metadata as possible.')
     COMMIT_NAME = 'metadata'
@@ -67,33 +66,44 @@ class MetadataWidget(Widget, Ui_Form):
         self.comment.hide_toolbars()
         self.cover.cover_changed.connect(self.change_cover)
         self.series.currentTextChanged.connect(self.series_changed)
+        cuh = self.db.new_api.pref('categories_using_hierarchy', default=())
+        if 'series' in cuh:
+            self.series.set_hierarchy_separator('.')
+        if 'tags' in cuh:
+            self.tags.set_hierarchy_separator('.')
+        self.cover.draw_border = False
 
     def change_cover(self, data):
         self.cover_changed = True
         self.cover_data = data
 
     def deduce_author_sort(self, *args):
-        au = unicode(self.author.currentText())
+        au = str(self.author.currentText())
         au = re.sub(r'\s+et al\.$', '', au)
         authors = string_to_authors(au)
         self.author_sort.setText(self.db.author_sort_from_authors(authors))
+        self.author_sort.home(False)
 
     def initialize_metadata_options(self):
         self.initialize_combos()
         self.author.editTextChanged.connect(self.deduce_author_sort)
 
         mi = self.db.get_metadata(self.book_id, index_is_id=True)
-        self.title.setText(mi.title)
+        self.title.setText(mi.title), self.title.home(False)
         self.publisher.show_initial_value(mi.publisher if mi.publisher else '')
+        self.publisher.home(False)
         self.author_sort.setText(mi.author_sort if mi.author_sort else '')
+        self.author_sort.home(False)
         self.tags.setText(', '.join(mi.tags if mi.tags else []))
-        self.tags.update_items_cache(self.db.all_tags())
+        self.tags.update_items_cache(self.db.new_api.all_field_names('tags'))
+        self.tags.home(False)
         self.comment.html = comments_to_html(mi.comments) if mi.comments else ''
         self.series.show_initial_value(mi.series if mi.series else '')
+        self.series.home(False)
         if mi.series_index is not None:
             try:
                 self.series_index.setValue(mi.series_index)
-            except:
+            except Exception:
                 self.series_index.setValue(1.0)
 
         cover = self.db.cover(self.book_id, index_is_id=True)
@@ -101,13 +111,12 @@ class MetadataWidget(Widget, Ui_Form):
             pm = QPixmap()
             pm.loadFromData(cover)
             if not pm.isNull():
-                pm.setDevicePixelRatio(getattr(self, 'devicePixelRatioF', self.devicePixelRatio)())
+                pm.setDevicePixelRatio(self.devicePixelRatio())
                 self.cover.setPixmap(pm)
                 self.cover_data = cover
                 self.set_cover_tooltip(pm)
         else:
-            pm = QPixmap(I('default_cover.png'))
-            pm.setDevicePixelRatio(getattr(self, 'devicePixelRatioF', self.devicePixelRatio)())
+            pm = QApplication.instance().cached_qpixmap('default_cover.png', device_pixel_ratio=self.devicePixelRatio())
             self.cover.setPixmap(pm)
             self.cover.setToolTip(_('This book has no cover'))
         for x in ('author', 'series', 'publisher'):
@@ -130,55 +139,52 @@ class MetadataWidget(Widget, Ui_Form):
 
     def initalize_authors(self):
         all_authors = self.db.all_authors()
-        all_authors.sort(key=lambda x : sort_key(x[1]))
+        all_authors.sort(key=lambda x: sort_key(x[1]))
         self.author.set_separator('&')
         self.author.set_space_before_sep(True)
         self.author.set_add_separator(tweaks['authors_completer_append_separator'])
-        self.author.update_items_cache(self.db.all_author_names())
+        self.author.update_items_cache(self.db.new_api.all_field_names('authors'))
 
         au = self.db.authors(self.book_id, True)
         if not au:
             au = _('Unknown')
         au = ' & '.join([a.strip().replace('|', ',') for a in au.split(',')])
         self.author.show_initial_value(au)
+        self.author.home(False)
 
     def initialize_series(self):
-        all_series = self.db.all_series()
-        all_series.sort(key=lambda x : sort_key(x[1]))
         self.series.set_separator(None)
-        self.series.update_items_cache([x[1] for x in all_series])
+        self.series.update_items_cache(self.db.new_api.all_field_names('series'))
 
     def initialize_publisher(self):
-        all_publishers = self.db.all_publishers()
-        all_publishers.sort(key=lambda x : sort_key(x[1]))
         self.publisher.set_separator(None)
-        self.publisher.update_items_cache([x[1] for x in all_publishers])
+        self.publisher.update_items_cache(self.db.new_api.all_field_names('publisher'))
 
     def get_title_and_authors(self):
-        title = unicode(self.title.text()).strip()
+        title = str(self.title.text()).strip()
         if not title:
             title = _('Unknown')
-        authors = unicode(self.author.text()).strip()
+        authors = str(self.author.text()).strip()
         authors = string_to_authors(authors) if authors else [_('Unknown')]
         return title, authors
 
     def get_metadata(self):
         title, authors = self.get_title_and_authors()
         mi = MetaInformation(title, authors)
-        publisher = unicode(self.publisher.text()).strip()
+        publisher = str(self.publisher.text()).strip()
         if publisher:
             mi.publisher = publisher
-        author_sort = unicode(self.author_sort.text()).strip()
+        author_sort = str(self.author_sort.text()).strip()
         if author_sort:
             mi.author_sort = author_sort
         comments = self.comment.html
         if comments:
             mi.comments = comments
         mi.series_index = float(self.series_index.value())
-        series = unicode(self.series.currentText()).strip()
+        series = str(self.series.currentText()).strip()
         if series:
             mi.series = series
-        tags = [t.strip() for t in unicode(self.tags.text()).strip().split(',')]
+        tags = [t.strip() for t in str(self.tags.text()).strip().split(',')]
         if tags:
             mi.tags = tags
 
@@ -186,7 +192,7 @@ class MetadataWidget(Widget, Ui_Form):
 
     def select_cover(self):
         files = choose_images(self, 'change cover dialog',
-                             _('Choose cover for ') + unicode(self.title.text()))
+                             _('Choose cover for ') + str(self.title.text()))
         if not files:
             return
         _file = files[0]
@@ -195,24 +201,24 @@ class MetadataWidget(Widget, Ui_Form):
             if not os.access(_file, os.R_OK):
                 d = error_dialog(self.parent(), _('Cannot read'),
                         _('You do not have permission to read the file: ') + _file)
-                d.exec_()
+                d.exec()
                 return
-            cf, cover = None, None
+            cover = None
             try:
-                cf = open(_file, "rb")
-                cover = cf.read()
-            except IOError as e:
+                with open(_file, 'rb') as f:
+                    cover = f.read()
+            except OSError as e:
                 d = error_dialog(self.parent(), _('Error reading file'),
-                        _("<p>There was an error reading from file: <br /><b>") + _file + "</b></p><br />"+str(e))
-                d.exec_()
+                        _('<p>There was an error reading from file: <br /><b>') + _file + '</b></p><br />'+str(e))
+                d.exec()
             if cover:
                 pix = QPixmap()
                 pix.loadFromData(cover)
                 pix.setDevicePixelRatio(getattr(self, 'devicePixelRatioF', self.devicePixelRatio)())
                 if pix.isNull():
                     d = error_dialog(self.parent(), _('Error reading file'),
-                                      _file + _(" is not a valid picture"))
-                    d.exec_()
+                                      _file + _(' is not a valid picture'))
+                    d.exec()
                 else:
                     self.cover_path.setText(_file)
                     self.set_cover_tooltip(pix)
@@ -241,14 +247,9 @@ class MetadataWidget(Widget, Ui_Form):
                 db.set_field('authors', {self.book_id:authors})
             if self.cover_changed and self.cover_data is not None:
                 self.db.set_cover(self.book_id, self.cover_data)
-        except EnvironmentError as err:
-            if getattr(err, 'errno', None) == errno.EACCES:  # Permission denied
-                import traceback
-                fname = getattr(err, 'filename', None) or 'file'
-                error_dialog(self, _('Permission denied'),
-                        _('Could not open %s. Is it being used by another'
-                        ' program?')%fname, det_msg=traceback.format_exc(), show=True)
-                return False
+        except OSError as err:
+            err.locking_violation_msg = _("Failed to change on disk location of this book's files.")
+            raise
         publisher = self.publisher.text().strip()
         if publisher != db.field_for('publisher', self.book_id):
             db.set_field('publisher', {self.book_id:publisher})

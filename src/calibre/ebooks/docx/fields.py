@@ -1,17 +1,16 @@
-#!/usr/bin/env python2
-# vim:fileencoding=utf-8
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
+#!/usr/bin/env python
+
 
 __license__ = 'GPL v3'
 __copyright__ = '2013, Kovid Goyal <kovid at kovidgoyal.net>'
 
 import re
 
-from calibre.ebooks.docx.index import process_index, polish_index_markup
+from calibre.ebooks.docx.index import polish_index_markup, process_index
+from polyglot.builtins import iteritems, native_string_type
 
 
-class Field(object):
+class Field:
 
     def __init__(self, start):
         self.start = start
@@ -22,7 +21,9 @@ class Field(object):
         self.name = None
 
     def add_instr(self, elem):
-        raw = elem.text
+        self.add_raw(elem.text)
+
+    def add_raw(self, raw):
         if not raw:
             return
         if self.name is None:
@@ -38,6 +39,7 @@ class Field(object):
         self.instructions = ''.join(self.buf)
         del self.buf
 
+
 WORD, FLAG = 0, 1
 scanner = re.Scanner([
     (r'\\\S{1}', lambda s, t: (t, FLAG)),  # A flag of the form \x
@@ -51,7 +53,7 @@ null = object()
 
 def parser(name, field_map, default_field_name=None):
 
-    field_map = dict((x.split(':') for x in field_map.split()))
+    field_map = dict(x.split(':') for x in field_map.split())
 
     def parse(raw, log=None):
         ans = {}
@@ -72,9 +74,10 @@ def parser(name, field_map, default_field_name=None):
         ans.pop(null, None)
         return ans
 
-    parse.__name__ = str('parse_' + name)
+    parse.__name__ = native_string_type('parse_' + name)
 
     return parse
+
 
 parse_hyperlink = parser('hyperlink',
     'l:anchor m:image-map n:target o:title t:target', 'url')
@@ -94,7 +97,7 @@ parse_noteref = parser('noteref',
                    'f:footnote h:hyperlink p:position')
 
 
-class Fields(object):
+class Fields:
 
     def __init__(self, namespace):
         self.namespace = namespace
@@ -107,10 +110,13 @@ class Fields(object):
         c = 0
         while self.index_bookmark_prefix in all_ids:
             c += 1
-            self.index_bookmark_prefix = self.index_bookmark_prefix.replace('-', '%d-' % c)
+            self.index_bookmark_prefix = self.index_bookmark_prefix.replace('-', f'{c}-')
         stack = []
         for elem in self.namespace.XPath(
-            '//*[name()="w:p" or name()="w:r" or name()="w:instrText" or (name()="w:fldChar" and (@w:fldCharType="begin" or @w:fldCharType="end"))]')(doc):
+            '//*[name()="w:p" or name()="w:r" or'
+            ' name()="w:instrText" or'
+            ' (name()="w:fldChar" and (@w:fldCharType="begin" or @w:fldCharType="end") or'
+            ' name()="w:fldSimple")]')(doc):
             if elem.tag.endswith('}fldChar'):
                 typ = self.namespace.get(elem, 'w:fldCharType')
                 if typ == 'begin':
@@ -124,6 +130,14 @@ class Fields(object):
             elif elem.tag.endswith('}instrText'):
                 if stack:
                     stack[-1].add_instr(elem)
+            elif elem.tag.endswith('}fldSimple'):
+                field = Field(elem)
+                instr = self.namespace.get(elem, 'w:instr')
+                if instr:
+                    field.add_raw(instr)
+                    self.fields.append(field)
+                    for r in self.namespace.XPath('descendant::w:r')(elem):
+                        field.contents.append(r)
             else:
                 if stack:
                     stack[-1].contents.append(elem)
@@ -131,11 +145,11 @@ class Fields(object):
         field_types = ('hyperlink', 'xe', 'index', 'ref', 'noteref')
         parsers = {x.upper():getattr(self, 'parse_'+x) for x in field_types}
         parsers.update({x:getattr(self, 'parse_'+x) for x in field_types})
-        field_parsers = {f.upper():globals()['parse_%s' % f] for f in field_types}
-        field_parsers.update({f:globals()['parse_%s' % f] for f in field_types})
+        field_parsers = {f.upper():globals()[f'parse_{f}'] for f in field_types}
+        field_parsers.update({f:globals()[f'parse_{f}'] for f in field_types})
 
         for f in field_types:
-            setattr(self, '%s_fields' % f, [])
+            setattr(self, f'{f}_fields', [])
         unknown_fields = {'TOC', 'toc', 'PAGEREF', 'pageref'}  # The TOC and PAGEREF fields are handled separately
 
         for field in self.fields:
@@ -145,7 +159,7 @@ class Fields(object):
                 if func is not None:
                     func(field, field_parsers[field.name], log)
                 elif field.name not in unknown_fields:
-                    log.warn('Encountered unknown field: %s, ignoring it.' % field.name)
+                    log.warn(f'Encountered unknown field: {field.name}, ignoring it.')
                     unknown_fields.add(field.name)
 
     def get_runs(self, field):
@@ -180,7 +194,7 @@ class Fields(object):
             for runs in self.get_runs(field):
                 self.hyperlink_fields.append(({'anchor':dest}, runs))
         else:
-            log.warn('Unsupported reference field (%s), ignoring: %r' % (field.name, ref))
+            log.warn(f'Unsupported reference field ({field.name}), ignoring: {ref!r}')
 
     parse_noteref = parse_ref
 
@@ -195,7 +209,7 @@ class Fields(object):
             def WORD(x):
                 return self.namespace.expand('w:' + x)
             self.index_bookmark_counter += 1
-            bmark = xe['anchor'] = '%s%d' % (self.index_bookmark_prefix, self.index_bookmark_counter)
+            bmark = xe['anchor'] = f'{self.index_bookmark_prefix}{self.index_bookmark_counter}'
             p = field.start.getparent()
             bm = p.makeelement(WORD('bookmarkStart'))
             bm.set(WORD('id'), bmark), bm.set(WORD('name'), bmark)
@@ -222,7 +236,7 @@ class Fields(object):
     def polish_markup(self, object_map):
         if not self.index_fields:
             return
-        rmap = {v:k for k, v in object_map.iteritems()}
+        rmap = {v:k for k, v in iteritems(object_map)}
         for idx, blocks in self.index_fields:
             polish_index_markup(idx, [rmap[b] for b in blocks])
 
@@ -233,7 +247,8 @@ def test_parse_fields(return_tests=False):
     class TestParseFields(unittest.TestCase):
 
         def test_hyperlink(self):
-            ae = lambda x, y: self.assertEqual(parse_hyperlink(x, None), y)
+            def ae(x, y):
+                return self.assertEqual(parse_hyperlink(x, None), y)
             ae(r'\l anchor1', {'anchor':'anchor1'})
             ae(r'www.calibre-ebook.com', {'url':'www.calibre-ebook.com'})
             ae(r'www.calibre-ebook.com \t target \o tt', {'url':'www.calibre-ebook.com', 'target':'target', 'title': 'tt'})
@@ -241,13 +256,15 @@ def test_parse_fields(return_tests=False):
             ae(r'xxxx \y yyyy', {'url': 'xxxx'})
 
         def test_xe(self):
-            ae = lambda x, y: self.assertEqual(parse_xe(x, None), y)
+            def ae(x, y):
+                return self.assertEqual(parse_xe(x, None), y)
             ae(r'"some name"', {'text':'some name'})
             ae(r'name \b \i', {'text':'name', 'bold':None, 'italic':None})
             ae(r'xxx \y a', {'text':'xxx', 'yomi':'a'})
 
         def test_index(self):
-            ae = lambda x, y: self.assertEqual(parse_index(x, None), y)
+            def ae(x, y):
+                return self.assertEqual(parse_index(x, None), y)
             ae(r'', {})
             ae(r'\b \c 1', {'bookmark':None, 'columns-per-page': '1'})
 
@@ -255,6 +272,7 @@ def test_parse_fields(return_tests=False):
     if return_tests:
         return suite
     unittest.TextTestRunner(verbosity=4).run(suite)
+
 
 if __name__ == '__main__':
     test_parse_fields()

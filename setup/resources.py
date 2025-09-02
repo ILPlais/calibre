@@ -1,236 +1,30 @@
-#!/usr/bin/env python2
-# vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
-from __future__ import with_statement, print_function
+#!/usr/bin/env python
+
 
 __license__   = 'GPL v3'
 __copyright__ = '2009, Kovid Goyal <kovid@kovidgoyal.net>'
 __docformat__ = 'restructuredtext en'
 
-import os, re, shutil, zipfile, glob, time, sys, hashlib, json, errno
-from zlib import compress
-from itertools import chain
-is_ci = os.environ.get('CI', '').lower() == 'true'
+import errno
+import glob
+import json
+import os
+import shutil
+import zipfile
 
-from setup import Command, basenames, __appname__, download_securely
-from polyglot.builtins import itervalues, iteritems
+from polyglot.builtins import iteritems, itervalues, only_unicode_recursive
+from setup import Command, basenames, download_securely, dump_json
 
 
 def get_opts_from_parser(parser):
     def do_opt(opt):
-        for x in opt._long_opts:
-            yield x
-        for x in opt._short_opts:
-            yield x
+        yield from opt._long_opts
+        yield from opt._short_opts
     for o in parser.option_list:
-        for x in do_opt(o):
-            yield x
+        yield from do_opt(o)
     for g in parser.option_groups:
         for o in g.option_list:
-            for x in do_opt(o):
-                yield x
-
-
-class Coffee(Command):  # {{{
-
-    description = 'Compile coffeescript files into javascript'
-    COFFEE_DIRS = ('ebooks/oeb/display', 'ebooks/oeb/polish')
-
-    def add_options(self, parser):
-        parser.add_option('--watch', '-w', action='store_true', default=False,
-                help='Autocompile when .coffee files are changed')
-        parser.add_option('--show-js', action='store_true', default=False,
-                help='Display the generated javascript')
-
-    def run(self, opts):
-        self.do_coffee_compile(opts)
-        if opts.watch:
-            try:
-                while True:
-                    time.sleep(0.5)
-                    self.do_coffee_compile(opts, timestamp=True,
-                            ignore_errors=True)
-            except KeyboardInterrupt:
-                pass
-
-    def show_js(self, raw):
-        from pygments.lexers import JavascriptLexer
-        from pygments.formatters import TerminalFormatter
-        from pygments import highlight
-        print(highlight(raw, JavascriptLexer(), TerminalFormatter()))
-
-    def do_coffee_compile(self, opts, timestamp=False, ignore_errors=False):
-        from calibre.utils.serve_coffee import compile_coffeescript
-        src_files = {}
-        for src in self.COFFEE_DIRS:
-            for f in glob.glob(self.j(self.SRC, __appname__, src,
-                '*.coffee')):
-                bn = os.path.basename(f).rpartition('.')[0]
-                arcname = src.replace('/', '.') + '.' + bn + '.js'
-                try:
-                    with open(f, 'rb') as fs:
-                        src_files[arcname] = (f, hashlib.sha1(fs.read()).hexdigest())
-                except EnvironmentError:
-                    time.sleep(0.1)
-                    with open(f, 'rb') as fs:
-                        src_files[arcname] = (f, hashlib.sha1(fs.read()).hexdigest())
-
-        existing = {}
-        dest = self.j(self.RESOURCES, 'compiled_coffeescript.zip')
-        if os.path.exists(dest):
-            with zipfile.ZipFile(dest, 'r') as zf:
-                existing_hashes = {}
-                raw = zf.comment
-                if raw:
-                    existing_hashes = json.loads(raw)
-                for info in zf.infolist():
-                    if info.filename in existing_hashes and src_files.get(info.filename, (None, None))[1] == existing_hashes[info.filename]:
-                        existing[info.filename] = (zf.read(info), info, existing_hashes[info.filename])
-
-        todo = set(src_files) - set(existing)
-        updated = {}
-        for arcname in todo:
-            name = arcname.rpartition('.')[0]
-            print ('\t%sCompiling %s'%(time.strftime('[%H:%M:%S] ') if
-                        timestamp else '', name))
-            src, sig = src_files[arcname]
-            js, errors = compile_coffeescript(open(src, 'rb').read(), filename=src)
-            if errors:
-                print ('\n\tCompilation of %s failed'%name)
-                for line in errors:
-                    print(line, file=sys.stderr)
-                if ignore_errors:
-                    js = u'# Compilation from coffeescript failed'
-                else:
-                    raise SystemExit(1)
-            else:
-                if opts.show_js:
-                    self.show_js(js)
-                    print ('#'*80)
-                    print ('#'*80)
-            zi = zipfile.ZipInfo()
-            zi.filename = arcname
-            zi.date_time = time.localtime()[:6]
-            updated[arcname] = (js.encode('utf-8'), zi, sig)
-        if updated:
-            hashes = {}
-            with zipfile.ZipFile(dest, 'w', zipfile.ZIP_STORED) as zf:
-                for raw, zi, sig in sorted(chain(itervalues(updated), itervalues(existing)), key=lambda x: x[1].filename):
-                    zf.writestr(zi, raw)
-                    hashes[zi.filename] = sig
-                zf.comment = json.dumps(hashes)
-
-    def clean(self):
-        x = self.j(self.RESOURCES, 'compiled_coffeescript.zip')
-        if os.path.exists(x):
-            os.remove(x)
-# }}}
-
-
-class Kakasi(Command):  # {{{
-
-    description = 'Compile resources for unihandecode'
-
-    KAKASI_PATH = os.path.join(Command.SRC,  __appname__,
-            'ebooks', 'unihandecode', 'pykakasi')
-
-    def run(self, opts):
-        self.records = {}
-        src = self.j(self.KAKASI_PATH, 'kakasidict.utf8')
-        dest = self.j(self.RESOURCES, 'localization',
-                'pykakasi','kanwadict2.calibre_msgpack')
-        base = os.path.dirname(dest)
-        if not os.path.exists(base):
-            os.makedirs(base)
-
-        if self.newer(dest, src):
-            self.info('\tGenerating Kanwadict')
-
-            for line in open(src, "r"):
-                self.parsekdict(line)
-            self.kanwaout(dest)
-
-        src = self.j(self.KAKASI_PATH, 'itaijidict.utf8')
-        dest = self.j(self.RESOURCES, 'localization',
-                'pykakasi','itaijidict2.calibre_msgpack')
-
-        if self.newer(dest, src):
-            self.info('\tGenerating Itaijidict')
-            self.mkitaiji(src, dest)
-
-        src = self.j(self.KAKASI_PATH, 'kanadict.utf8')
-        dest = self.j(self.RESOURCES, 'localization',
-                'pykakasi','kanadict2.calibre_msgpack')
-
-        if self.newer(dest, src):
-            self.info('\tGenerating kanadict')
-            self.mkkanadict(src, dest)
-
-    def mkitaiji(self, src, dst):
-        dic = {}
-        for line in open(src, "r"):
-            line = line.decode("utf-8").strip()
-            if line.startswith(';;'):  # skip comment
-                continue
-            if re.match(r"^$",line):
-                continue
-            pair = re.sub(r'\\u([0-9a-fA-F]{4})', lambda x:unichr(int(x.group(1),16)), line)
-            dic[pair[0]] = pair[1]
-        from calibre.utils.serialize import msgpack_dumps
-        with open(dst, 'wb') as f:
-            f.write(msgpack_dumps(dic))
-
-    def mkkanadict(self, src, dst):
-        dic = {}
-        for line in open(src, "r"):
-            line = line.decode("utf-8").strip()
-            if line.startswith(';;'):  # skip comment
-                continue
-            if re.match(r"^$",line):
-                continue
-            (alpha, kana) = line.split(' ')
-            dic[kana] = alpha
-        from calibre.utils.serialize import msgpack_dumps
-        with open(dst, 'wb') as f:
-            f.write(msgpack_dumps(dic))
-
-    def parsekdict(self, line):
-        line = line.decode("utf-8").strip()
-        if line.startswith(';;'):  # skip comment
-            return
-        (yomi, kanji) = line.split(' ')
-        if ord(yomi[-1:]) <= ord('z'):
-            tail = yomi[-1:]
-            yomi = yomi[:-1]
-        else:
-            tail = ''
-        self.updaterec(kanji, yomi, tail)
-
-    def updaterec(self, kanji, yomi, tail):
-        key = "%04x"%ord(kanji[0])
-        if key in self.records:
-            if kanji in self.records[key]:
-                rec = self.records[key][kanji]
-                rec.append((yomi,tail))
-                self.records[key].update({kanji: rec})
-            else:
-                self.records[key][kanji]=[(yomi, tail)]
-        else:
-            self.records[key] = {}
-            self.records[key][kanji]=[(yomi, tail)]
-
-    def kanwaout(self, out):
-        from calibre.utils.serialize import msgpack_dumps
-        with open(out, 'wb') as f:
-            dic = {}
-            for k, v in iteritems(self.records):
-                dic[k] = compress(msgpack_dumps(v))
-            f.write(msgpack_dumps(dic))
-
-    def clean(self):
-        kakasi = self.j(self.RESOURCES, 'localization', 'pykakasi')
-        if os.path.exists(kakasi):
-            shutil.rmtree(kakasi)
-# }}}
+            yield from do_opt(o)
 
 
 class CACerts(Command):  # {{{
@@ -238,22 +32,29 @@ class CACerts(Command):  # {{{
     description = 'Get updated mozilla CA certificate bundle'
     CA_PATH = os.path.join(Command.RESOURCES, 'mozilla-ca-certs.pem')
 
+    def add_options(self, parser):
+        parser.add_option('--path-to-cacerts', help='Path to previously downloaded mozilla-ca-certs.pem')
+
     def run(self, opts):
-        try:
-            with open(self.CA_PATH, 'rb') as f:
-                raw = f.read()
-        except EnvironmentError as err:
-            if err.errno != errno.ENOENT:
-                raise
-            raw = b''
-        nraw = download_securely('https://curl.haxx.se/ca/cacert.pem')
-        if not nraw:
-            raise RuntimeError('Failed to download CA cert bundle')
-        if nraw != raw:
-            self.info('Updating Mozilla CA certificates')
-            with open(self.CA_PATH, 'wb') as f:
-                f.write(nraw)
-            self.verify_ca_certs()
+        if opts.path_to_cacerts:
+            shutil.copyfile(opts.path_to_cacerts, self.CA_PATH)
+            os.chmod(self.CA_PATH, 0o644)
+        else:
+            try:
+                with open(self.CA_PATH, 'rb') as f:
+                    raw = f.read()
+            except OSError as err:
+                if err.errno != errno.ENOENT:
+                    raise
+                raw = b''
+            nraw = download_securely('https://curl.haxx.se/ca/cacert.pem')
+            if not nraw:
+                raise RuntimeError('Failed to download CA cert bundle')
+            if nraw != raw:
+                self.info('Updating Mozilla CA certificates')
+                with open(self.CA_PATH, 'wb') as f:
+                    f.write(nraw)
+                self.verify_ca_certs()
 
     def verify_ca_certs(self):
         from calibre.utils.https import get_https_resource_securely
@@ -266,11 +67,18 @@ class RecentUAs(Command):  # {{{
     description = 'Get updated list of common browser user agents'
     UA_PATH = os.path.join(Command.RESOURCES, 'user-agent-data.json')
 
+    def add_options(self, parser):
+        parser.add_option('--path-to-user-agent-data', help='Path to previously downloaded user-agent-data.json')
+
     def run(self, opts):
         from setup.browser_data import get_data
-        data = get_data()
-        with open(self.UA_PATH, 'wb') as f:
-            f.write(json.dumps(data, indent=2))
+        if opts.path_to_user_agent_data:
+            shutil.copyfile(opts.path_to_user_agent_data, self.UA_PATH)
+            os.chmod(self.UA_PATH, 0o644)
+        else:
+            data = get_data()
+            with open(self.UA_PATH, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=2, ensure_ascii=False, sort_keys=True)
 # }}}
 
 
@@ -278,16 +86,25 @@ class RapydScript(Command):  # {{{
 
     description = 'Compile RapydScript to JavaScript'
 
+    def add_options(self, parser):
+        parser.add_option('--only-module', default=None,
+                help='Only compile the specified module')
+
     def run(self, opts):
-        from calibre.utils.rapydscript import compile_srv
-        compile_srv()
+        from calibre.utils.rapydscript import compile_editor, compile_srv, compile_viewer
+        if opts.only_module:
+            locals()['compile_' + opts.only_module]()
+        else:
+            compile_editor()
+            compile_viewer()
+            compile_srv()
 # }}}
 
 
 class Resources(Command):  # {{{
 
     description = 'Compile various needed calibre resources'
-    sub_commands = ['kakasi', 'coffee', 'rapydscript']
+    sub_commands = ['liberation_fonts', 'mathjax', 'rapydscript', 'hyphenation', 'piper_voices']
 
     def run(self, opts):
         from calibre.utils.serialize import msgpack_dumps
@@ -300,12 +117,11 @@ class Resources(Command):  # {{{
 
         dest = self.j(self.RESOURCES, 'scripts.calibre_msgpack')
         if self.newer(dest, self.j(self.SRC, 'calibre', 'linux.py')):
-            self.info('\tCreating ' + os.path.basename(dest))
+            self.info('\tCreating ' + self.b(dest))
             with open(dest, 'wb') as f:
                 f.write(msgpack_dumps(scripts))
 
-        from calibre.web.feeds.recipes.collection import \
-                serialize_builtin_recipes, iterate_over_builtin_recipe_files
+        from calibre.web.feeds.recipes.collection import iterate_over_builtin_recipe_files, serialize_builtin_recipes
 
         files = [x[1] for x in iterate_over_builtin_recipe_files()]
 
@@ -325,7 +141,7 @@ class Resources(Command):  # {{{
             with zipfile.ZipFile(dest, 'w', zipfile.ZIP_STORED) as zf:
                 for n in sorted(files, key=self.b):
                     with open(n, 'rb') as f:
-                        zf.writestr(os.path.basename(n), f.read())
+                        zf.writestr(self.b(n), f.read())
 
         dest = self.j(self.RESOURCES, 'ebook-convert-complete.calibre_msgpack')
         files = []
@@ -334,7 +150,7 @@ class Resources(Command):  # {{{
                 if f.endswith('.py'):
                     files.append(self.j(x[0], f))
         if self.newer(dest, files):
-            self.info('\tCreating ebook-convert-complete.pickle')
+            self.info('\tCreating ' + self.b(dest))
             complete = {}
             from calibre.ebooks.conversion.plumber import supported_input_formats
             complete['input_fmts'] = set(supported_input_formats())
@@ -358,24 +174,24 @@ class Resources(Command):  # {{{
                             get_opts_from_parser(p)]
 
             with open(dest, 'wb') as f:
-                f.write(msgpack_dumps(complete))
+                f.write(msgpack_dumps(only_unicode_recursive(complete)))
 
         self.info('\tCreating template-functions.json')
         dest = self.j(self.RESOURCES, 'template-functions.json')
         function_dict = {}
         import inspect
+
         from calibre.utils.formatter_functions import formatter_functions
         for obj in formatter_functions().get_builtins().values():
             eval_func = inspect.getmembers(obj,
                     lambda x: inspect.ismethod(x) and x.__name__ == 'evaluate')
             try:
                 lines = [l[4:] for l in inspect.getsourcelines(eval_func[0][1])[0]]
-            except:
+            except Exception:
                 continue
             lines = ''.join(lines)
             function_dict[obj.name] = lines
-        import json
-        json.dump(function_dict, open(dest, 'wb'), indent=4)
+        dump_json(function_dict, dest)
 
         self.info('\tCreating editor-functions.json')
         dest = self.j(self.RESOURCES, 'editor-functions.json')
@@ -386,27 +202,32 @@ class Resources(Command):  # {{{
                 src = ''.join(inspect.getsourcelines(func)[0][1:])
             except Exception:
                 continue
-            src = src.replace('def ' + func.func_name, 'def replace')
-            imports = ['from %s import %s' % (x.__module__, x.__name__) for x in func.imports]
+            src = src.replace('def ' + func.__name__, 'def replace')
+            imports = [f'from {x.__module__} import {x.__name__}' for x in func.imports]
             if imports:
                 src = '\n'.join(imports) + '\n\n' + src
             function_dict[func.name] = src
-        json.dump(function_dict, open(dest, 'wb'), indent=4)
+        dump_json(function_dict, dest)
         self.info('\tCreating user-manual-translation-stats.json')
         d = {}
         for lc, stats in iteritems(json.load(open(self.j(self.d(self.SRC), 'manual', 'locale', 'completed.json')))):
             total = sum(itervalues(stats))
             d[lc] = stats['translated'] / float(total)
-        json.dump(d, open(self.j(self.RESOURCES, 'user-manual-translation-stats.json'), 'wb'), indent=4)
+        dump_json(d, self.j(self.RESOURCES, 'user-manual-translation-stats.json'))
+
+        src = self.j(self.SRC, '..', 'Changelog.txt')
+        dest = self.j(self.RESOURCES, 'changelog.json')
+        if self.newer(dest, [src]):
+            self.info('\tCreating changelog.json')
+            from setup.changelog import parse
+            with open(src, encoding='utf-8') as f:
+                dump_json(parse(f.read(), parse_dates=False), dest)
 
     def clean(self):
         for x in ('scripts', 'ebook-convert-complete'):
             x = self.j(self.RESOURCES, x+'.pickle')
             if os.path.exists(x):
                 os.remove(x)
-        from setup.commands import kakasi, coffee
-        kakasi.clean()
-        coffee.clean()
         for x in ('builtin_recipes.xml', 'builtin_recipes.zip',
                 'template-functions.json', 'user-manual-translation-stats.json'):
             x = self.j(self.RESOURCES, x)

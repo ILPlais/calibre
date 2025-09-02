@@ -1,21 +1,21 @@
-#!/usr/bin/env python2
-# vim:fileencoding=utf-8
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
+#!/usr/bin/env python
+
 
 __license__ = 'GPL v3'
 __copyright__ = '2014, Kovid Goyal <kovid at kovidgoyal.net>'
 
 import re
 
-from PyQt5.Qt import Qt
+from qt.core import Qt
 
 from calibre.gui2.tweak_book.editor.smarts import NullSmarts
-from calibre.gui2.tweak_book.editor.smarts.utils import (
-    get_text_before_cursor, get_leading_whitespace_on_block as lw,
-    smart_home, smart_backspace, smart_tab)
+from calibre.gui2.tweak_book.editor.smarts.utils import get_leading_whitespace_on_block as lw
+from calibre.gui2.tweak_book.editor.smarts.utils import get_text_before_cursor, smart_backspace, smart_home, smart_tab
 
-get_leading_whitespace_on_block = lambda editor, previous=False: expand_tabs(lw(editor, previous=previous))
+
+def get_leading_whitespace_on_block(editor, previous=False):
+    return expand_tabs(lw(editor, previous=previous))
+
 
 tw = 4  # The tab width (hardcoded to the pep8 value)
 
@@ -37,13 +37,15 @@ class Smarts(NullSmarts):
     def handle_key_press(self, ev, editor):
         key = ev.key()
 
-        if key == Qt.Key_Tab and smart_tab(editor, ev):
+        if key in (Qt.Key.Key_Tab, Qt.Key.Key_Backtab):
+            mods = ev.modifiers()
+            if not mods & Qt.KeyboardModifier.ControlModifier and smart_tab(editor, ev):
+                return True
+
+        elif key == Qt.Key.Key_Backspace and smart_backspace(editor, ev):
             return True
 
-        elif key == Qt.Key_Backspace and smart_backspace(editor, ev):
-            return True
-
-        elif key in (Qt.Key_Enter, Qt.Key_Return):
+        elif key in (Qt.Key.Key_Enter, Qt.Key.Key_Return):
             ls = get_leading_whitespace_on_block(editor)
             cursor = editor.textCursor()
             line = cursor.block().text()
@@ -55,7 +57,7 @@ class Smarts(NullSmarts):
             editor.setTextCursor(cursor)
             return True
 
-        elif key == Qt.Key_Colon:
+        elif key == Qt.Key.Key_Colon:
             cursor, text = get_text_before_cursor(editor)
             if self.dedent_pat.search(text) is not None:
                 ls = get_leading_whitespace_on_block(editor)
@@ -67,10 +69,12 @@ class Smarts(NullSmarts):
                     editor.setTextCursor(cursor)
                     return True
 
-        if key == Qt.Key_Home and smart_home(editor, ev):
+        if key == Qt.Key.Key_Home and smart_home(editor, ev):
             return True
+
 
 if __name__ == '__main__':
     import os
+
     from calibre.gui2.tweak_book.editor.widget import launch_editor
     launch_editor(os.path.abspath(__file__), syntax='python')

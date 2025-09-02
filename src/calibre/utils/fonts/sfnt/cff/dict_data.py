@@ -1,29 +1,27 @@
-#!/usr/bin/env python2
-# vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:fdm=marker:ai
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
+#!/usr/bin/env python
+
 
 __license__   = 'GPL v3'
 __copyright__ = '2012, Kovid Goyal <kovid at kovidgoyal.net>'
 __docformat__ = 'restructuredtext en'
 
-from struct import unpack, pack
+from struct import pack, unpack_from
 
 t1_operand_encoding = [None] * 256
-t1_operand_encoding[0:32] = (32) * ["do_operator"]
-t1_operand_encoding[32:247] = (247 - 32) * ["read_byte"]
-t1_operand_encoding[247:251] = (251 - 247) * ["read_small_int1"]
-t1_operand_encoding[251:255] = (255 - 251) * ["read_small_int2"]
-t1_operand_encoding[255] = "read_long_int"
+t1_operand_encoding[0:32] = (32) * ['do_operator']
+t1_operand_encoding[32:247] = (247 - 32) * ['read_byte']
+t1_operand_encoding[247:251] = (251 - 247) * ['read_small_int1']
+t1_operand_encoding[251:255] = (255 - 251) * ['read_small_int2']
+t1_operand_encoding[255] = 'read_long_int'
 
 t2_operand_encoding = t1_operand_encoding[:]
-t2_operand_encoding[28] = "read_short_int"
-t2_operand_encoding[255] = "read_fixed_1616"
+t2_operand_encoding[28] = 'read_short_int'
+t2_operand_encoding[255] = 'read_fixed_1616'
 
 cff_dict_operand_encoding = t2_operand_encoding[:]
-cff_dict_operand_encoding[29] = "read_long_int"
-cff_dict_operand_encoding[30] = "read_real_number"
-cff_dict_operand_encoding[255] = "reserved"
+cff_dict_operand_encoding[29] = 'read_long_int'
+cff_dict_operand_encoding[30] = 'read_real_number'
+cff_dict_operand_encoding[255] = 'reserved'
 
 real_nibbles = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
         '.', 'E', 'E-', None, '-']
@@ -36,32 +34,29 @@ class ByteCode(dict):
         return b0 - 139, index
 
     def read_small_int1(self, b0, data, index):
-        b1 = ord(data[index])
+        b1 = ord(data[index:index+1])
         return (b0-247)*256 + b1 + 108, index+1
 
     def read_small_int2(self, b0, data, index):
-        b1 = ord(data[index])
+        b1 = ord(data[index:index+1])
         return -(b0-251)*256 - b1 - 108, index+1
 
     def read_short_int(self, b0, data, index):
-        bin = data[index] + data[index+1]
-        value, = unpack(b">h", bin)
+        value, = unpack_from(b'>h', data, index)
         return value, index+2
 
     def read_long_int(self, b0, data, index):
-        bin = data[index] + data[index+1] + data[index+2] + data[index+3]
-        value, = unpack(b">l", bin)
+        value, = unpack_from(b'>l', data, index)
         return value, index+4
 
     def read_fixed_1616(self, b0, data, index):
-        bin = data[index] + data[index+1] + data[index+2] + data[index+3]
-        value, = unpack(b">l", bin)
+        value, = unpack_from(b'>l', data, index)
         return value / 65536.0, index+4
 
     def read_real_number(self, b0, data, index):
         number = ''
         while True:
-            b = ord(data[index])
+            b = ord(data[index:index+1])
             index = index + 1
             nibble0 = (b & 0xf0) >> 4
             nibble1 = b & 0x0f
@@ -74,28 +69,28 @@ class ByteCode(dict):
         return float(number), index
 
     def write_float(self, f, encoding='ignored'):
-        s = type(u'')(f).upper()
-        if s[:2] == "0.":
+        s = str(f).upper()
+        if s[:2] == '0.':
             s = s[1:]
-        elif s[:3] == "-0.":
-            s = "-" + s[2:]
+        elif s[:3] == '-0.':
+            s = '-' + s[2:]
         nibbles = []
         while s:
             c = s[0]
             s = s[1:]
-            if c == "E" and s[:1] == "-":
+            if c == 'E' and s[:1] == '-':
                 s = s[1:]
-                c = "E-"
+                c = 'E-'
             nibbles.append(real_nibbles_map[c])
         nibbles.append(0xf)
         if len(nibbles) % 2:
             nibbles.append(0xf)
         d = bytearray([30])
-        for i in xrange(0, len(nibbles), 2):
+        for i in range(0, len(nibbles), 2):
             d.append(nibbles[i] << 4 | nibbles[i+1])
         return bytes(d)
 
-    def write_int(self, value, encoding="cff"):
+    def write_int(self, value, encoding='cff'):
         four_byte_op = {'cff':29, 't1':255}.get(encoding, None)
 
         if -107 <= value <= 107:
@@ -108,15 +103,15 @@ class ByteCode(dict):
             code = bytes(bytearray([(value >> 8) + 251, (value & 0xFF)]))
         elif four_byte_op is None:
             # T2 only supports 2 byte ints
-            code = bytes(bytearray([28])) + pack(b">h", value)
+            code = bytes(bytearray([28])) + pack(b'>h', value)
         else:
-            code = bytes(bytearray([four_byte_op])) + pack(b">l", value)
+            code = bytes(bytearray([four_byte_op])) + pack(b'>l', value)
         return code
 
     def write_offset(self, value):
-        return bytes(bytearray([29])) + pack(b">l", value)
+        return bytes(bytearray([29])) + pack(b'>l', value)
 
-    def write_number(self, value, encoding="cff"):
+    def write_number(self, value, encoding='cff'):
         f = self.write_float if isinstance(value, float) else self.write_int
         return f(value, encoding)
 
@@ -144,7 +139,7 @@ class Dict(ByteCode):
         self.stack = []
         index = 0
         while index < len(data):
-            b0 = ord(data[index])
+            b0 = ord(data[index:index+1])
             index += 1
             handler = getattr(self, self.operand_encoding[b0])
             value, index = handler(b0, data, index)
@@ -153,7 +148,7 @@ class Dict(ByteCode):
 
     def do_operator(self, b0, data, index):
         if b0 == 12:
-            op = (b0, ord(data[index]))
+            op = (b0, ord(data[index:index+1]))
             index += 1
         else:
             op = b0
@@ -164,7 +159,7 @@ class Dict(ByteCode):
     def handle_operator(self, operator, arg_type):
         if isinstance(arg_type, tuple):
             value = ()
-            for i in xrange(len(arg_type)-1, -1, -1):
+            for i in range(len(arg_type)-1, -1, -1):
                 arg = arg_type[i]
                 arghandler = getattr(self, 'arg_' + arg)
                 value = (arghandler(operator),) + value
@@ -204,8 +199,7 @@ class Dict(ByteCode):
                 self.encoding_offset = name in self.OFFSETS
                 if isinstance(arg, tuple):
                     if len(val) != len(arg):
-                        raise ValueError('Invalid argument %s for operator: %s'
-                                %(val, op))
+                        raise ValueError(f'Invalid argument {val} for operator: {op}')
                     for typ, v in zip(arg, val):
                         if typ == 'SID':
                             val = strings(val)

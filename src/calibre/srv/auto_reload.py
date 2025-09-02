@@ -1,16 +1,20 @@
-#!/usr/bin/env python2
-# vim:fileencoding=utf-8
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
+#!/usr/bin/env python
+
 
 __license__ = 'GPL v3'
 __copyright__ = '2015, Kovid Goyal <kovid at kovidgoyal.net>'
 
-import os, sys, subprocess, signal, time, errno, socket, ssl
-from threading import Thread, Lock
-from Queue import Queue, Empty
+import errno
+import os
+import signal
+import socket
+import ssl
+import subprocess
+import sys
+import time
+from threading import Lock, Thread
 
-from calibre.constants import islinux, iswindows, isosx
+from calibre.constants import islinux, ismacos, iswindows
 from calibre.srv.http_response import create_http_handler
 from calibre.srv.loop import ServerLoop
 from calibre.srv.opts import Options
@@ -18,6 +22,8 @@ from calibre.srv.standalone import create_option_parser
 from calibre.srv.utils import create_sock_pair
 from calibre.srv.web_socket import DummyHandler
 from calibre.utils.monotonic import monotonic
+from polyglot.builtins import error_message, itervalues, native_string_type
+from polyglot.queue import Empty, Queue
 
 MAX_RETRIES = 10
 
@@ -25,10 +31,10 @@ MAX_RETRIES = 10
 class NoAutoReload(EnvironmentError):
     pass
 
+
 # Filesystem watcher {{{
 
-
-class WatcherBase(object):
+class WatcherBase:
 
     EXTENSIONS_TO_WATCH = frozenset('py pyj svg'.split())
     BOUNCE_INTERVAL = 2  # seconds
@@ -61,6 +67,7 @@ class WatcherBase(object):
 
 if islinux:
     import select
+
     from calibre.utils.inotify import INotifyTreeWatcher
 
     class Watcher(WatcherBase):
@@ -75,7 +82,7 @@ if islinux:
 
         def loop(self):
             while True:
-                r = select.select([self.srv_sock] + list(self.fd_map.iterkeys()), [], [])[0]
+                r = select.select([self.srv_sock] + list(self.fd_map), [], [])[0]
                 modified = set()
                 for fd in r:
                     if fd is self.srv_sock:
@@ -93,45 +100,44 @@ if islinux:
             self.client_sock.sendall(b'w')
 
 elif iswindows:
-    import win32file, win32con
-    FILE_LIST_DIRECTORY = 0x0001
     from calibre.srv.utils import HandleInterrupt
+    from calibre_extensions import winutil
 
     class TreeWatcher(Thread):
-        daemon = True
 
         def __init__(self, path_to_watch, modified_queue):
-            Thread.__init__(self, name='TreeWatcher')
+            Thread.__init__(self, name='TreeWatcher', daemon=True)
             self.modified_queue = modified_queue
             self.path_to_watch = path_to_watch
-            self.dir_handle = win32file.CreateFileW(
-                path_to_watch,
-                FILE_LIST_DIRECTORY,
-                win32con.FILE_SHARE_READ | win32con.FILE_SHARE_WRITE | win32con.FILE_SHARE_DELETE,
-                None,
-                win32con.OPEN_EXISTING,
-                win32con.FILE_FLAG_BACKUP_SEMANTICS,
-                None
-            )
 
         def run(self):
+            dir_handle = winutil.create_file(
+                self.path_to_watch,
+                winutil.FILE_LIST_DIRECTORY,
+                winutil.FILE_SHARE_READ,
+                winutil.OPEN_EXISTING,
+                winutil.FILE_FLAG_BACKUP_SEMANTICS,
+            )
+
             try:
+                buffer = b'0' * 8192
                 while True:
-                    results = win32file.ReadDirectoryChangesW(
-                        self.dir_handle,
-                        8192,  # Buffer size for storing events
-                        True,  # Watch sub-directories as well
-                        win32con.FILE_NOTIFY_CHANGE_FILE_NAME |
-                        win32con.FILE_NOTIFY_CHANGE_DIR_NAME |
-                        win32con.FILE_NOTIFY_CHANGE_ATTRIBUTES |
-                        win32con.FILE_NOTIFY_CHANGE_SIZE |
-                        win32con.FILE_NOTIFY_CHANGE_LAST_WRITE |
-                        win32con.FILE_NOTIFY_CHANGE_SECURITY,
-                        None, None
-                    )
-                    for action, filename in results:
-                        if self.file_is_watched(filename):
-                            self.modified_queue.put(os.path.join(self.path_to_watch, filename))
+                    try:
+                        results = winutil.read_directory_changes(
+                            dir_handle, buffer,
+                            True,  # Watch sub-directories as well
+                            winutil.FILE_NOTIFY_CHANGE_FILE_NAME |
+                            winutil.FILE_NOTIFY_CHANGE_DIR_NAME |
+                            winutil.FILE_NOTIFY_CHANGE_ATTRIBUTES |
+                            winutil.FILE_NOTIFY_CHANGE_SIZE |
+                            winutil.FILE_NOTIFY_CHANGE_LAST_WRITE |
+                            winutil.FILE_NOTIFY_CHANGE_SECURITY,
+                        )
+                        for action, filename in results:
+                            if self.file_is_watched(filename):
+                                self.modified_queue.put(os.path.join(self.path_to_watch, filename))
+                    except OverflowError:
+                        pass  # the buffer overflowed, there are unknown changes
             except Exception:
                 import traceback
                 traceback.print_exc()
@@ -151,7 +157,7 @@ elif iswindows:
         def loop(self):
             for w in self.watchers:
                 w.start()
-            with HandleInterrupt(lambda : self.modified_queue.put(None)):
+            with HandleInterrupt(lambda: self.modified_queue.put(None)):
                 while True:
                     path = self.modified_queue.get()
                     if path is None:
@@ -161,7 +167,7 @@ elif iswindows:
                     else:
                         self.handle_modified({path})
 
-elif isosx:
+elif ismacos:
     from fsevents import Observer, Stream
 
     class Watcher(WatcherBase):
@@ -230,7 +236,7 @@ def join_process(p, timeout=5):
     return p.poll()
 
 
-class Worker(object):
+class Worker:
 
     def __init__(self, cmd, log, server, timeout=5):
         self.cmd = cmd
@@ -278,11 +284,11 @@ class Worker(object):
             if join_process(self.p) is None:
                 self.p.kill()
                 self.p.wait()
-            self.log('Killed server process %d with return code: %d' % (self.p.pid, self.p.returncode))
+            self.log(f'Killed server process {self.p.pid} with return code: {self.p.returncode}')
             self.p = None
 
     def restart(self, forced=False):
-        from calibre.utils.rapydscript import compile_srv, CompileFailure
+        from calibre.utils.rapydscript import CompileFailure, compile_srv
         self.clean_kill()
         if forced:
             self.retry_count += 1
@@ -290,7 +296,7 @@ class Worker(object):
             self.retry_count = 0
         try:
             compile_srv()
-        except EnvironmentError as e:
+        except OSError as e:
             # Happens if the editor deletes and replaces a file being edited
             if e.errno != errno.ENOENT or not getattr(e, 'filename', False):
                 raise
@@ -299,7 +305,7 @@ class Worker(object):
                 time.sleep(0.01)
             compile_srv()
         except CompileFailure as e:
-            self.log.error(e.message)
+            self.log.error(error_message(e))
             time.sleep(0.1 * self.retry_count)
             if self.retry_count < MAX_RETRIES and self.wakeup is not None:
                 self.wakeup()  # Force a restart
@@ -319,14 +325,15 @@ class Worker(object):
                 if self.uses_ssl:
                     s = ssl.wrap_socket(s)
                 s.connect(('localhost', self.port))
-                s.close()
                 return
-            except socket.error:
+            except OSError:
                 time.sleep(0.01)
+            finally:
+                s.close()
         self.log.error('Restarted server did not start listening on:', self.port)
 
-# WebSocket reload notifier {{{
 
+# WebSocket reload notifier {{{
 
 class ReloadHandler(DummyHandler):
 
@@ -345,14 +352,14 @@ class ReloadHandler(DummyHandler):
 
     def notify_reload(self):
         with self.conn_lock:
-            for connref in self.connections.itervalues():
+            for connref in itervalues(self.connections):
                 conn = connref()
                 if conn is not None and conn.ready:
                     conn.send_websocket_message('reload')
 
     def ping(self):
         with self.conn_lock:
-            for connref in self.connections.itervalues():
+            for connref in itervalues(self.connections):
                 conn = connref()
                 if conn is not None and conn.ready:
                     conn.send_websocket_message('ping')
@@ -383,7 +390,7 @@ class ReloadServer(Thread):
         while not self.loop.ready and self.is_alive():
             time.sleep(0.01)
         self.address = self.loop.bound_address[:2]
-        os.environ['CALIBRE_AUTORELOAD_PORT'] = str(self.address[1])
+        os.environ['CALIBRE_AUTORELOAD_PORT'] = native_string_type(self.address[1])
         return self
 
     def __exit__(self, *args):
@@ -401,9 +408,11 @@ def auto_reload(log, dirs=frozenset(), cmd=None, add_default_dirs=True, listen_o
     if cmd is None:
         cmd = list(sys.argv)
         cmd.remove('--auto-reload')
+    if os.path.basename(cmd[0]) == 'run-local':
+        cmd.insert(1, 'calibre-server')
     dirs = find_dirs_to_watch(fpath, dirs, add_default_dirs)
     log('Auto-restarting server on changes press Ctrl-C to quit')
-    log('Watching %d directory trees for changes' % len(dirs))
+    log(f'Watching {len(dirs)} directory trees for changes')
     with ReloadServer(listen_on) as server, Worker(cmd, log, server) as worker:
         w = Watcher(dirs, worker, log)
         worker.wakeup = w.wakeup

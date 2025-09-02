@@ -1,4 +1,4 @@
-#!/usr/bin/env  python2
+#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 # Based on veezh's original recipe and Kovid Goyal's New York Times recipe
 
@@ -10,10 +10,10 @@ www.nrc.nl
 '''
 import os
 import zipfile
+from datetime import date, timedelta
 from io import BytesIO
 
 from calibre.web.feeds.news import BasicNewsRecipe
-from datetime import date, timedelta
 
 
 class NRCHandelsblad(BasicNewsRecipe):

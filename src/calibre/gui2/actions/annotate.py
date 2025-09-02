@@ -1,17 +1,18 @@
-#!/usr/bin/env python2
-# vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
+#!/usr/bin/env python
+
 
 __license__   = 'GPL v3'
 __copyright__ = '2010, Kovid Goyal <kovid@kovidgoyal.net>'
 __docformat__ = 'restructuredtext en'
 
 
-from PyQt5.Qt import pyqtSignal, QModelIndex, QThread, Qt
+from qt.core import QModelIndex, Qt, QThread, pyqtSignal
 
+from calibre.devices.usbms.device import Device
 from calibre.gui2 import error_dialog
 from calibre.gui2.actions import InterfaceAction
-from calibre.devices.usbms.device import Device
 from calibre.gui2.dialogs.progress import ProgressDialog
+from polyglot.builtins import iteritems
 
 
 class Updater(QThread):  # {{{
@@ -34,8 +35,8 @@ class Updater(QThread):  # {{{
         self.pd.setModal(True)
         self.pd.show()
         self.update_progress.connect(self.pd.set_value,
-                type=Qt.QueuedConnection)
-        self.update_done.connect(self.pd.hide, type=Qt.QueuedConnection)
+                type=Qt.ConnectionType.QueuedConnection)
+        self.update_done.connect(self.pd.hide, type=Qt.ConnectionType.QueuedConnection)
 
     def canceled(self):
         self.keep_going = False
@@ -49,12 +50,12 @@ class Updater(QThread):  # {{{
                     self.annotation_map[id_][1])
             try:
                 self.device.add_annotation_to_library(self.db, id_, bm)
-            except:
+            except Exception:
                 import traceback
                 self.errors[id_] = traceback.format_exc()
             self.update_progress.emit(i)
         self.update_done.emit()
-        self.done_callback(self.annotation_map.keys(), self.errors)
+        self.done_callback(list(self.annotation_map.keys()), self.errors)
 
 # }}}
 
@@ -63,7 +64,7 @@ class FetchAnnotationsAction(InterfaceAction):
 
     name = 'Fetch Annotations'
     action_spec = (_('Fetch annotations (experimental)'), None, None, ())
-    dont_add_to = frozenset(['menubar', 'toolbar', 'context-menu', 'toolbar-child'])
+    dont_add_to = frozenset(('menubar', 'toolbar', 'context-menu', 'toolbar-child'))
     action_type = 'current'
 
     def genesis(self):
@@ -74,8 +75,8 @@ class FetchAnnotationsAction(InterfaceAction):
         def get_ids_from_selected_rows():
             rows = self.gui.library_view.selectionModel().selectedRows()
             if not rows or len(rows) < 2:
-                rows = xrange(self.gui.library_view.model().rowCount(QModelIndex()))
-            ids = map(self.gui.library_view.model().id, rows)
+                rows = range(self.gui.library_view.model().rowCount(QModelIndex()))
+            ids = list(map(self.gui.library_view.model().id, rows))
             return ids
 
         def get_formats(id):
@@ -101,7 +102,7 @@ class FetchAnnotationsAction(InterfaceAction):
                 path = get_device_path_from_id(id)
                 mi = db.get_metadata(id, index_is_id=True)
                 a_path = device.create_annotations_path(mi, device_path=path)
-                path_map[id] = dict(path=a_path, fmts=get_formats(id))
+                path_map[id] = {'path': a_path, 'fmts': get_formats(id)}
             return path_map
 
         device = self.gui.device_manager.device
@@ -151,14 +152,12 @@ class FetchAnnotationsAction(InterfaceAction):
         if errors:
             db = self.gui.library_view.model().db
             entries = []
-            for id_, tb in errors.iteritems():
+            for id_, tb in iteritems(errors):
                 title = id_
-                if isinstance(id_, type(1)):
+                if isinstance(id_, int):
                     title = db.title(id_, index_is_id=True)
                 entries.extend([title, tb, ''])
             error_dialog(self.gui, _('Some errors'),
                     _('Could not fetch annotations for some books. Click '
-                        'show details to see which ones.'),
+                        '"Show details" to see which ones.'),
                     det_msg='\n'.join(entries), show=True)
-
-

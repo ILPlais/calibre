@@ -1,13 +1,11 @@
-#!/usr/bin/env python2
-# vim:fileencoding=utf-8
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
+#!/usr/bin/env python
+
 
 __license__ = 'GPL v3'
 __copyright__ = '2013, Kovid Goyal <kovid at kovidgoyal.net>'
 
 
-class Theme(object):
+class Theme:
 
     def __init__(self, namespace):
         self.major_latin_font = 'Cambria'

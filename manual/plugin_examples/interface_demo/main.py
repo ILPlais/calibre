@@ -1,7 +1,6 @@
-#!/usr/bin/env python2
+#!/usr/bin/env python
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
+
 
 __license__   = 'GPL v3'
 __copyright__ = '2011, Kovid Goyal <kovid@kovidgoyal.net>'
@@ -13,9 +12,10 @@ if False:
     # You do not need this code in your plugins
     get_icons = get_resources = None
 
-from PyQt5.Qt import QDialog, QVBoxLayout, QPushButton, QMessageBox, QLabel
+from qt.core import QDialog, QLabel, QMessageBox, QPushButton, QVBoxLayout
 
 from calibre_plugins.interface_demo.config import prefs
+
 
 class DemoDialog(QDialog):
 
@@ -55,7 +55,7 @@ class DemoDialog(QDialog):
         self.l.addWidget(self.view_button)
 
         self.update_metadata_button = QPushButton(
-            'Update metadata in a book\'s files', self)
+            "Update metadata in a book's files", self)
         self.update_metadata_button.clicked.connect(self.update_metadata)
         self.l.addWidget(self.update_metadata_button)
 
@@ -97,7 +97,7 @@ class DemoDialog(QDialog):
         ''' View the most recently added book '''
         most_recent = most_recent_id = None
         db = self.db.new_api
-        for book_id, timestamp in db.all_field_for('timestamp', db.all_book_ids()).iteritems():
+        for book_id, timestamp in db.all_field_for('timestamp', db.all_book_ids()).items():
             if most_recent is None or timestamp > most_recent:
                 most_recent = timestamp
                 most_recent_id = book_id
@@ -140,16 +140,15 @@ class DemoDialog(QDialog):
                 set_metadata(ffile, mi, fmt)
                 ffile.seek(0)
                 # Now replace the file in the calibre library with the updated
-                # file. We dont use add_format_with_hooks as the hooks were
+                # file. We don't use add_format_with_hooks as the hooks were
                 # already run when the file was first added to calibre.
                 db.add_format(book_id, fmt, ffile, run_hooks=False)
 
         info_dialog(self, 'Updated files',
-                'Updated the metadata in the files of %d book(s)'%len(ids),
+                f'Updated the metadata in the files of {len(ids)} book(s)',
                 show=True)
 
     def config(self):
         self.do_user_config(parent=self)
         # Apply the changes
         self.label.setText(prefs['hello_world_msg'])
-

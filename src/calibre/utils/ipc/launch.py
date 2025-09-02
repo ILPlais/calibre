@@ -1,36 +1,89 @@
-#!/usr/bin/env python2
-# vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
-from __future__ import with_statement
+#!/usr/bin/env python
 
 __license__   = 'GPL v3'
 __copyright__ = '2009, Kovid Goyal <kovid@kovidgoyal.net>'
 __docformat__ = 'restructuredtext en'
 
-import subprocess, os, sys, time, binascii, cPickle
-from functools import partial
+import os
+import subprocess
+import sys
+import time
 
-from calibre.constants import iswindows, isosx, isfrozen, filesystem_encoding
-from calibre.utils.config import prefs
+from calibre.constants import isfrozen, ismacos, iswindows
 from calibre.ptempfile import PersistentTemporaryFile, base_dir
+from calibre.utils.config import prefs
+from calibre.utils.serialize import msgpack_dumps
+from polyglot.binary import as_hex_unicode
+from polyglot.builtins import environ_item, native_string_type, string_or_bytes
 
 if iswindows:
-    import win32process
     try:
         windows_null_file = open(os.devnull, 'wb')
-    except:
+    except Exception:
         raise RuntimeError('NUL file missing in windows. This indicates a'
                 ' corrupted windows. You should contact Microsoft'
-                ' for assistance and/or follow the steps described here: http://bytes.com/topic/net/answers/264804-compile-error-null-device-missing')
+                ' for assistance and/or follow the steps described here: https://bytes.com/topic/net/answers/264804-compile-error-null-device-missing')
 
 
 def renice(niceness):
     try:
         os.nice(niceness)
-    except:
+    except Exception:
         pass
 
 
-class Worker(object):
+def macos_viewer_bundle_path():
+    base = os.path.dirname(sys.executables_location)
+    return os.path.join(base, 'ebook-viewer.app/Contents/MacOS/')
+
+
+def macos_edit_book_bundle_path():
+    base = os.path.dirname(sys.executables_location)
+    return os.path.join(base, 'ebook-viewer.app/Contents/ebook-edit.app/Contents/MacOS/')
+
+
+def macos_headless_bundle_path():
+    base = os.path.dirname(sys.executables_location)
+    return os.path.join(base, 'ebook-viewer.app/Contents/ebook-edit.app/Contents/headless.app/Contents/MacOS/')
+
+
+def exe_path(exe_name):
+    if hasattr(sys, 'running_from_setup'):
+        return [sys.executable, os.path.join(sys.setup_dir, 'run-calibre-worker.py')]
+    if getattr(sys, 'run_local', False):
+        return [sys.executable, sys.run_local, exe_name]
+    e = exe_name
+    if iswindows:
+        return os.path.join(os.path.dirname(sys.executable),
+                e+'.exe' if isfrozen else f'Scripts\\{e}.exe')
+    if ismacos:
+        return os.path.join(sys.executables_location, e)
+
+    if isfrozen:
+        return os.path.join(sys.executables_location, e)
+
+    if hasattr(sys, 'executables_location'):
+        c = os.path.join(sys.executables_location, e)
+        if os.access(c, os.X_OK):
+            return c
+    return e
+
+
+def headless_exe_path(exe_name='calibre-parallel'):
+    if ismacos and not hasattr(sys, 'running_from_setup'):
+        return os.path.join(macos_headless_bundle_path(), exe_name)
+    return exe_path(exe_name)
+
+
+def windows_creationflags_for_worker_process(priority: str = 'normal') -> int:
+    return {
+        'high'  : subprocess.HIGH_PRIORITY_CLASS,
+        'normal': subprocess.NORMAL_PRIORITY_CLASS,
+        'low'   : subprocess.IDLE_PRIORITY_CLASS
+    }[priority] | subprocess.DETACHED_PROCESS
+
+
+class Worker:
     '''
     Platform independent object for launching child processes. All processes
     have the environment variable :envvar:`CALIBRE_WORKER` set.
@@ -46,66 +99,27 @@ class Worker(object):
     exe_name = 'calibre-parallel'
 
     @property
-    def osx_interpreter(self):
-        exe = os.path.basename(sys.executable)
-        return exe if 'python' in exe else 'python'
-
-    @property
-    def osx_contents_dir(self):
-        fd = os.path.realpath(getattr(sys, 'frameworks_dir'))
-        return os.path.dirname(fd)
-
-    @property
     def executable(self):
-        if hasattr(sys, 'running_from_setup'):
-            return [sys.executable, os.path.join(sys.setup_dir, 'run-calibre-worker.py')]
-        e = self.exe_name
-        if iswindows:
-            return os.path.join(os.path.dirname(sys.executable),
-                   e+'.exe' if isfrozen else 'Scripts\\%s.exe'%e)
-        if isosx:
-            return os.path.join(sys.console_binaries_path, e)
-
-        if isfrozen:
-            return os.path.join(sys.executables_location, e)
-
-        if hasattr(sys, 'executables_location'):
-            c = os.path.join(sys.executables_location, e)
-            if os.access(c, os.X_OK):
-                return c
-        return e
+        return headless_exe_path(self.exe_name)
 
     @property
     def gui_executable(self):
-        if isosx and not hasattr(sys, 'running_from_setup'):
-            if self.job_name in {'ebook-viewer', 'ebook-edit'}:
-                return self.executable.replace('/console.app/', '/%s.app/' % self.job_name)
-            return os.path.join(sys.binaries_path, self.exe_name)
+        if ismacos and not hasattr(sys, 'running_from_setup'):
+            if self.job_name == 'ebook-viewer':
+                return os.path.join(macos_viewer_bundle_path(), self.exe_name)
+            if self.job_name == 'ebook-edit':
+                return os.path.join(macos_edit_book_bundle_path(), self.exe_name)
+
+            return os.path.join(sys.executables_location, self.exe_name)
 
         return self.executable
 
     @property
     def env(self):
-        # We use this inefficient method of copying the environment variables
-        # because of non ascii env vars on windows. See https://bugs.launchpad.net/bugs/811191
-        env = {}
-        for key in os.environ:
-            try:
-                val = os.environ[key]
-                if isinstance(val, unicode):
-                    # On windows subprocess cannot handle unicode env vars
-                    try:
-                        val = val.encode(filesystem_encoding)
-                    except ValueError:
-                        val = val.encode('utf-8')
-                if isinstance(key, unicode):
-                    key = key.encode('ascii')
-                env[key] = val
-            except:
-                pass
-        env[b'CALIBRE_WORKER'] = b'1'
-        td = binascii.hexlify(cPickle.dumps(base_dir()))
-        env[b'CALIBRE_WORKER_TEMP_DIR'] = bytes(td)
+        env = os.environ.copy()
+        env[native_string_type('CALIBRE_WORKER')] = environ_item('1')
+        td = as_hex_unicode(msgpack_dumps(base_dir()))
+        env[native_string_type('CALIBRE_WORKER_TEMP_DIR')] = environ_item(td)
         env.update(self._env)
         return env
 
@@ -129,7 +143,7 @@ class Worker(object):
     def close_log_file(self):
         try:
             self._file.close()
-        except:
+        except Exception:
             pass
 
     def kill(self):
@@ -146,28 +160,15 @@ class Worker(object):
                 finally:
                     if self.is_alive:
                         self.child.kill()
-        except:
+        except Exception:
             pass
 
-    def __init__(self, env, gui=False, job_name=None):
-        self._env = {}
+    def __init__(self, env=None, gui=False, job_name=None):
         self.gui = gui
         self.job_name = job_name
-        # Windows cannot handle unicode env vars
-        for k, v in env.iteritems():
-            try:
-                if isinstance(k, unicode):
-                    k = k.encode('ascii')
-                if isinstance(v, unicode):
-                    try:
-                        v = v.encode(filesystem_encoding)
-                    except:
-                        v = v.encode('utf-8')
-                self._env[k] = v
-            except:
-                pass
+        self._env = (env or {}).copy()
 
-    def __call__(self, redirect_output=True, cwd=None, priority=None):
+    def __call__(self, redirect_output=True, cwd=None, priority=None, pass_fds=()):
         '''
         If redirect_output is True, output from the child is redirected
         to a file on disk and this method returns the path to that file.
@@ -175,34 +176,28 @@ class Worker(object):
         exe = self.gui_executable if self.gui else self.executable
         env = self.env
         try:
-            env[b'ORIGWD'] = binascii.hexlify(cPickle.dumps(
-                cwd or os.path.abspath(os.getcwdu())))
-        except EnvironmentError:
+            origwd = cwd or os.path.abspath(os.getcwd())
+        except OSError:
             # cwd no longer exists
-            env[b'ORIGWD'] = binascii.hexlify(cPickle.dumps(
-                cwd or os.path.expanduser(u'~')))
-
+            origwd = cwd or os.path.expanduser('~')
+        env[native_string_type('ORIGWD')] = environ_item(as_hex_unicode(msgpack_dumps(origwd)))
         _cwd = cwd
         if priority is None:
             priority = prefs['worker_process_priority']
-        cmd = [exe] if isinstance(exe, basestring) else exe
+        cmd = [exe] if isinstance(exe, string_or_bytes) else exe
         args = {
-                'env' : env,
-                'cwd' : _cwd,
+                'env': env,
+                'cwd': _cwd,
                 }
         if iswindows:
-            priority = {
-                    'high'   : win32process.HIGH_PRIORITY_CLASS,
-                    'normal' : win32process.NORMAL_PRIORITY_CLASS,
-                    'low'    : win32process.IDLE_PRIORITY_CLASS}[priority]
-            args['creationflags'] = win32process.CREATE_NO_WINDOW|priority
+            args['creationflags'] = windows_creationflags_for_worker_process(priority)
         else:
             niceness = {
-                    'normal' : 0,
-                    'low'    : 10,
-                    'high'   : 20,
+                    'normal': 0,
+                    'low'   : 10,
+                    'high'  : 20,
             }[priority]
-            args['preexec_fn'] = partial(renice, niceness)
+            args['env']['CALIBRE_WORKER_NICENESS'] = str(niceness)
         ret = None
         if redirect_output:
             self._file = PersistentTemporaryFile('_worker_redirect.log')
@@ -219,18 +214,22 @@ class Worker(object):
             args['stdout'] = windows_null_file
             args['stderr'] = subprocess.STDOUT
 
-        if not iswindows:
-            # Close inherited file descriptors in worker
-            # On windows, this is done in the worker process
-            # itself
-            args['close_fds'] = True
-
-        self.child = subprocess.Popen(cmd, **args)
+        args['close_fds'] = True
+        try:
+            if pass_fds:
+                if iswindows:
+                    for fd in pass_fds:
+                        os.set_handle_inheritable(fd, True)
+                    args['startupinfo'] = subprocess.STARTUPINFO(lpAttributeList={'handle_list':pass_fds})
+                else:
+                    args['pass_fds'] = pass_fds
+            self.child = subprocess.Popen(cmd, **args)
+        finally:
+            if iswindows and pass_fds:
+                for fd in pass_fds:
+                    os.set_handle_inheritable(fd, False)
         if 'stdin' in args:
             self.child.stdin.close()
 
         self.log_path = ret
         return ret
-
-
-

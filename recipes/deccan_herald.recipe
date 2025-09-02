@@ -1,36 +1,53 @@
-from calibre.web.feeds.news import BasicNewsRecipe
+from calibre.web.feeds.news import BasicNewsRecipe, classes
 
 
-class AdvancedUserRecipe1362501327(BasicNewsRecipe):
-    title = u'Deccan Herald'
-    __author__ = 'Muruli Shamanna'
-    description = 'Daily news from the Deccan Herald'
+def absurl(url):
+    if url.startswith('/'):
+        return 'https://www.deccanherald.com' + url
 
-    oldest_article = 1
-    max_articles_per_feed = 100
-    auto_cleanup = True
-    category = 'News'
+
+class herald(BasicNewsRecipe):
+    title = 'Deccan Herald'
+    __author__ = 'unkn0wn'
+    description = 'Deccan Herald is an Indian English language daily newspaper published from the Indian state of Karnataka.'
     language = 'en_IN'
+    no_stylesheets = True
+    remove_attributes = ['height', 'width', 'style']
+    ignore_duplicate_articles = {'url', 'title'}
     encoding = 'utf-8'
-    publisher = 'The Printers (Mysore) Private Ltd'
 
-    cover_url = 'http://www.quizzing.in/wp-content/uploads/2010/07/DH.gif'
+    keep_only_tags = [
+        classes('article-title article-author__name'),
+        dict(name='div', attrs={'id':'main-content'})
+    ]
 
-    conversion_options = {
-        'comments': description, 'tags': category, 'language': language, 'publisher': publisher
-    }
+    remove_tags = [
+        classes(
+            'storyShare social-media-icons in_article_video static_text'
+            ' nl-optin-mobile dk_only article-banner-adver-wrapper wb_holder'
+            ' field-name-field-tags section-full strip--business'
+        )
+    ]
 
-    feeds = [
-    (u'News', u'http://www.deccanherald.com/rss/news.rss'),
-    (u'Business', u'http://www.deccanherald.com/rss/business.rss'),
-    (u'Entertainment', u'http://www.deccanherald.com/rss/entertainment.rss'),
-    (u'Sports', u'http://www.deccanherald.com/rss/sports.rss'),
-    (u'Environment', u'http://www.deccanherald.com/rss/environment.rss')]
+    def parse_index(self):
+        index = 'https://www.deccanherald.com/'
+        sections = [
+            'india', 'world', 'elections', 'opinion', 'specials', 'business', 'sports'
+        ]
+        feeds = []
 
-    extra_css = '''
-                    h1{font-family:Arial,Helvetica,sans-serif; font-weight:bold;font-size:150%;}
-                    h2{font-family:Arial,Helvetica,sans-serif; font-weight:bold;font-size:155%;}
-                    img {max-width:100%; min-width:100%;}
-                    p{font-family:Arial,Helvetica,sans-serif;font-size:large;}
-                    body{font-family:Helvetica,Arial,sans-serif;font-size:medium;}
-        '''
+        for sec in sections:
+            soup = self.index_to_soup(index + sec)
+            section = sec.capitalize()
+            self.log(section)
+            articles = []
+            for a in soup.findAll('a', attrs={'href':lambda x: x and x.startswith('/' + sec + '/')}):
+                url = absurl(a['href'].split('?')[0])
+                if url in {index + sec + '/', index + sec}:
+                    continue
+                title = self.tag_to_string(a)
+                self.log('\t', title, '\n\t\t', url)
+                articles.append({'title': title, 'url': url})
+            if articles:
+                feeds.append((section, articles))
+        return feeds

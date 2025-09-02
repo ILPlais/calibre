@@ -1,13 +1,12 @@
-#!/usr/bin/env python2
-# vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
-from __future__ import with_statement
+#!/usr/bin/env python
+
 
 __license__   = 'GPL v3'
 __copyright__ = '2009, Kovid Goyal <kovid@kovidgoyal.net>'
 __docformat__ = 'restructuredtext en'
 
 
-class Clean(object):
+class Clean:
     '''Clean up guide, leaving only known values '''
 
     def __call__(self, oeb, opts):
@@ -28,11 +27,11 @@ class Clean(object):
                     else:
                         covers.append([self.oeb.guide[x], len(item.data)])
 
-            covers.sort(cmp=lambda x,y:cmp(x[1], y[1]), reverse=True)
+            covers.sort(key=lambda x: x[1], reverse=True)
             if covers:
                 ref = covers[0][0]
                 if len(covers) > 1:
-                    self.log('Choosing %s:%s as the cover'%(ref.type, ref.href))
+                    self.log(f'Choosing {ref.type}:{ref.href} as the cover')
                 ref.type = 'cover'
                 self.oeb.guide.refs['cover'] = ref
 
@@ -53,4 +52,3 @@ class Clean(object):
                 if item.title and item.title.lower() == 'start':
                     continue
                 self.oeb.guide.remove(x)
-

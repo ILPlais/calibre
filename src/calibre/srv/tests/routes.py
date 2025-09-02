@@ -1,19 +1,20 @@
-#!/usr/bin/env python2
-# vim:fileencoding=utf-8
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
+#!/usr/bin/env python
+
 
 __license__ = 'GPL v3'
 __copyright__ = '2015, Kovid Goyal <kovid at kovidgoyal.net>'
 
 import os
+from tempfile import TemporaryDirectory
+
 from calibre.srv.tests.base import BaseTest
+from polyglot.builtins import itervalues
 
 
 class TestRouter(BaseTest):
 
     def test_library_id_construction(self):
-        from calibre.srv.library_broker import library_id_from_path
+        from calibre.srv.library_broker import correct_case_of_last_path_component, db_matches, library_id_from_path
         self.ae(library_id_from_path('as'), 'as')
         self.ae(library_id_from_path('as/'), 'as')
         self.ae(library_id_from_path('as////'), 'as')
@@ -22,9 +23,25 @@ class TestRouter(BaseTest):
             self.ae(library_id_from_path('as/' + os.sep), 'as')
             self.ae(library_id_from_path('X:' + os.sep), 'X')
 
+        class MockDB:
+
+            def __init__(self, base):
+                self.new_api = self
+                self.server_library_id = 'lid'
+                self.dbpath = os.path.join(base, 'metadata.db')
+
+        with TemporaryDirectory() as tdir:
+            path = os.path.join(tdir, 'Test')
+            os.mkdir(path)
+            self.ae(correct_case_of_last_path_component(os.path.join(tdir, 'test')), path)
+            self.ae(correct_case_of_last_path_component(os.path.join(tdir, 'Test')), path)
+            db = MockDB(tdir)
+            self.assertTrue(db_matches(db, db.server_library_id, None))
+            self.assertTrue(db_matches(db, db.server_library_id.upper(), tdir))
+
     def test_route_construction(self):
         ' Test route construction '
-        from calibre.srv.routes import Route, endpoint, RouteError
+        from calibre.srv.routes import Route, RouteError, endpoint
 
         def makeroute(route, func=lambda c,d:None, **kwargs):
             return Route(endpoint(route, **kwargs)(func))
@@ -48,11 +65,11 @@ class TestRouter(BaseTest):
 
     def test_route_finding(self):
         'Test route finding'
-        from calibre.srv.routes import Router, endpoint, HTTPNotFound
+        from calibre.srv.routes import HTTPNotFound, Router, endpoint
         router = Router()
 
         def find(path):
-            path = filter(None, path.split('/'))
+            path = list(filter(None, path.split('/')))
             ep, args = router.find_route(path)
             args = list(args)
             return ep, args
@@ -85,7 +102,7 @@ class TestRouter(BaseTest):
         def get(ctx, dest, a, b):
             pass
 
-        for x in locals().itervalues():
+        for x in itervalues(locals()):
             if getattr(x, 'is_endpoint', False):
                 router.add(x)
         router.finalize()

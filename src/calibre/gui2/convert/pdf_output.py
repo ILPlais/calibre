@@ -1,16 +1,14 @@
-# -*- coding: utf-8 -*-
-
 __license__ = 'GPL 3'
 __copyright__ = '2009, John Schember <john@nachtimwald.com>'
 __docformat__ = 'restructuredtext en'
 
 
-from PyQt5.Qt import QHBoxLayout, QFormLayout, QDoubleSpinBox, QCheckBox, QVBoxLayout
+from qt.core import QCheckBox, QDoubleSpinBox, QFormLayout, QHBoxLayout, QVBoxLayout
 
-from calibre.gui2.convert.pdf_output_ui import Ui_Form
-from calibre.gui2.convert import Widget
-from calibre.utils.localization import localize_user_manual_link
 from calibre.ebooks.conversion.config import OPTIONS
+from calibre.gui2.convert import Widget
+from calibre.gui2.convert.pdf_output_ui import Ui_Form
+from calibre.utils.localization import localize_user_manual_link
 
 paper_size_model = None
 orientation_model = None
@@ -21,7 +19,7 @@ class PluginWidget(Widget, Ui_Form):
     TITLE = _('PDF output')
     HELP = _('Options specific to')+' PDF '+_('output')
     COMMIT_NAME = 'pdf_output'
-    ICON = I('mimetypes/pdf.png')
+    ICON = 'mimetypes/pdf.png'
 
     def __init__(self, parent, get_option, get_help, db=None, book_id=None):
         Widget.__init__(self, parent, OPTIONS['output']['pdf'])
@@ -32,17 +30,15 @@ class PluginWidget(Widget, Ui_Form):
         except TypeError:
             pass  # link already localized
 
-        for x in get_option('paper_size').option.choices:
-            self.opt_paper_size.addItem(x)
+        self.opt_paper_size.initialize(get_option('paper_size').option.choices)
         for x in get_option('unit').option.choices:
             self.opt_unit.addItem(x)
         for x in get_option('pdf_standard_font').option.choices:
             self.opt_pdf_standard_font.addItem(x)
 
         self.initialize_options(get_option, get_help, db, book_id)
-        self.layout().setFieldGrowthPolicy(self.layout().ExpandingFieldsGrow)
-        self.template_box.layout().setFieldGrowthPolicy(self.layout().AllNonFixedFieldsGrow)
-        self.toggle_margins()
+        self.layout().setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
+        self.template_box.layout().setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         self.profile_size_toggled()
 
     def profile_size_toggled(self):
@@ -51,17 +47,11 @@ class PluginWidget(Widget, Ui_Form):
         self.opt_custom_size.setEnabled(enabled)
         self.opt_unit.setEnabled(enabled)
 
-    def toggle_margins(self):
-        enabled = not self.opt_pdf_use_document_margins.isChecked()
-        for which in 'left top right bottom'.split():
-            getattr(self, 'opt_pdf_page_margin_' + which).setEnabled(enabled)
-
     def setupUi(self, *a):
         Ui_Form.setupUi(self, *a)
         v = self.page_margins_box.v = QVBoxLayout(self.page_margins_box)
         self.opt_pdf_use_document_margins = c = QCheckBox(_('Use page margins from the &document being converted'))
         v.addWidget(c)
-        c.stateChanged.connect(self.toggle_margins)
         h = self.page_margins_box.h = QHBoxLayout()
         l = self.page_margins_box.l = QFormLayout()
         r = self.page_margins_box.r = QFormLayout()

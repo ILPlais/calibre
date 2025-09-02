@@ -1,18 +1,15 @@
-# -*- coding: utf-8 -*-
-
 __license__ = 'GPL 3'
 __copyright__ = '2012, Kovid Goyal <kovid at kovidgoyal.net>'
 __docformat__ = 'restructuredtext en'
 
 import textwrap
 
-from PyQt5.Qt import (QWidget, QListWidgetItem, Qt, QLabel,
-        QLineEdit, QCheckBox, QComboBox)
+from qt.core import QCheckBox, QComboBox, QLabel, QLineEdit, QListWidgetItem, Qt, QWidget
 
+from calibre.ebooks import BOOK_EXTENSIONS
 from calibre.gui2 import error_dialog, question_dialog
 from calibre.gui2.device_drivers.configwidget_ui import Ui_ConfigWidget
 from calibre.utils.formatter import validation_formatter
-from calibre.ebooks import BOOK_EXTENSIONS
 
 
 class ConfigWidget(QWidget, Ui_ConfigWidget):
@@ -34,15 +31,15 @@ class ConfigWidget(QWidget, Ui_ConfigWidget):
         except TypeError:
             self.device_name = getattr(device, 'gui_name', None) or _('Device')
         if device.USER_CAN_ADD_NEW_FORMATS:
-            all_formats = set(all_formats) | set(BOOK_EXTENSIONS)
+            all_formats = all_formats | set(BOOK_EXTENSIONS)
 
         format_map = settings.format_map
-        disabled_formats = list(set(all_formats).difference(format_map))
-        for format in format_map + list(sorted(disabled_formats)):
+        disabled_formats = all_formats.difference(format_map)
+        for format in format_map + sorted(disabled_formats):
             item = QListWidgetItem(format, self.columns)
-            item.setData(Qt.UserRole, (format))
-            item.setFlags(Qt.ItemIsEnabled|Qt.ItemIsUserCheckable|Qt.ItemIsSelectable)
-            item.setCheckState(Qt.Checked if format in format_map else Qt.Unchecked)
+            item.setData(Qt.ItemDataRole.UserRole, (format))
+            item.setFlags(Qt.ItemFlag.ItemIsEnabled|Qt.ItemFlag.ItemIsUserCheckable|Qt.ItemFlag.ItemIsSelectable)
+            item.setCheckState(Qt.CheckState.Checked if format in format_map else Qt.CheckState.Unchecked)
 
         self.column_up.clicked.connect(self.up_column)
         self.column_down.clicked.connect(self.down_column)
@@ -72,11 +69,15 @@ class ConfigWidget(QWidget, Ui_ConfigWidget):
             if isinstance(extra_customization_message, list):
                 self.opt_extra_customization = []
                 if len(extra_customization_message) > 6:
-                    row_func = lambda x, y: ((x/2) * 2) + y
-                    col_func = lambda x: x%2
+                    def row_func(x, y):
+                        return (x // 2 * 2 + y)
+                    def col_func(x):
+                        return (x % 2)
                 else:
-                    row_func = lambda x, y: x*2 + y
-                    col_func = lambda x: 0
+                    def row_func(x, y):
+                        return (x * 2 + y)
+                    def col_func(x):
+                        return 0
 
                 for i, m in enumerate(extra_customization_message):
                     label_text, tt = parse_msg(m)
@@ -135,7 +136,11 @@ class ConfigWidget(QWidget, Ui_ConfigWidget):
             self.columns.setCurrentRow(idx+1)
 
     def format_map(self):
-        formats = [unicode(self.columns.item(i).data(Qt.UserRole) or '') for i in range(self.columns.count()) if self.columns.item(i).checkState()==Qt.Checked]
+        formats = [
+                str(self.columns.item(i).data(Qt.ItemDataRole.UserRole) or '')
+                for i in range(self.columns.count())
+                if self.columns.item(i).checkState()==Qt.CheckState.Checked
+        ]
         return formats
 
     def use_subdirs(self):
@@ -151,7 +156,7 @@ class ConfigWidget(QWidget, Ui_ConfigWidget):
         formats = set(self.format_map())
         extra = formats - set(self.calibre_known_formats)
         if extra:
-            fmts = sorted([x.upper() for x in extra])
+            fmts = sorted(x.upper() for x in extra)
             if not question_dialog(self, _('Unknown formats'),
                     _('You have enabled the <b>{0}</b> formats for'
                         ' your {1}. The {1} may not support them.'
@@ -160,15 +165,13 @@ class ConfigWidget(QWidget, Ui_ConfigWidget):
                             (', '.join(fmts)), self.device_name)):
                 return False
 
-        tmpl = unicode(self.opt_save_template.text())
+        tmpl = str(self.opt_save_template.text())
         try:
             validation_formatter.validate(tmpl)
             return True
         except Exception as err:
             error_dialog(self, _('Invalid template'),
                     '<p>'+_('The template %s is invalid:')%tmpl +
-                    '<br>'+unicode(err), show=True)
+                    '<br>'+str(err), show=True)
 
             return False
-
-

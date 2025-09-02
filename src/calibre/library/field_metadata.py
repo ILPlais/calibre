@@ -3,10 +3,14 @@ Created on 25 May 2010
 
 @author: charles
 '''
+
 import traceback
 from collections import OrderedDict
 
 from calibre.utils.config_base import tweaks
+from calibre.utils.icu import lower as icu_lower
+from calibre.utils.localization import _, ngettext
+from polyglot.builtins import iteritems, itervalues
 
 category_icon_map = {
                     'authors'    : 'user_profile.png',
@@ -24,15 +28,15 @@ category_icon_map = {
                     'languages'  : 'languages.png',
             }
 
-# Builtin metadata {{{
 
+# Builtin metadata {{{
 
 def _builtin_field_metadata():
     # This is a function so that changing the UI language allows newly created
     # field metadata objects to have correctly translated labels for builtin
     # fields.
     return [
-            ('authors',   {'table':'authors',
+            ('authors', {'table':'authors',
                            'column':'name',
                            'link_column':'author',
                            'category_sort':'sort',
@@ -61,7 +65,7 @@ def _builtin_field_metadata():
                            'is_category':True,
                            'is_csp': False}),
 
-            ('series',    {'table':'series',
+            ('series', {'table':'series',
                            'column':'name',
                            'link_column':'series',
                            'category_sort':'(title_sort(name))',
@@ -73,7 +77,7 @@ def _builtin_field_metadata():
                            'is_custom':False,
                            'is_category':True,
                            'is_csp': False}),
-            ('formats',   {'table':None,
+            ('formats', {'table':None,
                            'column':None,
                            'datatype':'text',
                            'is_multiple':{'cache_to_list': ',',
@@ -97,7 +101,7 @@ def _builtin_field_metadata():
                            'is_custom':False,
                            'is_category':True,
                            'is_csp': False}),
-            ('rating',    {'table':'ratings',
+            ('rating', {'table':'ratings',
                            'column':'rating',
                            'link_column':'rating',
                            'category_sort':'rating',
@@ -109,7 +113,7 @@ def _builtin_field_metadata():
                            'is_custom':False,
                            'is_category':True,
                            'is_csp': False}),
-            ('news',      {'table':'news',
+            ('news', {'table':'news',
                            'column':'name',
                            'category_sort':'name',
                            'datatype':None,
@@ -120,7 +124,7 @@ def _builtin_field_metadata():
                            'is_custom':False,
                            'is_category':True,
                            'is_csp': False}),
-            ('tags',      {'table':'tags',
+            ('tags', {'table':'tags',
                            'column':'name',
                            'link_column': 'tag',
                            'category_sort':'name',
@@ -134,7 +138,7 @@ def _builtin_field_metadata():
                            'is_custom':False,
                            'is_category':True,
                            'is_csp': False}),
-            ('identifiers',   {'table':None,
+            ('identifiers', {'table':None,
                            'column':None,
                            'datatype':'text',
                            'is_multiple':{'cache_to_list': ',',
@@ -156,7 +160,7 @@ def _builtin_field_metadata():
                            'is_custom':False,
                            'is_category':False,
                            'is_csp': False}),
-            ('au_map',    {'table':None,
+            ('au_map', {'table':None,
                            'column':None,
                            'datatype':'text',
                            'is_multiple':{'cache_to_list': ',',
@@ -168,7 +172,7 @@ def _builtin_field_metadata():
                            'is_custom':False,
                            'is_category':False,
                            'is_csp': False}),
-            ('comments',  {'table':None,
+            ('comments', {'table':None,
                            'column':None,
                            'datatype':'text',
                            'is_multiple':{},
@@ -178,7 +182,7 @@ def _builtin_field_metadata():
                            'is_custom':False,
                            'is_category':False,
                            'is_csp': False}),
-            ('cover',     {'table':None,
+            ('cover', {'table':None,
                            'column':None,
                            'datatype':'int',
                            'is_multiple':{},
@@ -188,12 +192,12 @@ def _builtin_field_metadata():
                            'is_custom':False,
                            'is_category':False,
                            'is_csp': False}),
-            ('id',        {'table':None,
+            ('id', {'table':None,
                            'column':None,
                            'datatype':'int',
                            'is_multiple':{},
                            'kind':'field',
-                           'name':None,
+                           'name': _('Id'),
                            'search_terms':['id'],
                            'is_custom':False,
                            'is_category':False,
@@ -208,7 +212,7 @@ def _builtin_field_metadata():
                            'is_custom':False,
                            'is_category':False,
                            'is_csp': False}),
-            ('ondevice',  {'table':None,
+            ('ondevice', {'table':None,
                            'column':None,
                            'datatype':'text',
                            'is_multiple':{},
@@ -218,7 +222,7 @@ def _builtin_field_metadata():
                            'is_custom':False,
                            'is_category':False,
                            'is_csp': False}),
-            ('path',      {'table':None,
+            ('path', {'table':None,
                            'column':None,
                            'datatype':'text',
                            'is_multiple':{},
@@ -228,7 +232,7 @@ def _builtin_field_metadata():
                            'is_custom':False,
                            'is_category':False,
                            'is_csp': False}),
-            ('pubdate',   {'table':None,
+            ('pubdate', {'table':None,
                            'column':None,
                            'datatype':'datetime',
                            'is_multiple':{},
@@ -238,13 +242,23 @@ def _builtin_field_metadata():
                            'is_custom':False,
                            'is_category':False,
                            'is_csp': False}),
-            ('marked',    {'table':None,
+            ('marked', {'table':None,
                            'column':None,
                            'datatype':'text',
                            'is_multiple':{},
                            'kind':'field',
                            'name': None,
                            'search_terms':['marked'],
+                           'is_custom':False,
+                           'is_category':False,
+                           'is_csp': False}),
+            ('in_tag_browser', {'table':None,
+                           'column':None,
+                           'datatype':'text',
+                           'is_multiple':{},
+                           'kind':'field',
+                           'name': None,
+                           'search_terms':['in_tag_browser'],
                            'is_custom':False,
                            'is_category':False,
                            'is_csp': False}),
@@ -258,7 +272,7 @@ def _builtin_field_metadata():
                              'is_custom':False,
                              'is_category':False,
                            'is_csp': False}),
-            ('series_sort',  {'table':None,
+            ('series_sort', {'table':None,
                            'column':None,
                            'datatype':'text',
                            'is_multiple':{},
@@ -268,7 +282,7 @@ def _builtin_field_metadata():
                            'is_custom':False,
                            'is_category':False,
                            'is_csp': False}),
-            ('sort',      {'table':None,
+            ('sort', {'table':None,
                            'column':None,
                            'datatype':'text',
                            'is_multiple':{},
@@ -278,7 +292,7 @@ def _builtin_field_metadata():
                            'is_custom':False,
                            'is_category':False,
                            'is_csp': False}),
-            ('size',      {'table':None,
+            ('size', {'table':None,
                            'column':None,
                            'datatype':'float',
                            'is_multiple':{},
@@ -298,7 +312,7 @@ def _builtin_field_metadata():
                            'is_custom':False,
                            'is_category':False,
                            'is_csp': False}),
-            ('title',     {'table':None,
+            ('title', {'table':None,
                            'column':None,
                            'datatype':'text',
                            'is_multiple':{},
@@ -308,7 +322,7 @@ def _builtin_field_metadata():
                            'is_custom':False,
                            'is_category':False,
                            'is_csp': False}),
-            ('uuid',      {'table':None,
+            ('uuid', {'table':None,
                            'column':None,
                            'datatype':'text',
                            'is_multiple':{},
@@ -322,7 +336,7 @@ def _builtin_field_metadata():
 # }}}
 
 
-class FieldMetadata(object):
+class FieldMetadata:
     '''
     key: the key to the dictionary is:
     - for standard fields, the metadata field name.
@@ -380,7 +394,8 @@ class FieldMetadata(object):
                 'int', 'float', 'bool', 'series', 'composite', 'enumeration'])
 
     # search labels that are not db columns
-    search_items = ['all', 'search', 'vl']
+    search_items = ['all', 'search', 'vl', 'template']
+    custom_field_prefix = '#'
     __calibre_serializable__ = True
 
     def __init__(self):
@@ -391,7 +406,7 @@ class FieldMetadata(object):
         self.custom_label_to_key_map = {}
         for k,v in self._field_metadata:
             if v['kind'] == 'field' and v['datatype'] not in self.VALID_DATA_TYPES:
-                raise ValueError('Unknown datatype %s for field %s'%(v['datatype'], k))
+                raise ValueError('Unknown datatype {} for field {}'.format(v['datatype'], k))
             self._tb_cats[k] = v
             self._tb_cats[k]['label'] = k
             self._tb_cats[k]['display'] = {}
@@ -403,7 +418,6 @@ class FieldMetadata(object):
                         'date_format': tweaks['gui_pubdate_display_format']}
         self._tb_cats['last_modified']['display'] = {
                         'date_format': tweaks['gui_last_modified_display_format']}
-        self.custom_field_prefix = '#'
         self.get = self._tb_cats.get
 
     def __getitem__(self, key):
@@ -418,8 +432,7 @@ class FieldMetadata(object):
         del self._tb_cats[key]
 
     def __iter__(self):
-        for key in self._tb_cats:
-            yield key
+        yield from self._tb_cats
 
     def __contains__(self, key):
         return key in self._tb_cats or key == 'title_sort'
@@ -428,7 +441,7 @@ class FieldMetadata(object):
         return key in self
 
     def keys(self):
-        return self._tb_cats.keys()
+        return list(self._tb_cats.keys())
 
     def __eq__(self, other):
         if not isinstance(other, FieldMetadata):
@@ -459,7 +472,7 @@ class FieldMetadata(object):
         return [k for k in self._tb_cats.keys()
                 if self._tb_cats[k]['kind']=='field' and
                    self._tb_cats[k]['datatype'] is not None and
-                   k not in ('au_map', 'marked', 'ondevice', 'cover', 'series_sort') and
+                   k not in ('au_map', 'marked', 'ondevice', 'cover', 'series_sort', 'in_tag_browser') and
                    not self.is_series_index(k)]
 
     def standard_field_keys(self):
@@ -480,25 +493,24 @@ class FieldMetadata(object):
         return [k for k in self._tb_cats.keys() if self._tb_cats[k]['kind']=='field']
 
     def iterkeys(self):
-        for key in self._tb_cats:
-            yield key
+        yield from self._tb_cats
 
     def itervalues(self):
-        return self._tb_cats.itervalues()
+        return itervalues(self._tb_cats)
 
     def values(self):
-        return self._tb_cats.values()
+        return list(self._tb_cats.values())
 
     def iteritems(self):
         for key in self._tb_cats:
             yield (key, self._tb_cats[key])
+    iter_items = iteritems
 
     def custom_iteritems(self):
-        for key, meta in self._tb_custom_fields.iteritems():
-            yield (key, meta)
+        yield from iteritems(self._tb_custom_fields)
 
     def items(self):
-        return list(self.iteritems())
+        return list(self.iter_items())
 
     def is_custom_field(self, key):
         return key.startswith(self.custom_field_prefix)
@@ -508,7 +520,7 @@ class FieldMetadata(object):
         return self.is_custom_field(key) or key.startswith('@')
 
     def ignorable_field_keys(self):
-        return [k for k in self._tb_cats.iterkeys() if self.is_ignorable_field(k)]
+        return [k for k in self._tb_cats if self.is_ignorable_field(k)]
 
     def is_series_index(self, key):
         try:
@@ -532,7 +544,7 @@ class FieldMetadata(object):
         if not prefer_custom:
             if label in self.custom_label_to_key_map:
                 return self.custom_label_to_key_map[label]
-        raise ValueError('Unknown key [%s]'%(label))
+        raise ValueError(f'Unknown key [{label}]')
 
     def all_metadata(self):
         l = {}
@@ -553,9 +565,9 @@ class FieldMetadata(object):
                          is_csp=False):
         key = self.custom_field_prefix + label
         if key in self._tb_cats:
-            raise ValueError('Duplicate custom field [%s]'%(label))
+            raise ValueError(f'Duplicate custom field [{label}]')
         if datatype not in self.VALID_DATA_TYPES:
-            raise ValueError('Unknown datatype %s for field %s'%(datatype, key))
+            raise ValueError(f'Unknown datatype {datatype} for field {key}')
         self._tb_cats[key] = {'table':table,       'column':column,
                              'datatype':datatype,  'is_multiple':is_multiple,
                              'kind':'field',       'name':name,
@@ -563,7 +575,7 @@ class FieldMetadata(object):
                              'colnum':colnum,      'display':display,
                              'is_custom':True,     'is_category':is_category,
                              'link_column':'value','category_sort':'value',
-                             'is_csp' : is_csp,     'is_editable': is_editable,}
+                             'is_csp': is_csp,     'is_editable': is_editable,}
         self._tb_custom_fields[key] = self._tb_cats[key]
         self._add_search_terms_to_map(key, [key])
         self.custom_label_to_key_map[label] = key
@@ -617,7 +629,7 @@ class FieldMetadata(object):
 
     def add_user_category(self, label, name):
         if label in self._tb_cats:
-            raise ValueError('Duplicate user field [%s]'%(label))
+            raise ValueError(f'Duplicate user field [{label}]')
         st = [label]
         if icu_lower(label) != label:
             st.append(icu_lower(label))
@@ -632,7 +644,7 @@ class FieldMetadata(object):
         if label in self._tb_cats:
             if not fail_on_existing:
                 return
-            raise ValueError('Duplicate user field [%s]'%(label))
+            raise ValueError(f'Duplicate user field [{label}]')
         self._tb_cats[label] = {'table':None,        'column':None,
                                 'datatype':None,     'is_multiple':{},
                                 'kind':'search',     'name':name,
@@ -661,7 +673,7 @@ class FieldMetadata(object):
         if terms is not None:
             for t in terms:
                 if t in self._search_term_map:
-                    raise ValueError('Attempt to add duplicate search term "%s"'%t)
+                    raise ValueError(f'Attempt to add duplicate search term "{t}"')
                 self._search_term_map[t] = key
 
     def search_term_to_field_key(self, term):
@@ -681,8 +693,8 @@ def fm_as_dict(self):
         'custom_fields': self._tb_custom_fields,
         'search_term_map': self._search_term_map,
         'custom_label_to_key_map': self.custom_label_to_key_map,
-        'user_categories': {k:v for k, v in self._tb_cats.iteritems() if v['kind'] == 'user'},
-        'search_categories': {k:v for k, v in self._tb_cats.iteritems() if v['kind'] == 'search'},
+        'user_categories': {k:v for k, v in iteritems(self._tb_cats) if v['kind'] == 'user'},
+        'search_categories': {k:v for k, v in iteritems(self._tb_cats) if v['kind'] == 'search'},
     }
 
 
@@ -692,6 +704,6 @@ def fm_from_dict(src):
     ans._search_term_map = src['search_term_map']
     ans.custom_label_to_key_map = src['custom_label_to_key_map']
     for q in ('custom_fields', 'user_categories', 'search_categories'):
-        for k, v in src[q].iteritems():
+        for k, v in iteritems(src[q]):
             ans._tb_cats[k] = v
     return ans

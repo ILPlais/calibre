@@ -1,17 +1,15 @@
-#!/usr/bin/env python2
-# vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:fdm=marker:ai
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
+#!/usr/bin/env python
+
 
 __license__   = 'GPL v3'
 __copyright__ = '2012, Kovid Goyal <kovid at kovidgoyal.net>'
 __docformat__ = 'restructuredtext en'
 
 import os
-from urlparse import urlparse
-from urllib2 import unquote
 
-from calibre.ebooks.pdf.render.common import Array, Name, Dictionary, String, UTF16String, current_log
+from calibre.ebooks.pdf.render.common import Array, Dictionary, Name, String, UTF16String, current_log
+from polyglot.builtins import iteritems
+from polyglot.urllib import unquote, urlparse
 
 
 class Destination(Array):
@@ -27,13 +25,13 @@ class Destination(Array):
                 pos['left'] = pos['top'] = 0
                 q -= 1
         if q != pnum:
-            current_log().warn('Could not find page {} for link destination, using page {} instead'.format(pnum, q))
-        super(Destination, self).__init__([
+            current_log().warn(f'Could not find page {pnum} for link destination, using page {q} instead')
+        super().__init__([
             pref, Name('XYZ'), pos['left'], pos['top'], None
         ])
 
 
-class Links(object):
+class Links:
 
     def __init__(self, pdf, mark_links, page_size):
         self.anchors = {}
@@ -46,7 +44,7 @@ class Links(object):
         path = os.path.normcase(os.path.abspath(base_path))
         self.anchors[path] = a = {}
         a[None] = Destination(start_page, self.start, self.pdf.get_pageref)
-        for anchor, pos in anchors.iteritems():
+        for anchor, pos in iteritems(anchors):
             a[anchor] = Destination(start_page, pos, self.pdf.get_pageref)
         for link in links:
             href, page, rect = link
@@ -57,9 +55,9 @@ class Links(object):
                 try:
                     pref = self.pdf.get_pageref(page-1).obj
                 except IndexError:
-                    self.pdf.debug('Unable to find page for link: %r, ignoring it' % link)
+                    self.pdf.debug(f'Unable to find page for link: {link!r}, ignoring it')
                     continue
-                self.pdf.debug('The link %s points to non-existent page, moving it one page back' % href)
+                self.pdf.debug(f'The link {href} points to non-existent page, moving it one page back')
             self.links.append(((path, p, frag or None), pref, Array(rect)))
 
     def add_links(self):
@@ -89,7 +87,7 @@ class Links(object):
                 try:
                     purl = urlparse(url)
                 except Exception:
-                    self.pdf.debug('Ignoring unparseable URL: %r' % url)
+                    self.pdf.debug(f'Ignoring unparsable URL: {url!r}')
                     continue
                 if purl.scheme and purl.scheme != 'file':
                     action = Dictionary({
@@ -104,8 +102,7 @@ class Links(object):
                     page['Annots'] = Array()
                 page['Annots'].append(self.pdf.objects.add(annot))
             else:
-                self.pdf.debug('Could not find destination for link: %s in file %s'%
-                               (href, path))
+                self.pdf.debug(f'Could not find destination for link: {href} in file {path}')
 
     def add_outline(self, toc):
         parent = Dictionary({'Type':Name('Outlines')})

@@ -15,7 +15,7 @@
         } catch (std::out_of_range &exc) { PyErr_SetString(PyExc_ValueError, exc.what()); return NULL; \
         } catch (std::bad_alloc &) { PyErr_NoMemory(); return NULL; \
         } catch (std::exception &exc) { PyErr_SetString(PyExc_Exception, exc.what()); return NULL; \
-        } catch (...) { PyErr_SetString(PyExc_RuntimeError, "unknown error"); return NULL;} 
+        } catch (...) { PyErr_SetString(PyExc_RuntimeError, "unknown error"); return NULL;}
 %End
 
 QImage* remove_borders(const QImage &image, double fuzz);
@@ -73,7 +73,7 @@ QImage oil_paint(const QImage &image, const float radius=-1, const bool high_qua
 			sipRes = new QImage(oil_paint(*a0, a1, a2));
         IMAGEOPS_SUFFIX
 %End
-QImage quantize(const QImage &image, unsigned int maximum_colors, bool dither, const QVector<QRgb> &palette);
+QImage quantize(const QImage &image, unsigned int maximum_colors, bool dither, const QList<QRgb> &palette);
 %MethodCode
         IMAGEOPS_PREFIX
 			sipRes = new QImage(quantize(*a0, a1, a2, *a3));
@@ -98,5 +98,12 @@ QImage texture_image(const QImage &image, const QImage &texturei);
 %MethodCode
         IMAGEOPS_PREFIX
 			sipRes = new QImage(texture_image(*a0, *a1));
+        IMAGEOPS_SUFFIX
+%End
+
+QImage ordered_dither(const QImage &image);
+%MethodCode
+        IMAGEOPS_PREFIX
+			sipRes = new QImage(ordered_dither(*a0));
         IMAGEOPS_SUFFIX
 %End

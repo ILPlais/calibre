@@ -1,4 +1,6 @@
-#!/usr/bin/env  python2
+#!/usr/bin/env python
+
+
 __license__   = 'GPL v3'
 __copyright__ = '2008, Kovid Goyal kovid@kovidgoyal.net'
 __docformat__ = 'restructuredtext en'
@@ -7,21 +9,27 @@ __docformat__ = 'restructuredtext en'
 Logic for setting up conversion jobs
 '''
 
-import cPickle, os
+import os
 
-from PyQt5.Qt import QDialog, QProgressDialog, QTimer
+from qt.core import QDialog, QProgressDialog, QTimer
 
-from calibre.ptempfile import PersistentTemporaryFile
-from calibre.gui2 import warning_dialog, question_dialog
-from calibre.gui2.convert.single import Config as SingleConfig
-from calibre.gui2.convert.bulk import BulkConfig
-from calibre.gui2.convert.metadata import create_opf_file, create_cover_file
 from calibre.customize.conversion import OptionRecommendation
-from calibre.utils.config import prefs
 from calibre.ebooks.conversion.config import (
-        GuiRecommendations, load_defaults, load_specifics, save_specifics,
-        get_input_format_for_book, NoSupportedInputFormats)
+    GuiRecommendations,
+    NoSupportedInputFormats,
+    get_input_format_for_book,
+    load_defaults,
+    load_specifics,
+    save_specifics,
+)
+from calibre.gui2 import question_dialog, warning_dialog
 from calibre.gui2.convert import bulk_defaults_for_input_format
+from calibre.gui2.convert.bulk import BulkConfig
+from calibre.gui2.convert.metadata import create_cover_file, create_opf_file
+from calibre.gui2.convert.single import Config as SingleConfig
+from calibre.ptempfile import PersistentTemporaryDirectory, PersistentTemporaryFile
+from calibre.utils.config import prefs
+from polyglot.builtins import as_bytes
 
 
 def convert_single_ebook(parent, db, book_ids, auto_conversion=False,  # {{{
@@ -42,13 +50,13 @@ def convert_single_ebook(parent, db, book_ids, auto_conversion=False,  # {{{
 
             if auto_conversion:
                 d.accept()
-                result = QDialog.Accepted
+                result = QDialog.DialogCode.Accepted
             else:
-                result = d.exec_()
+                result = d.exec()
 
-            if result == QDialog.Accepted:
+            if result == QDialog.DialogCode.Accepted:
                 # if not convert_existing(parent, db, [book_id], d.output_format):
-                #    continue
+                #     continue
 
                 mi = db.get_metadata(book_id, True)
                 in_file = PersistentTemporaryFile('.'+d.input_format)
@@ -59,18 +67,18 @@ def convert_single_ebook(parent, db, book_ids, auto_conversion=False,  # {{{
                             index_is_id=True)
 
                 out_file = PersistentTemporaryFile('.' + d.output_format)
-                out_file.write(d.output_format)
+                out_file.write(as_bytes(d.output_format))
                 out_file.close()
                 temp_files = [in_file]
 
                 try:
-                    dtitle = unicode(mi.title)
-                except:
+                    dtitle = str(mi.title)
+                except Exception:
                     dtitle = repr(mi.title)
                 desc = _('Convert book %(num)d of %(total)d (%(title)s)') % \
                         {'num':i + 1, 'total':total, 'title':dtitle}
 
-                recs = cPickle.loads(d.recommendations)
+                recs = d.recommendations
                 if d.opf_file is not None:
                     recs.append(('read_metadata_from_opf', d.opf_file.name,
                         OptionRecommendation.HIGH))
@@ -88,7 +96,7 @@ def convert_single_ebook(parent, db, book_ids, auto_conversion=False,  # {{{
                 if same_fmt:
                     parts.append('same_fmt')
                 if parts:
-                    func += ':%s'%(';'.join(parts))
+                    func += ':{}'.format(';'.join(parts))
                 jobs.append((func, args, desc, d.output_format.upper(), book_id, temp_files))
 
                 changed = True
@@ -102,7 +110,7 @@ def convert_single_ebook(parent, db, book_ids, auto_conversion=False,  # {{{
             warning_dialog(parent, _('Could not convert'), '<p>'+ _(
                 'Could not convert <b>%s</b> as it has no e-book files. If you '
                 'think it should have files, but calibre is not finding '
-                'them, that is most likely because you moved the book\'s '
+                "them, that is most likely because you moved the book's "
                 'files around outside of calibre. You will need to find those files '
                 'and re-add them to calibre.')%title, show=True)
         else:
@@ -114,21 +122,22 @@ def convert_single_ebook(parent, db, book_ids, auto_conversion=False,  # {{{
                         ', '.join(available_formats))
                 else:
                     msg = _('This book has no actual e-book files')
-                res.append('%s - %s'%(title, msg))
+                res.append(f'{title} - {msg}')
 
-            msg = '%s' % '\n'.join(res)
+            msg = '{}'.format('\n'.join(res))
             warning_dialog(parent, _('Could not convert some books'),
-                ngettext(
-                    'Could not convert the book because no supported source format was found',
-                    'Could not convert {num} of {tot} books, because no supported source formats were found.',
-                    len(res)).format(num=len(res), tot=total),
-                msg).exec_()
+                (
+                    _('Could not convert the book because no supported source format was found')
+                    if len(res) == 1 else
+                    _('Could not convert {num} of {tot} books, because no supported source formats were found.')
+                ).format(num=len(res), tot=total),
+                msg).exec()
 
     return jobs, changed, bad
 # }}}
 
-# Bulk convert {{{
 
+# Bulk convert {{{
 
 def convert_bulk_ebook(parent, queue, db, book_ids, out_format=None, args=[]):
     total = len(book_ids)
@@ -138,12 +147,12 @@ def convert_bulk_ebook(parent, queue, db, book_ids, out_format=None, args=[]):
     has_saved_settings = db.has_conversion_options(book_ids)
 
     d = BulkConfig(parent, db, out_format,
-            has_saved_settings=has_saved_settings)
-    if d.exec_() != QDialog.Accepted:
+            has_saved_settings=has_saved_settings, book_ids=book_ids)
+    if d.exec() != QDialog.DialogCode.Accepted:
         return None
 
     output_format = d.output_format
-    user_recs = cPickle.loads(d.recommendations)
+    user_recs = d.recommendations
 
     book_ids = convert_existing(parent, db, book_ids, output_format)
     use_saved_single_settings = d.opt_individual_saved_settings.isChecked()
@@ -164,7 +173,7 @@ class QueueBulk(QProgressDialog):
         self.use_saved_single_settings = use_saved_single_settings
         self.i, self.bad, self.jobs, self.changed = 0, [], [], False
         QTimer.singleShot(0, self.do_book)
-        self.exec_()
+        self.exec()
 
     def do_book(self):
         if self.i >= len(self.book_ids):
@@ -185,7 +194,7 @@ class QueueBulk(QProgressDialog):
                         index_is_id=True)
 
             out_file = PersistentTemporaryFile('.' + self.output_format)
-            out_file.write(self.output_format)
+            out_file.write(as_bytes(self.output_format))
             out_file.close()
             temp_files = [in_file]
 
@@ -224,8 +233,8 @@ class QueueBulk(QProgressDialog):
                 if x[0] == 'debug_pipeline':
                     lrecs.remove(x)
             try:
-                dtitle = unicode(mi.title)
-            except:
+                dtitle = str(mi.title)
+            except Exception:
                 dtitle = repr(mi.title)
             if len(dtitle) > 50:
                 dtitle = dtitle[:50].rpartition(' ')[0]+'...'
@@ -252,13 +261,13 @@ class QueueBulk(QProgressDialog):
             res = []
             for id in self.bad:
                 title = self.db.title(id, True)
-                res.append('%s'%title)
+                res.append(f'{title}')
 
-            msg = '%s' % '\n'.join(res)
+            msg = '{}'.format('\n'.join(res))
             warning_dialog(self.parent, _('Could not convert some books'),
                 _('Could not convert %(num)d of %(tot)d books, because no suitable '
                 'source format was found.') % dict(num=len(res), tot=len(self.book_ids)),
-                msg).exec_()
+                msg).exec()
         self.parent = None
         self.jobs.reverse()
         self.queue(self.jobs, self.changed, self.bad, *self.args)
@@ -271,7 +280,7 @@ def fetch_scheduled_recipe(arg):  # {{{
     # Never use AZW3 for periodicals...
     if fmt == 'azw3':
         fmt = 'mobi'
-    pt = PersistentTemporaryFile(suffix='_recipe_out.%s'%fmt.lower())
+    pt = PersistentTemporaryFile(suffix=f'_recipe_out.{fmt.lower()}')
     pt.close()
     recs = []
     ps = load_defaults('page_setup')
@@ -311,9 +320,13 @@ def fetch_scheduled_recipe(arg):  # {{{
         recs.append(('username', arg['username'], OptionRecommendation.HIGH))
     if arg['password'] is not None:
         recs.append(('password', arg['password'], OptionRecommendation.HIGH))
+    if arg.get('recipe_specific_options', None):
+        serialized = []
+        for name, val in arg['recipe_specific_options'].items():
+            serialized.append(f'{name}:{val}')
+        recs.append(('recipe_specific_option', serialized, OptionRecommendation.HIGH))
 
     return 'gui_convert_recipe', args, _('Fetch news from %s')%arg['title'], fmt.upper(), [pt]
-
 # }}}
 
 
@@ -323,7 +336,7 @@ def generate_catalog(parent, dbspec, ids, device_manager, db):  # {{{
     # Build the Catalog dialog in gui2.dialogs.catalog
     d = Catalog(parent, dbspec, ids, db)
 
-    if d.exec_() != d.Accepted:
+    if d.exec() != QDialog.DialogCode.Accepted:
         return None
 
     # Create the output file
@@ -355,11 +368,20 @@ def generate_catalog(parent, dbspec, ids, device_manager, db):  # {{{
             connected_device['serial'] = device.detected_device.serial if \
                                           hasattr(device.detected_device,'serial') else None
             connected_device['save_template'] = device.save_template()
-        except:
+        except Exception:
             pass
+
+    # Create a temporary copy of the databases to pass into the generation
+    # process. The backend looks for the notes directory (.calnotes) in the
+    # directory containing the metadata.db file. Copy the one from the current
+    # library.
+    temp_db_directory = PersistentTemporaryDirectory('callib')
+    temp_db_path = db.new_api.clone_for_readonly_access(temp_db_directory)
 
     # These args are passed inline to gui2.convert.gui_conversion:gui_catalog
     args = [
+        db.library_path,
+        temp_db_path,
         d.catalog_format,
         d.catalog_title,
         dbspec,

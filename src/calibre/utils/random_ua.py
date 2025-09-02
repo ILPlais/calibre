@@ -1,11 +1,11 @@
-#!/usr/bin/env python2
-# vim:fileencoding=utf-8
+#!/usr/bin/env python
 # License: GPLv3 Copyright: 2017, Kovid Goyal <kovid at kovidgoyal.net>
 
-from __future__ import absolute_import, division, print_function, unicode_literals
 
 import json
 import random
+
+from calibre.utils.resources import get_path as P
 
 
 def user_agent_data():
@@ -16,71 +16,65 @@ def user_agent_data():
     return ans
 
 
+def common_english_words():
+    ans = getattr(common_english_words, 'ans', None)
+    if ans is None:
+        ans = common_english_words.ans = tuple(x.strip() for x in P('common-english-words.txt', data=True).decode('utf-8').splitlines())
+    return ans
+
+
+def random_english_text(max_num_sentences=3, min_words_per_sentence=8, max_words_per_sentence=41):
+    import random
+    num_sentences = random.randrange(1, max_num_sentences+1)
+    words = common_english_words()
+
+    def sentence():
+        num_words = random.randrange(min_words_per_sentence, max_words_per_sentence+1)
+        return ' '.join(random.choice(words) for i in range(num_words)).capitalize() + '.'
+    return ' '.join(sentence() for i in range(num_sentences))
+
+
 def common_user_agents():
     return user_agent_data()['common_user_agents']
 
 
-def all_firefox_versions(limit=10):
-    return user_agent_data()['firefox_versions'][:limit]
+def common_chrome_user_agents():
+    for x in user_agent_data()['common_user_agents']:
+        if 'Chrome/' in x:
+            yield x
 
 
-def random_firefox_version():
-    return random.choice(all_firefox_versions())
+def choose_randomly_by_popularity(ua_list):
+    pm = user_agents_popularity_map()
+    weights = None
+    if pm:
+        weights = tuple(map(pm.__getitem__, ua_list))
+    return random.choices(ua_list, weights=weights)[0]
+
+
+def random_common_chrome_user_agent():
+    return choose_randomly_by_popularity(tuple(common_chrome_user_agents()))
+
+
+def user_agents_popularity_map():
+    return user_agent_data().get('user_agents_popularity', {})
 
 
 def random_desktop_platform():
     return random.choice(user_agent_data()['desktop_platforms'])
 
 
-def render_firefox_ua(platform, version):
-    # https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/User-Agent/Firefox
-    return 'Mozilla/5.0 ({p}; rv:{ver}) Gecko/20100101 Firefox/{ver}'.format(
-        p=platform, ver=version)
-
-
-def random_firefox_ua():
-    render_firefox_ua(random_desktop_platform(), random_firefox_version())
-
-
-def all_chrome_versions(limit=10):
-    return user_agent_data()['chrome_versions'][:limit]
-
-
-def random_chrome_version():
-    return random.choice(all_chrome_versions())
-
-
-def render_chrome_ua(platform, version):
-    return 'Mozilla/5.0 ({p}) AppleWebKit/{wv} (KHTML, like Gecko) Chrome/{cv} Safari/{wv}'.format(
-        p=platform, wv=version['webkit_version'], cv=version['chrome_version'])
-
-
-def random_chrome_ua():
-    return render_chrome_ua(random_desktop_platform(), random_chrome_version())
-
-
-def all_user_agents():
-    ans = getattr(all_user_agents, 'ans', None)
-    if ans is None:
-        uas = []
-        g = globals()
-        platforms = user_agent_data()['desktop_platforms']
-        for b in ('chrome', 'firefox'):
-            versions = g['all_%s_versions' % b]()
-            func = g['render_%s_ua' % b]
-            for v in versions:
-                for p in platforms:
-                    uas.append(func(p, v))
-        random.shuffle(uas)
-        ans = all_user_agents.ans = tuple(uas)
-    return ans
-
-
-def random_user_agent():
-    return random.choice(all_user_agents())
-
-
 def accept_header_for_ua(ua):
+    # See https://developer.mozilla.org/en-US/docs/Web/HTTP/Content_negotiation/List_of_default_Accept_values
     if 'Firefox/' in ua:
-        return 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
-    return 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
+        return 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8'
+    return 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8'
+
+
+def common_english_word_ua():
+    words = common_english_words()
+    w1 = random.choice(words)
+    w2 = w1
+    while w2 == w1:
+        w2 = random.choice(words)
+    return f'{w1}/{w2}'

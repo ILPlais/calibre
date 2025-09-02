@@ -1,19 +1,21 @@
-#!/usr/bin/env python2
-# vim:fileencoding=utf-8
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
+#!/usr/bin/env python
+
 
 __license__ = 'GPL v3'
 __copyright__ = '2015, Kovid Goyal <kovid at kovidgoyal.net>'
 
-import errno, os
-from itertools import izip_longest
-from collections import namedtuple, OrderedDict
-from operator import attrgetter
+import errno
+import numbers
+import os
+from collections import OrderedDict, namedtuple
 from functools import partial
+from itertools import zip_longest
+from operator import attrgetter
 
 from calibre.constants import config_dir
+from calibre.utils.localization import _
 from calibre.utils.lock import ExclusiveFile
+from polyglot.builtins import itervalues
 
 Option = namedtuple('Option', 'name default longdoc shortdoc choices')
 
@@ -21,7 +23,7 @@ Option = namedtuple('Option', 'name default longdoc shortdoc choices')
 class Choices(frozenset):
 
     def __new__(cls, *args):
-        self = super(Choices, cls).__new__(cls, args)
+        self = super().__new__(cls, args)
         self.default = args[0]
         return self
 
@@ -41,7 +43,7 @@ raw_options = (
     None,
 
     _('Time (in seconds) to wait for a response from the server when making queries'),
-    'ajax_timeout',  60.0,
+    'ajax_timeout', 60.0,
     None,
 
     _('Total time in seconds to wait for clean shutdown'),
@@ -108,10 +110,10 @@ raw_options = (
     ' there are more than this number of items. Set to zero to disable.'),
 
     _('The interface on which to listen for connections'),
-    'listen_on', '0.0.0.0',
-    _('The default is to listen on all available interfaces. You can change this to, for'
-    ' example, "127.0.0.1" to only listen for connections from the local machine, or'
-    ' to "::" to listen to all incoming IPv6 and IPv4 connections.'),
+    'listen_on', None,
+    _('The default is to listen on all available IPv6 and IPv4 interfaces. You can change this to, for'
+    ' example, "127.0.0.1" to only listen for IPv4 connections from the local machine, or'
+    ' to "0.0.0.0" to listen to all incoming IPv4 connections.'),
 
     _('Fallback to auto-detected interface'),
     'fallback_to_detected_interface', True,
@@ -152,10 +154,21 @@ raw_options = (
       ' turning on this option means any program running on the computer'
       ' can make changes to your calibre libraries.'),
 
+    _('Allow un-authenticated connections from specific IP addresses to make changes'),
+    'trusted_ips', None,
+    _('Normally, if you do not turn on authentication, the server operates in'
+      ' read-only mode, so as to not allow anonymous users to make changes to your'
+      ' calibre libraries. This option allows anybody connecting from the specified'
+      ' IP addresses to make changes. Must be a comma separated list of address or network specifications.'
+      ' This is useful if you want to run the server without authentication but still'
+      ' use calibredb to make changes to your calibre libraries. Note that'
+      ' turning on this option means anyone connecting from the specified IP addresses'
+      ' can make changes to your calibre libraries.'),
+
     _('Path to user database'),
     'userdb', None,
     _('Path to a file in which to store the user and password information. Normally a'
-    ' file in the calibre configuration directory is used.'),
+    ' file in the calibre configuration folder is used.'),
 
     _('Choose the type of authentication used'), 'auth_mode', Choices('auto', 'basic', 'digest'),
     _('Set the HTTP authentication mode used by the server. Set to "basic" if you are'
@@ -183,7 +196,10 @@ raw_options = (
       ' option, any fields not in this list will not be displayed. For example: {}').format(
       'my_rating,my_tags'),
 
-
+    _('Choose the default book list mode'),
+    'book_list_mode', Choices('cover_grid', 'details_list', 'custom_list'),
+    _('Set the default book list mode that will be used for new users. Individual users'
+      ' can override the default in their own settings. The default is to use a cover grid.'),
 )
 assert len(raw_options) % 4 == 0
 
@@ -193,7 +209,7 @@ options = []
 def grouper(n, iterable, fillvalue=None):
     "grouper(3, 'ABCDEFG', 'x') --> ABC DEF Gxx"
     args = [iter(iterable)] * n
-    return izip_longest(*args, fillvalue=fillvalue)
+    return zip_longest(*args, fillvalue=fillvalue)
 
 
 for shortdoc, name, default, doc in grouper(4, raw_options):
@@ -206,12 +222,12 @@ options = OrderedDict([(o.name, o) for o in sorted(options, key=attrgetter('name
 del raw_options
 
 
-class Options(object):
+class Options:
 
     __slots__ = tuple(name for name in options)
 
     def __init__(self, **kwargs):
-        for opt in options.itervalues():
+        for opt in itervalues(options):
             setattr(self, opt.name, kwargs.get(opt.name, opt.default))
 
 
@@ -237,8 +253,8 @@ def boolean_option(add_option, opt):
 
 def opts_to_parser(usage):
     from calibre.utils.config import OptionParser
-    parser =  OptionParser(usage)
-    for opt in options.itervalues():
+    parser = OptionParser(usage)
+    for opt in itervalues(options):
         add_option = partial(parser.add_option, dest=opt.name, help=opt_to_cli_help(opt), default=opt.default)
         if opt.default is True or opt.default is False:
             boolean_option(add_option, opt)
@@ -248,7 +264,7 @@ def opts_to_parser(usage):
         else:
             name = '--' + opt.name.replace('_', '-')
             otype = 'string'
-            if isinstance(opt.default, (int, long, float)):
+            if isinstance(opt.default, numbers.Number):
                 otype = type(opt.default).__name__
             add_option(name, type=otype)
 
@@ -262,7 +278,7 @@ def parse_config_file(path=DEFAULT_CONFIG):
     try:
         with ExclusiveFile(path) as f:
             raw = f.read().decode('utf-8')
-    except EnvironmentError as err:
+    except OSError as err:
         if err.errno != errno.ENOENT:
             raise
         raw = ''
@@ -278,14 +294,14 @@ def parse_config_file(path=DEFAULT_CONFIG):
         val = rest
         if isinstance(opt.default, bool):
             val = val.lower() in ('true', 'yes', 'y')
-        elif isinstance(opt.default, (int, long, float)):
+        elif isinstance(opt.default, numbers.Number):
             try:
                 val = type(opt.default)(rest)
             except Exception:
-                raise ValueError('The value for %s: %s is not a valid number' % (key, rest))
+                raise ValueError(f'The value for {key}: {rest} is not a valid number')
         elif opt.choices:
             if rest not in opt.choices:
-                raise ValueError('The value for %s: %s is not valid' % (key, rest))
+                raise ValueError(f'The value for {key}: {rest} is not valid')
         ans[key] = val
     return Options(**ans)
 
@@ -298,7 +314,7 @@ def write_config_file(opts, path=DEFAULT_CONFIG):
         lines.append('# ' + o.shortdoc)
         if o.longdoc:
             lines.append('# ' + o.longdoc)
-        lines.append('%s %s' % (name, changed[name]))
+        lines.append(f'{name} {changed[name]}')
     raw = '\n'.join(lines).encode('utf-8')
     with ExclusiveFile(path) as f:
         f.truncate()

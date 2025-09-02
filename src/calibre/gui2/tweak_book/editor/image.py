@@ -1,20 +1,34 @@
-#!/usr/bin/env python2
-# vim:fileencoding=utf-8
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
+#!/usr/bin/env python
+
 
 __license__ = 'GPL v3'
 __copyright__ = '2013, Kovid Goyal <kovid at kovidgoyal.net>'
 
 import sys
 
-from PyQt5.Qt import (
-    QMainWindow, Qt, QApplication, pyqtSignal, QLabel, QIcon, QFormLayout, QSize,
-    QDialog, QSpinBox, QCheckBox, QDialogButtonBox, QToolButton, QMenu, QInputDialog)
+from qt.core import (
+    QApplication,
+    QCheckBox,
+    QDialog,
+    QDialogButtonBox,
+    QFormLayout,
+    QIcon,
+    QInputDialog,
+    QLabel,
+    QMainWindow,
+    QMenu,
+    QSize,
+    QSpinBox,
+    Qt,
+    QToolButton,
+    pyqtSignal,
+)
 
 from calibre.gui2 import error_dialog
-from calibre.gui2.tweak_book import actions, tprefs, editors
+from calibre.gui2.tweak_book import actions, editors, tprefs
 from calibre.gui2.tweak_book.editor.canvas import Canvas
+from calibre.startup import connect_lambda
+from polyglot.builtins import itervalues
 
 
 class ResizeDialog(QDialog):  # {{{
@@ -47,7 +61,7 @@ class ResizeDialog(QDialog):  # {{{
         l.addRow(ar)
         self.resize(self.sizeHint())
 
-        self.bb = bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        self.bb = bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         bb.accepted.connect(self.accept)
         bb.rejected.connect(self.reject)
         l.addRow(bb)
@@ -58,26 +72,24 @@ class ResizeDialog(QDialog):  # {{{
             oval = val / self.aspect_ratio if which == 'width' else val * self.aspect_ratio
             other = getattr(self, '_height' if which == 'width' else '_width')
             other.blockSignals(True)
-            other.setValue(oval)
+            other.setValue(int(oval))
             other.blockSignals(False)
 
-    @dynamic_property
+    @property
     def width(self):
-        def fget(self):
-            return self._width.value()
+        return self._width.value()
 
-        def fset(self, val):
-            self._width.setValue(val)
-        return property(fget=fget, fset=fset)
+    @width.setter
+    def width(self, val):
+        self._width.setValue(val)
 
-    @dynamic_property
+    @property
     def height(self):
-        def fget(self):
-            return self._height.value()
+        return self._height.value()
 
-        def fset(self, val):
-            self._height.setValue(val)
-        return property(fget=fget, fset=fset)
+    @height.setter
+    def height(self, val):
+        self._height.setValue(val)
 # }}}
 
 
@@ -94,7 +106,7 @@ class Editor(QMainWindow):
     def __init__(self, syntax, parent=None):
         QMainWindow.__init__(self, parent)
         if parent is None:
-            self.setWindowFlags(Qt.Widget)
+            self.setWindowFlags(Qt.WindowType.Widget)
 
         self.is_synced_to_container = False
         self.syntax = syntax
@@ -110,24 +122,22 @@ class Editor(QMainWindow):
         self.canvas.undo_redo_state_changed.connect(self.undo_redo_state_changed)
         self.canvas.selection_state_changed.connect(self.update_clipboard_actions)
 
-    @dynamic_property
+    @property
     def is_modified(self):
-        def fget(self):
-            return self._is_modified
+        return self._is_modified
 
-        def fset(self, val):
-            self._is_modified = val
-            self.modification_state_changed.emit(val)
-        return property(fget=fget, fset=fset)
+    @is_modified.setter
+    def is_modified(self, val):
+        self._is_modified = val
+        self.modification_state_changed.emit(val)
 
-    @dynamic_property
+    @property
     def current_editing_state(self):
-        def fget(self):
-            return {}
+        return {}
 
-        def fset(self, val):
-            pass
-        return property(fget=fget, fset=fset)
+    @current_editing_state.setter
+    def current_editing_state(self, val):
+        pass
 
     @property
     def undo_available(self):
@@ -137,14 +147,13 @@ class Editor(QMainWindow):
     def redo_available(self):
         return self.canvas.redo_action.isEnabled()
 
-    @dynamic_property
+    @property
     def current_line(self):
-        def fget(self):
-            return 0
+        return 0
 
-        def fset(self, val):
-            pass
-        return property(fget=fget, fset=fset)
+    @current_line.setter
+    def current_line(self, val):
+        pass
 
     @property
     def number_of_lines(self):
@@ -159,20 +168,17 @@ class Editor(QMainWindow):
     def get_raw_data(self):
         return self.canvas.get_image_data(quality=self.quality)
 
-    @dynamic_property
+    @property
     def data(self):
-        def fget(self):
-            return self.get_raw_data()
+        return self.get_raw_data()
 
-        def fset(self, val):
-            self.canvas.load_image(val)
-            self._is_modified = False  # The image_changed signal will have been triggered causing this editor to be incorrectly marked as modified
-        return property(fget=fget, fset=fset)
+    @data.setter
+    def data(self, val):
+        self.canvas.load_image(val)
+        self._is_modified = False  # The image_changed signal will have been triggered causing this editor to be incorrectly marked as modified
 
     def replace_data(self, raw, only_if_different=True):
-        # We ignore only_if_different as it is useless in our case, and
-        # there is no easy way to check two images for equality
-        self.data = raw
+        self.canvas.load_image(raw, only_if_different=only_if_different)
 
     def apply_settings(self, prefs=None, dictionaries_changed=False):
         pass
@@ -192,7 +198,7 @@ class Editor(QMainWindow):
             self.restoreState(state)
 
     def set_focus(self):
-        self.canvas.setFocus(Qt.OtherFocusReason)
+        self.canvas.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def undo(self):
         self.canvas.undo_action.trigger()
@@ -238,7 +244,7 @@ class Editor(QMainWindow):
         self.modification_state_changed.emit(True)
         self.fmt_label.setText(' ' + (self.canvas.original_image_format or '').upper())
         im = self.canvas.current_image
-        self.size_label.setText('{0} x {1}{2}'.format(im.width(), im.height(), ' px'))
+        self.size_label.setText('{} x {}{}'.format(im.width(), im.height(), ' px'))
 
     def break_cycles(self):
         self.canvas.break_cycles()
@@ -259,22 +265,22 @@ class Editor(QMainWindow):
         self.action_bar = b = self.addToolBar(_('File actions tool bar'))
         b.setObjectName('action_bar')  # Needed for saveState
         for x in ('undo', 'redo'):
-            b.addAction(getattr(self.canvas, '%s_action' % x))
+            b.addAction(getattr(self.canvas, f'{x}_action'))
         self.edit_bar = b = self.addToolBar(_('Edit actions tool bar'))
         b.setObjectName('edit-actions-bar')
         for x in ('copy', 'paste'):
-            ac = actions['editor-%s' % x]
+            ac = actions[f'editor-{x}']
             setattr(self, 'action_' + x, b.addAction(ac.icon(), x, getattr(self, x)))
         self.update_clipboard_actions()
 
         b.addSeparator()
-        self.action_trim = ac = b.addAction(QIcon(I('trim.png')), _('Trim image'), self.canvas.trim_image)
-        self.action_rotate = ac = b.addAction(QIcon(I('rotate-right.png')), _('Rotate image'), self.canvas.rotate_image)
-        self.action_resize = ac = b.addAction(QIcon(I('resize.png')), _('Resize image'), self.resize_image)
+        self.action_trim = ac = b.addAction(QIcon.ic('trim.png'), _('Trim image'), self.canvas.trim_image)
+        self.action_rotate = ac = b.addAction(QIcon.ic('rotate-right.png'), _('Rotate image'), self.canvas.rotate_image)
+        self.action_resize = ac = b.addAction(QIcon.ic('resize.png'), _('Resize image'), self.resize_image)
         b.addSeparator()
-        self.action_filters = ac = b.addAction(QIcon(I('filter.png')), _('Image filters'))
-        b.widgetForAction(ac).setPopupMode(QToolButton.InstantPopup)
-        self.filters_menu = m = QMenu()
+        self.action_filters = ac = b.addAction(QIcon.ic('filter.png'), _('Image filters'))
+        b.widgetForAction(ac).setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.filters_menu = m = QMenu(self)
         ac.setMenu(m)
         m.addAction(_('Auto-trim image'), self.canvas.autotrim_image)
         m.addAction(_('Sharpen image'), self.sharpen_image)
@@ -300,7 +306,7 @@ class Editor(QMainWindow):
     def toolbar_floated(self, floating):
         if not floating:
             self.save_state()
-            for ed in editors.itervalues():
+            for ed in itervalues(editors):
                 if ed is not self:
                     ed.restore_state()
 
@@ -315,7 +321,7 @@ class Editor(QMainWindow):
     def resize_image(self):
         im = self.canvas.current_image
         d = ResizeDialog(im.width(), im.height(), self)
-        if d.exec_() == d.Accepted:
+        if d.exec() == QDialog.DialogCode.Accepted:
             self.canvas.resize_image(d.width, d.height)
 
     def sharpen_image(self):
@@ -347,7 +353,7 @@ def launch_editor(path_to_edit, path_is_raw=False):
     t = Editor('raster_image')
     t.data = raw
     t.show()
-    app.exec_()
+    app.exec()
 
 
 if __name__ == '__main__':

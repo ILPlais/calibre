@@ -1,6 +1,14 @@
-from calibre.web.feeds.news import BasicNewsRecipe
-from calibre.ebooks.BeautifulSoup import Tag
 import re
+
+from calibre.ebooks.BeautifulSoup import Tag
+from calibre.web.feeds.news import BasicNewsRecipe
+
+
+def new_tag(soup, name, attrs=()):
+    impl = getattr(soup, 'new_tag', None)
+    if impl is not None:
+        return impl(name, attrs=dict(attrs))
+    return Tag(soup, name, attrs=attrs or None)
 
 
 class JoopRecipe(BasicNewsRecipe):
@@ -28,7 +36,7 @@ class JoopRecipe(BasicNewsRecipe):
     keep_only_tags.append(
         dict(name='h2', attrs={'class': 'columnhead smallline'}))
     keep_only_tags.append(
-        dict(name='div', attrs={'class': re.compile('article.*')}))
+        dict(name='div', attrs={'class': re.compile(r'article.*')}))
 
     extra_css = '''
                 body {font-family: verdana, arial, helvetica, geneva, sans-serif;}
@@ -56,7 +64,7 @@ class JoopRecipe(BasicNewsRecipe):
         for section in sections:
             articles = []
             h2 = div.find(lambda tag: tag.name ==
-                          'h2' and tag.renderContents() == section)
+                          'h2' and tag.renderContents().decode('utf-8') == section)
             if h2:
                 ul = h2.findNextSibling('ul', 'linklist')
                 if ul:
@@ -89,7 +97,7 @@ class JoopRecipe(BasicNewsRecipe):
             span = h2.find('span', 'info')
             if span:
                 txt = span.find(text=True)
-            div = Tag(soup, 'div', attrs=[('class', 'joop_date')])
+            div = new_tag(soup, 'div', attrs=[('class', 'joop_date')])
             div.append(txt)
             h2.replaceWith(div)
 

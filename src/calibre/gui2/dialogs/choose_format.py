@@ -1,14 +1,12 @@
-from __future__ import print_function
 __license__   = 'GPL v3'
 __copyright__ = '2008, Kovid Goyal <kovid at kovidgoyal.net>'
 
 from functools import partial
 
-from PyQt5.Qt import (
-    QDialog, QListWidgetItem, QModelIndex, QIcon, QLabel, QVBoxLayout, QSize,
-    QDialogButtonBox, QListWidget, QHBoxLayout, QPushButton, QMenu)
+from qt.core import QDialog, QDialogButtonBox, QHBoxLayout, QIcon, QLabel, QListWidget, QListWidgetItem, QMenu, QModelIndex, QPushButton, QSize, QVBoxLayout
 
 from calibre.gui2 import file_icon_provider
+from calibre.startup import connect_lambda
 
 
 class ChooseFormatDialog(QDialog):
@@ -16,7 +14,7 @@ class ChooseFormatDialog(QDialog):
     def __init__(self, window, msg, formats, show_open_with=False):
         QDialog.__init__(self, window)
         self.resize(507, 377)
-        self.setWindowIcon(QIcon(I("mimetypes/unknown.png")))
+        self.setWindowIcon(QIcon.ic('mimetypes/unknown.png'))
         self.setWindowTitle(_('Choose format'))
         self.l = l = QVBoxLayout(self)
         self.msg = QLabel(msg)
@@ -36,10 +34,11 @@ class ChooseFormatDialog(QDialog):
             self.owb.setMenu(self.own)
             self.own.aboutToShow.connect(self.populate_open_with)
         self.buttonBox = bb = QDialogButtonBox(self)
-        bb.setStandardButtons(QDialogButtonBox.Ok|QDialogButtonBox.Cancel)
+        bb.setStandardButtons(QDialogButtonBox.StandardButton.Ok|QDialogButtonBox.StandardButton.Cancel)
         bb.accepted.connect(self.accept), bb.rejected.connect(self.reject)
         h.addStretch(10), h.addWidget(self.buttonBox)
 
+        formats = list(formats)
         for format in formats:
             self.formats.addItem(QListWidgetItem(file_icon_provider().icon_from_ext(format.lower()),
                                                  format.upper()))
@@ -51,7 +50,7 @@ class ChooseFormatDialog(QDialog):
             self.update_open_with_button()
 
     def populate_open_with(self):
-        from calibre.gui2.open_with import populate_menu, edit_programs
+        from calibre.gui2.open_with import edit_programs, populate_menu
         menu = self.own
         menu.clear()
         fmt = self._formats[self.formats.currentRow()]
@@ -104,6 +103,6 @@ if __name__ == '__main__':
     from calibre.gui2 import Application
     app = Application([])
     d = ChooseFormatDialog(None, 'Testing choose format', ['epub', 'mobi', 'docx'], show_open_with=True)
-    d.exec_()
-    print (d._format)
+    d.exec()
+    print(d._format)
     del app

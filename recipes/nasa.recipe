@@ -25,6 +25,7 @@
 Custom User Profile to download RSS News Feeds and Articles from Wired.com
 '''
 import re
+
 from calibre.web.feeds.news import BasicNewsRecipe
 
 
@@ -48,11 +49,11 @@ class NASA(BasicNewsRecipe):
          lambda match: match.group().replace(match.group(1), 'UTF-8')),
 
         # Remove any banners/links/ads/cruft before the body of the article.
-        (r'<body.*?((<div id="article_body">)|(<div id="st-page-maincontent">)|(<div id="containermain">)|(<p class="ap-story-p">)|(<!-- img_nav -->))', lambda match: '<body><div>'),  # noqa
+        (r'<body.*?((<div id="article_body">)|(<div id="st-page-maincontent">)|(<div id="containermain">)|(<p class="ap-story-p">)|(<!-- img_nav -->))', lambda match: '<body><div>'),  # noqa: E501
 
         # Remove any links/ads/comments/cruft from the end of the body
         # of the article.
-        (r'((<!-- end article content -->)|(<div id="st-custom-afterpagecontent">)|(<p class="ap-story-p">&copy;)|(<div class="entry-footer">)|(<div id="see_also">)|(<p>Via <a href=)|(<div id="ss_nav">)).*?</html>', lambda match: '</div></body></html>'),  # noqa
+        (r'((<!-- end article content -->)|(<div id="st-custom-afterpagecontent">)|(<p class="ap-story-p">&copy;)|(<div class="entry-footer">)|(<div id="see_also">)|(<p>Via <a href=)|(<div id="ss_nav">)).*?</html>', lambda match: '</div></body></html>'),  # noqa: E501
 
         # Correctly embed in-line images by removing the surrounding
         # javascript that will be ignored in the conversion
@@ -83,14 +84,15 @@ class NASA(BasicNewsRecipe):
 # Comment out the feeds you don't want retrieved.
 # Or add any new new RSS feed URL's here, sorted alphabetically when converted to LRF
 # If you want one of these at the top, append a space in front of the name.
+# Mars feed may not work, as it is now considered "legacy" by NASA.
 
     feeds = [
-        (' Breaking News', 'http://www.nasa.gov/rss/breaking_news.rss'),
-        ('Image of the Day', 'http://www.nasa.gov/rss/image_of_the_day.rss'),
-        ('Moon and Mars Exploration', 'http://www.nasa.gov/rss/moon_mars.rss'),
-        ('Shuttle and Station News', 'http://www.nasa.gov/rss/shuttle_station.rss'),
-        ('Solar System News', 'http://www.nasa.gov/rss/solar_system.rss'),
-        ('Universe News', 'http://www.nasa.gov/rss/universe.rss'),
-        ('Earth News', 'http://www.nasa.gov/rss/earth.rss'),
-        ('Aeronautics News', 'http://www.nasa.gov/rss/aeronautics.rss'),
+        (' Breaking News', 'https://www.nasa.gov/rss/dyn/breaking_news.rss'),
+        ('Image of the Day', 'https://www.nasa.gov/rss/dyn/lg_image_of_the_day.rss'),
+        ('Mars Exploration', 'https://marsmobile.jpl.nasa.gov/rss/?feed=news&category=all'),
+        ('Shuttle and Station News', 'https://www.nasa.gov/rss/dyn/shuttle_station.rss'),
+        ('Solar System and Beyond News', 'https://www.nasa.gov/rss/dyn/solar_system.rss'),
+        ('Education News', 'https://www.nasa.gov/rss/dyn/educationnews.rss'),
+        ('Earth News', 'https://www.nasa.gov/rss/dyn/earth.rss'),
+        ('Aeronautics News', 'https://www.nasa.gov/rss/dyn/aeronautics.rss'),
     ]

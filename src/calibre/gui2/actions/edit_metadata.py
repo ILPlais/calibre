@@ -1,59 +1,45 @@
-#!/usr/bin/env python2
-# vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
+#!/usr/bin/env python
+
 
 __license__   = 'GPL v3'
 __copyright__ = '2010, Kovid Goyal <kovid@kovidgoyal.net>'
 __docformat__ = 'restructuredtext en'
 
-import os, shutil, copy
+import copy
+import os
+import shutil
+from contextlib import contextmanager
 from functools import partial
 from io import BytesIO
 
-from PyQt5.Qt import QMenu, QModelIndex, QTimer, QIcon, QApplication, QMimeData
+from qt.core import QAction, QApplication, QDialog, QIcon, QMenu, QMimeData, QModelIndex, QTimer, QUrl
 
-from calibre.gui2 import error_dialog, Dispatcher, question_dialog, gprefs
-from calibre.gui2.dialogs.metadata_bulk import MetadataBulkDialog
-from calibre.gui2.dialogs.confirm_delete import confirm
-from calibre.gui2.dialogs.device_category_editor import DeviceCategoryEditor
-from calibre.gui2.actions import InterfaceAction
+from calibre.db.errors import NoSuchFormat
 from calibre.ebooks.metadata import authors_to_string
 from calibre.ebooks.metadata.book.base import Metadata
 from calibre.ebooks.metadata.opf2 import OPF, metadata_to_opf
-from calibre.utils.config import tweaks
-from calibre.utils.date import is_date_undefined
-from calibre.utils.icu import sort_key
-from calibre.db.errors import NoSuchFormat
-from calibre.library.comments import merge_comments
 from calibre.ebooks.metadata.sources.prefs import msprefs
+from calibre.gui2 import Dispatcher, error_dialog, gprefs, question_dialog
+from calibre.gui2.actions import InterfaceActionWithLibraryDrop
 from calibre.gui2.actions.show_quickview import get_quickview_action_plugin
+from calibre.gui2.dialogs.confirm_delete import confirm
+from calibre.gui2.dialogs.device_category_editor import DeviceCategoryEditor
+from calibre.gui2.dialogs.metadata_bulk import MetadataBulkDialog
+from calibre.library.comments import merge_comments
+from calibre.utils.config import tweaks
+from calibre.utils.icu import sort_key
+from calibre.utils.localization import ngettext
+from polyglot.builtins import iteritems
+
+DATA_FILES_ICON_NAME = 'unpack-book.png'
 
 
-class EditMetadataAction(InterfaceAction):
+class EditMetadataAction(InterfaceActionWithLibraryDrop):
 
     name = 'Edit Metadata'
     action_spec = (_('Edit metadata'), 'edit_input.png', _('Change the title/author/cover etc. of books'), _('E'))
     action_type = 'current'
     action_add_menu = True
-
-    accepts_drops = True
-
-    def accept_enter_event(self, event, mime_data):
-        if mime_data.hasFormat("application/calibre+from_library"):
-            return True
-        return False
-
-    def accept_drag_move_event(self, event, mime_data):
-        if mime_data.hasFormat("application/calibre+from_library"):
-            return True
-        return False
-
-    def drop_event(self, event, mime_data):
-        mime = 'application/calibre+from_library'
-        if mime_data.hasFormat(mime):
-            self.dropped_ids = tuple(map(int, str(mime_data.data(mime)).split()))
-            QTimer.singleShot(1, self.do_drop)
-            return True
-        return False
 
     def do_drop(self):
         book_ids = self.dropped_ids
@@ -68,11 +54,10 @@ class EditMetadataAction(InterfaceAction):
         cm = partial(self.create_menu_action, md)
         cm('individual', _('Edit metadata individually'), icon=self.qaction.icon(),
                 triggered=partial(self.edit_metadata, False, bulk=False))
-        md.addSeparator()
         cm('bulk', _('Edit metadata in bulk'),
                 triggered=partial(self.edit_metadata, False, bulk=True))
         md.addSeparator()
-        cm('download', _('Download metadata and covers'),
+        cm('download', _('Download metadata and covers'), icon='download-metadata.png',
                 triggered=partial(self.download_metadata, ids=None),
                 shortcut='Ctrl+D')
         self.metadata_menu = md
@@ -92,12 +77,82 @@ class EditMetadataAction(InterfaceAction):
         self.merge_menu = mb
         md.addSeparator()
         self.action_copy = cm('copy', _('Copy metadata'), icon='edit-copy.png', triggered=self.copy_metadata)
-        self.action_paset = cm('paste', _('Paste metadata'), icon='edit-paste.png', triggered=self.paste_metadata)
+        self.action_paste = cm('paste', _('Paste metadata'), icon='edit-paste.png', triggered=self.paste_metadata)
+        self.action_paste_ignore_excluded = ac = cm(
+            'paste_include_excluded_fields', _('Paste metadata including excluded fields'), icon='edit-paste.png',
+            triggered=self.paste_metadata_including_excluded_fields)
+        ac.setVisible(False)
         self.action_merge = cm('merge', _('Merge book records'), icon='merge_books.png',
             shortcut=_('M'), triggered=self.merge_books)
         self.action_merge.setMenu(mb)
+        self.action_manage_data_files = cm(
+            'manage_data_files', _('Manage data files'), icon=DATA_FILES_ICON_NAME, triggered=self.manage_data_files)
 
         self.qaction.triggered.connect(self.edit_metadata)
+        ac = QAction(_('Copy URL to show book in calibre'), self.gui)
+        ac.setToolTip(_('Copy URLs to show the currently selected books in calibre, to the system clipboard'))
+        ac.triggered.connect(self.copy_show_link)
+        self.gui.addAction(ac)
+        self.gui.keyboard.register_shortcut(
+            self.unique_name + ' - ' + 'copy_show_book',
+            ac.text(), description=ac.toolTip(),
+            action=ac, group=self.action_spec[0])
+        ac = QAction(_('Copy URL to open book in calibre'), self.gui)
+        ac.triggered.connect(self.copy_view_link)
+        ac.setToolTip(_('Copy URLs to open the currently selected books in calibre, to the system clipboard'))
+        self.gui.addAction(ac)
+        self.gui.keyboard.register_shortcut(
+            self.unique_name + ' - ' + 'copy_view_book',
+            ac.text(), description=ac.toolTip(),
+            action=ac, group=self.action_spec[0])
+
+    def manage_data_files(self):
+        from calibre.gui2.dialogs.data_files_manager import DataFilesManager
+        db = self.gui.current_db
+        ids = self.gui.library_view.get_selected_ids()
+        num = len(ids)
+        for book_id in ids:
+            d = DataFilesManager(db, book_id, self.gui, num - 1)
+            d.exec()
+            if d.num_left < 1:
+                break
+        cr = self.gui.library_view.currentIndex().row()
+        self.gui.library_view.model().refresh_ids(ids, cr)
+
+    def _copy_links(self, lines):
+        urls = QUrl.fromStringList(lines)
+        cb = QApplication.instance().clipboard()
+        md = QMimeData()
+        md.setText('\n'.join(lines))
+        md.setUrls(urls)
+        cb.setMimeData(md)
+
+    def copy_show_link(self):
+        db = self.gui.current_db
+        ids = [db.id(row.row()) for row in self.gui.library_view.selectionModel().selectedRows()]
+        db = db.new_api
+        library_id = getattr(db, 'server_library_id', None)
+        if not library_id or not ids:
+            return
+        lines = [f'calibre://show-book/{library_id}/{book_id}' for book_id in ids]
+        self._copy_links(lines)
+
+    def copy_view_link(self):
+        from calibre.gui2.actions.view import preferred_format
+        db = self.gui.current_db
+        ids = [db.id(row.row()) for row in self.gui.library_view.selectionModel().selectedRows()]
+        db = db.new_api
+        library_id = getattr(db, 'server_library_id', None)
+        if not library_id or not ids:
+            return
+        lines = []
+        for book_id in ids:
+            formats = db.new_api.formats(book_id, verify_formats=True)
+            if formats:
+                fmt = preferred_format(formats)
+                lines.append(f'calibre://view-book/{library_id}/{book_id}/{fmt}')
+        if lines:
+            self._copy_links(lines)
 
     def location_selected(self, loc):
         enabled = loc == 'library'
@@ -118,7 +173,7 @@ class EditMetadataAction(InterfaceAction):
         book_id = db.id(rows[0].row())
         mi = db.new_api.get_metadata(book_id)
         md = QMimeData()
-        md.setText(unicode(mi))
+        md.setText(str(mi))
         md.setData('application/calibre-book-metadata', bytearray(metadata_to_opf(mi, default_lang='und')))
         img = db.new_api.cover(book_id, as_image=True)
         if img:
@@ -127,6 +182,12 @@ class EditMetadataAction(InterfaceAction):
         c.setMimeData(md)
 
     def paste_metadata(self):
+        self.do_paste()
+
+    def paste_metadata_including_excluded_fields(self):
+        self.do_paste(ignore_excluded_fields=True)
+
+    def do_paste(self, ignore_excluded_fields=False):
         rows = self.gui.library_view.selectionModel().selectedRows()
         if not rows or len(rows) == 0:
             return error_dialog(self.gui, _('Cannot paste metadata'),
@@ -144,7 +205,10 @@ class EditMetadataAction(InterfaceAction):
         data = bytes(md.data('application/calibre-book-metadata'))
         mi = OPF(BytesIO(data), populate_spine=False, read_toc=False, try_to_guess_cover=False).to_book_metadata()
         mi.application_id = mi.uuid_id = None
-        exclude = set(tweaks['exclude_fields_on_paste'])
+        if ignore_excluded_fields:
+            exclude = set()
+        else:
+            exclude = set(tweaks['exclude_fields_on_paste'])
         paste_cover = 'cover' not in exclude
         cover = md.imageData() if paste_cover else None
         exclude.discard('cover')
@@ -173,8 +237,8 @@ class EditMetadataAction(InterfaceAction):
                             _('No books selected'), show=True)
             db = self.gui.library_view.model().db
             ids = [db.id(row.row()) for row in rows]
-        from calibre.gui2.metadata.bulk_download import start_download
         from calibre.ebooks.metadata.sources.update import update_sources
+        from calibre.gui2.metadata.bulk_download import start_download
         update_sources()
         start_download(self.gui, ids,
                 Dispatcher(self.metadata_downloaded),
@@ -183,7 +247,7 @@ class EditMetadataAction(InterfaceAction):
     def cleanup_bulk_download(self, tdir, *args):
         try:
             shutil.rmtree(tdir, ignore_errors=True)
-        except:
+        except Exception:
             pass
 
     def metadata_downloaded(self, job):
@@ -237,7 +301,7 @@ class EditMetadataAction(InterfaceAction):
             log_is_file=True, checkbox_msg=checkbox_msg,
             checkbox_checked=False, action_callback=review_apply,
             action_label=_('Revie&w downloaded metadata'),
-            action_icon=QIcon(I('auto_author_sort.png')))
+            action_icon=QIcon.ic('auto_author_sort.png'))
 
     def apply_downloaded_metadata(self, review, payload, *args):
         good_ids, tdir, log_file, lm_map, failed_ids = payload
@@ -272,10 +336,10 @@ class EditMetadataAction(InterfaceAction):
 
         id_map = {}
         for bid in good_ids:
-            opf = os.path.join(tdir, '%d.mi'%bid)
+            opf = os.path.join(tdir, f'{bid}.mi')
             if not os.path.exists(opf):
                 opf = None
-            cov = os.path.join(tdir, '%d.cover'%bid)
+            cov = os.path.join(tdir, f'{bid}.cover')
             if not os.path.exists(cov):
                 cov = None
             id_map[bid] = (opf, cov)
@@ -311,15 +375,15 @@ class EditMetadataAction(InterfaceAction):
                 intro_msg=_('The downloaded metadata is on the left and the original metadata'
                             ' is on the right. If a downloaded value is blank or unknown,'
                             ' the original value is used.'),
-                action_button=(_('&View Book'), I('view.png'), self.gui.iactions['View'].view_historical),
+                action_button=(_('&View book'), 'view.png', self.gui.iactions['View'].view_historical),
                 db=db
             )
-            if d.exec_() == d.Accepted:
+            if d.exec() == QDialog.DialogCode.Accepted:
                 if d.mark_rejected:
                     failed_ids |= d.rejected_ids
                     restrict_to_failed = True
                 nid_map = {}
-                for book_id, (changed, mi) in d.accepted.iteritems():
+                for book_id, (changed, mi) in iteritems(d.accepted):
                     if mi is None:  # discarded
                         continue
                     if changed:
@@ -361,7 +425,7 @@ class EditMetadataAction(InterfaceAction):
         if not rows or len(rows) == 0:
             d = error_dialog(self.gui, _('Cannot edit metadata'),
                              _('No books selected'))
-            d.exec_()
+            d.exec()
             return
         row_list = [r.row() for r in rows]
         m = self.gui.library_view.model()
@@ -418,11 +482,21 @@ class EditMetadataAction(InterfaceAction):
     def do_edit_metadata(self, row_list, current_row, editing_multiple):
         from calibre.gui2.metadata.single import edit_metadata
         db = self.gui.library_view.model().db
+        parent = getattr(self, 'override_parent', None) or self.gui
         changed, rows_to_refresh = edit_metadata(db, row_list, current_row,
-                parent=self.gui, view_slot=self.view_format_callback,
+                parent=parent, view_slot=self.view_format_callback,
                 edit_slot=self.edit_format_callback,
                 set_current_callback=self.set_current_callback, editing_multiple=editing_multiple)
         return changed, rows_to_refresh
+
+    @contextmanager
+    def different_parent(self, parent):
+        orig = getattr(self, 'override_parent', None)
+        self.override_parent = parent
+        try:
+            yield
+        finally:
+            self.override_parent = orig
 
     def set_current_callback(self, id_):
         db = self.gui.library_view.model().db
@@ -435,8 +509,7 @@ class EditMetadataAction(InterfaceAction):
         if id_ is None:
             view._view_file(fmt)
         else:
-            db = self.gui.library_view.model().db
-            view.view_format(db.row(id_), fmt)
+            view.view_format_by_id(id_, fmt)
 
     def edit_format_callback(self, id_, fmt):
         edit = self.gui.iactions['Tweak ePub']
@@ -453,7 +526,7 @@ class EditMetadataAction(InterfaceAction):
         if not rows or len(rows) == 0:
             d = error_dialog(self.gui, _('Cannot edit metadata'),
                     _('No books selected'))
-            d.exec_()
+            d.exec()
             return
         self.do_edit_bulk_metadata(rows, ids)
 
@@ -463,7 +536,7 @@ class EditMetadataAction(InterfaceAction):
         changed = False
         refresh_books = set(book_ids)
         try:
-            current_tab = 0
+            current_tab = -1
             while True:
                 dialog = MetadataBulkDialog(self.gui, rows,
                                 self.gui.library_view.model(), current_tab, refresh_books)
@@ -497,22 +570,27 @@ class EditMetadataAction(InterfaceAction):
             'merge_too_many_books', self.gui)
 
     def books_dropped(self, merge_map):
-        for dest_id, src_ids in merge_map.iteritems():
+        covers_replaced = False
+        for dest_id, src_ids in iteritems(merge_map):
             if not self.confirm_large_merge(len(src_ids) + 1):
                 continue
             from calibre.gui2.dialogs.confirm_merge import merge_drop
-            merge_metadata, merge_formats, delete_books = merge_drop(dest_id, src_ids, self.gui)
-            if merge_metadata is None:
+            d = merge_drop(dest_id, src_ids, self.gui)
+            if d is None:
                 return
-            if merge_formats:
+            if d.merge_formats:
                 self.add_formats(dest_id, self.formats_for_ids(list(src_ids)))
-            if merge_metadata:
-                self.merge_metadata(dest_id, src_ids)
-            if delete_books:
+            if d.merge_metadata:
+                self.merge_metadata(dest_id, src_ids, replace_cover=d.replace_cover, save_alternate_cover=d.save_alternate_cover)
+                if d.replace_cover:
+                    covers_replaced = True
+            if d.delete_books:
                 self.delete_books_after_merge(src_ids)
             # leave the selection highlight on the target book
             row = self.gui.library_view.ids_to_rows([dest_id])[dest_id]
             self.gui.library_view.set_current_row(row)
+            if covers_replaced:
+                self.gui.refresh_cover_browser()
 
     def merge_books(self, safe_merge=False, merge_only_formats=False):
         '''
@@ -537,16 +615,17 @@ class EditMetadataAction(InterfaceAction):
         title = mi.title
         hpos = self.gui.library_view.horizontalScrollBar().value()
         if safe_merge:
-            if not confirm_merge('<p>'+_(
+            confirmed, save_alternate_cover = confirm_merge('<p>'+_(
                 'Book formats and metadata from the selected books '
                 'will be added to the <b>first selected book</b> (%s).<br> '
                 'The second and subsequently selected books will not '
                 'be deleted or changed.<br><br>'
                 'Please confirm you want to proceed.')%title + '</p>',
-                'merge_books_safe', self.gui, mi):
+                'merge_books_safe', self.gui, mi, ask_about_save_alternate_cover=True)
+            if not confirmed:
                 return
             self.add_formats(dest_id, self.formats_for_books(rows))
-            self.merge_metadata(dest_id, src_ids)
+            self.merge_metadata(dest_id, src_ids, save_alternate_cover=save_alternate_cover)
         elif merge_only_formats:
             if not confirm_merge('<p>'+_(
                 'Book formats from the selected books will be merged '
@@ -559,12 +638,12 @@ class EditMetadataAction(InterfaceAction):
                 'and any duplicate formats in the second and subsequently selected books '
                 'will be permanently <b>deleted</b> from your calibre library.<br><br>  '
                 'Are you <b>sure</b> you want to proceed?')%title + '</p>',
-                'merge_only_formats', self.gui, mi):
+                'merge_only_formats', self.gui, mi)[0]:
                 return
             self.add_formats(dest_id, self.formats_for_books(rows))
             self.delete_books_after_merge(src_ids)
         else:
-            if not confirm_merge('<p>'+_(
+            confirmed, save_alternate_cover = confirm_merge('<p>'+_(
                 'Book formats and metadata from the selected books will be merged '
                 'into the <b>first selected book</b> (%s).<br><br>'
                 'After being merged, the second and '
@@ -573,10 +652,12 @@ class EditMetadataAction(InterfaceAction):
                 'and any duplicate formats in the second and subsequently selected books '
                 'will be permanently <b>deleted</b> from your calibre library.<br><br>  '
                 'Are you <b>sure</b> you want to proceed?')%title + '</p>',
-                'merge_books', self.gui, mi):
+                'merge_books', self.gui, mi, ask_about_save_alternate_cover=True)
+            if not confirmed:
                 return
             self.add_formats(dest_id, self.formats_for_books(rows))
-            self.merge_metadata(dest_id, src_ids)
+            self.merge_metadata(dest_id, src_ids, save_alternate_cover=save_alternate_cover)
+            self.merge_data_files(dest_id, src_ids)
             self.delete_books_after_merge(src_ids)
             # leave the selection highlight on first selected book
             dest_row = rows[0].row()
@@ -588,11 +669,14 @@ class EditMetadataAction(InterfaceAction):
         self.gui.library_view.model().refresh_ids((dest_id,), cr)
         self.gui.library_view.horizontalScrollBar().setValue(hpos)
 
+    def merge_data_files(self, dest_id, src_ids):
+        self.gui.current_db.new_api.merge_extra_files(dest_id, src_ids)
+
     def add_formats(self, dest_id, src_books, replace=False):
         for src_book in src_books:
             if src_book:
                 fmt = os.path.splitext(src_book)[-1].replace('.', '').upper()
-                with lopen(src_book, 'rb') as f:
+                with open(src_book, 'rb') as f:
                     self.gui.library_view.model().db.add_format(dest_id, fmt, f, index_is_id=True,
                             notify=False, replace=replace)
 
@@ -613,7 +697,7 @@ class EditMetadataAction(InterfaceAction):
 
     def formats_for_books(self, rows):
         m = self.gui.library_view.model()
-        return self.formats_for_ids(map(m.id, rows))
+        return self.formats_for_ids(list(map(m.id, rows)))
 
     def books_to_merge(self, rows):
         src_ids = []
@@ -629,104 +713,20 @@ class EditMetadataAction(InterfaceAction):
     def delete_books_after_merge(self, ids_to_delete):
         self.gui.library_view.model().delete_books_by_id(ids_to_delete)
 
-    def merge_metadata(self, dest_id, src_ids):
-        db = self.gui.library_view.model().db
-        dest_mi = db.get_metadata(dest_id, index_is_id=True)
-        merged_identifiers = db.get_identifiers(dest_id, index_is_id=True)
-        orig_dest_comments = dest_mi.comments
-        dest_cover = db.cover(dest_id, index_is_id=True)
-        had_orig_cover = bool(dest_cover)
-
-        def is_null_date(x):
-            return x is None or is_date_undefined(x)
-
-        for src_id in src_ids:
-            src_mi = db.get_metadata(src_id, index_is_id=True)
-
-            if src_mi.comments and orig_dest_comments != src_mi.comments:
-                if not dest_mi.comments:
-                    dest_mi.comments = src_mi.comments
-                else:
-                    dest_mi.comments = unicode(dest_mi.comments) + u'\n\n' + unicode(src_mi.comments)
-            if src_mi.title and (not dest_mi.title or dest_mi.title == _('Unknown')):
-                dest_mi.title = src_mi.title
-            if src_mi.title and (not dest_mi.authors or dest_mi.authors[0] == _('Unknown')):
-                dest_mi.authors = src_mi.authors
-                dest_mi.author_sort = src_mi.author_sort
-            if src_mi.tags:
-                if not dest_mi.tags:
-                    dest_mi.tags = src_mi.tags
-                else:
-                    dest_mi.tags.extend(src_mi.tags)
-            if not dest_cover:
-                src_cover = db.cover(src_id, index_is_id=True)
-                if src_cover:
-                    dest_cover = src_cover
-            if not dest_mi.publisher:
-                dest_mi.publisher = src_mi.publisher
-            if not dest_mi.rating:
-                dest_mi.rating = src_mi.rating
-            if not dest_mi.series:
-                dest_mi.series = src_mi.series
-                dest_mi.series_index = src_mi.series_index
-            if is_null_date(dest_mi.pubdate) and not is_null_date(src_mi.pubdate):
-                dest_mi.pubdate = src_mi.pubdate
-
-            src_identifiers = db.get_identifiers(src_id, index_is_id=True)
-            src_identifiers.update(merged_identifiers)
-            merged_identifiers = src_identifiers.copy()
-
-        if merged_identifiers:
-            dest_mi.set_identifiers(merged_identifiers)
-        db.set_metadata(dest_id, dest_mi, ignore_errors=False)
-
-        if not had_orig_cover and dest_cover:
-            db.set_cover(dest_id, dest_cover)
-
-        for key in db.field_metadata:  # loop thru all defined fields
-            fm = db.field_metadata[key]
-            if not fm['is_custom']:
-                continue
-            dt = fm['datatype']
-            colnum = fm['colnum']
-            # Get orig_dest_comments before it gets changed
-            if dt == 'comments':
-                orig_dest_value = db.get_custom(dest_id, num=colnum, index_is_id=True)
-
-            for src_id in src_ids:
-                dest_value = db.get_custom(dest_id, num=colnum, index_is_id=True)
-                src_value = db.get_custom(src_id, num=colnum, index_is_id=True)
-                if (dt == 'comments' and src_value and src_value != orig_dest_value):
-                    if not dest_value:
-                        db.set_custom(dest_id, src_value, num=colnum)
-                    else:
-                        dest_value = unicode(dest_value) + u'\n\n' + unicode(src_value)
-                        db.set_custom(dest_id, dest_value, num=colnum)
-                if (dt in {'bool', 'int', 'float', 'rating', 'datetime'} and dest_value is None):
-                    db.set_custom(dest_id, src_value, num=colnum)
-                if (dt == 'series' and not dest_value and src_value):
-                    src_index = db.get_custom_extra(src_id, num=colnum, index_is_id=True)
-                    db.set_custom(dest_id, src_value, num=colnum, extra=src_index)
-                if ((dt == 'enumeration' or (dt == 'text' and not fm['is_multiple'])) and not dest_value):
-                    db.set_custom(dest_id, src_value, num=colnum)
-                if (dt == 'text' and fm['is_multiple'] and src_value):
-                    if not dest_value:
-                        dest_value = src_value
-                    else:
-                        dest_value.extend(src_value)
-                    db.set_custom(dest_id, dest_value, num=colnum)
+    def merge_metadata(self, dest_id, src_ids, replace_cover=False, save_alternate_cover=False):
+        self.gui.current_db.new_api.merge_book_metadata(dest_id, src_ids, replace_cover, save_alternate_cover=save_alternate_cover)
     # }}}
 
     def edit_device_collections(self, view, oncard=None):
         model = view.model()
         result = model.get_collections_with_ids()
         d = DeviceCategoryEditor(self.gui, tag_to_match=None, data=result, key=sort_key)
-        d.exec_()
-        if d.result() == d.Accepted:
+        d.exec()
+        if d.result() == QDialog.DialogCode.Accepted:
             to_rename = d.to_rename  # dict of new text to old ids
             to_delete = d.to_delete  # list of ids
-            for old_id, new_name in to_rename.iteritems():
-                model.rename_collection(old_id, new_name=unicode(new_name))
+            for old_id, new_name in iteritems(to_rename):
+                model.rename_collection(old_id, new_name=str(new_name))
             for item in to_delete:
                 model.delete_collection_using_id(item)
             self.gui.upload_collections(model.db, view=view, oncard=oncard)
@@ -753,7 +753,7 @@ class EditMetadataAction(InterfaceAction):
         '''
         if title is None:
             title = _('Applying changed metadata')
-        self.apply_id_map = list(id_map.iteritems())
+        self.apply_id_map = list(iteritems(id_map))
         self.apply_current_idx = 0
         self.apply_failures = []
         self.applied_ids = set()
@@ -819,14 +819,14 @@ class EditMetadataAction(InterfaceAction):
             db.set_metadata(book_id, mi, commit=False, set_title=set_title,
                     set_authors=set_authors, notify=False)
             self.applied_ids.add(book_id)
-        except:
+        except Exception:
             import traceback
             self.apply_failures.append((book_id, traceback.format_exc()))
 
         try:
             if mi.cover:
                 os.remove(mi.cover)
-        except:
+        except Exception:
             pass
 
     def finalize_apply(self):
@@ -848,7 +848,7 @@ class EditMetadataAction(InterfaceAction):
 
             error_dialog(self.gui, _('Some failures'),
                 _('Failed to apply updated metadata for some books'
-                    ' in your library. Click "Show Details" to see '
+                    ' in your library. Click "Show details" to see '
                     'details.'), det_msg='\n\n'.join(msg), show=True)
         changed_books = len(self.applied_ids or ())
         self.refresh_gui(self.applied_ids)
@@ -883,6 +883,11 @@ class EditMetadataAction(InterfaceAction):
             identifiers = db.field_for(field, book_id)
             if identifiers.pop(value, False) is not False:
                 affected_books = db.set_field(field, {book_id:identifiers})
+        elif field == 'authors':
+            authors = db.field_for(field, book_id)
+            new_authors = [x for x in authors if x != value] or [_('Unknown')]
+            if new_authors != authors:
+                affected_books = db.set_field(field, {book_id:new_authors})
         elif fm['is_multiple']:
             item_id = db.get_item_id(field, value)
             if item_id is not None:
@@ -893,26 +898,26 @@ class EditMetadataAction(InterfaceAction):
             self.refresh_books_after_metadata_edit(affected_books)
 
     def set_cover_from_format(self, book_id, fmt):
-        from calibre.utils.config import prefs
         from calibre.ebooks.metadata.meta import get_metadata
+        from calibre.utils.config import prefs
         fmt = fmt.lower()
         cdata = None
         db = self.gui.current_db.new_api
-        if fmt == 'pdf':
-            pdfpath = db.format_abspath(book_id, fmt)
-            if pdfpath is None:
+        if fmt in ('pdf', 'cbz', 'cbr'):
+            path = db.format_abspath(book_id, fmt)
+            if path is None:
                 return error_dialog(self.gui, _('Format file missing'), _(
-                    'Cannot read cover as the %s file is missing from this book') % 'PDF', show=True)
+                    'Cannot read cover as the %s file is missing from this book') % fmt.upper(), show=True)
             from calibre.gui2.metadata.pdf_covers import PDFCovers
-            d = PDFCovers(pdfpath, parent=self.gui)
-            ret = d.exec_()
-            if ret == d.Accepted:
+            d = PDFCovers(path, parent=self.gui)
+            ret = d.exec()
+            if ret == QDialog.DialogCode.Accepted:
                 cpath = d.cover_path
                 if cpath:
                     with open(cpath, 'rb') as f:
                         cdata = f.read()
             d.cleanup()
-            if ret != d.Accepted:
+            if ret != QDialog.DialogCode.Accepted:
                 return
         else:
             stream = BytesIO()
@@ -936,7 +941,8 @@ class EditMetadataAction(InterfaceAction):
                 if old != prefs['read_file_metadata']:
                     prefs['read_file_metadata'] = old
             if mi.cover and os.access(mi.cover, os.R_OK):
-                cdata = open(mi.cover).read()
+                with open(mi.cover, 'rb') as f:
+                    cdata = f.read()
             elif mi.cover_data[1] is not None:
                 cdata = mi.cover_data[1]
             if cdata is None:

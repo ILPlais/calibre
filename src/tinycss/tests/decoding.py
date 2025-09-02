@@ -1,13 +1,13 @@
-#!/usr/bin/env python2
+#!/usr/bin/env python
 # vim:fileencoding=utf-8
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
+
 
 __license__ = 'GPL v3'
 __copyright__ = '2014, Kovid Goyal <kovid at kovidgoyal.net>'
 
 from tinycss.decoding import decode
 from tinycss.tests import BaseTest
+
 
 def params(css, encoding, use_bom=False, expect_error=False, **kwargs):
     """Nicer syntax to make a tuple."""

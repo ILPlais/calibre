@@ -1,29 +1,27 @@
-#!/usr/bin/env python2
-# vim:fileencoding=utf-8
+#!/usr/bin/env python
 # License: GPLv3 Copyright: 2017, Kovid Goyal <kovid at kovidgoyal.net>
-
-from __future__ import absolute_import, division, print_function, unicode_literals
 
 import atexit
 import errno
 import os
 import stat
-import tempfile
 import time
 from functools import partial
 
-from calibre.constants import (
-    __appname__, fcntl, filesystem_encoding, islinux, isosx, iswindows, plugins
-)
+from calibre.constants import __appname__, filesystem_encoding, islinux, ismacos, iswindows
+from calibre.ptempfile import base_dir, get_default_tempdir
 from calibre.utils.monotonic import monotonic
+from calibre_extensions import speedup
 
-speedup = plugins['speedup'][0]
 if iswindows:
-    import msvcrt, win32file, pywintypes, winerror, win32api, win32event
+    import msvcrt
+
     from calibre.constants import get_windows_username
+    from calibre_extensions import winutil
     excl_file_mode = stat.S_IREAD | stat.S_IWRITE
 else:
     excl_file_mode = stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IROTH
+    import fcntl
 
 
 def unix_open(path):
@@ -33,7 +31,7 @@ def unix_open(path):
         try:
             fd = os.open(path, flags | speedup.O_CLOEXEC, excl_file_mode)
             has_cloexec = True
-        except EnvironmentError as err:
+        except OSError as err:
             # Kernel may not support O_CLOEXEC
             if err.errno != errno.EINVAL:
                 raise
@@ -50,27 +48,24 @@ def unix_retry(err):
 
 def windows_open(path):
     if isinstance(path, bytes):
-        path = path.decode('mbcs')
-    try:
-        h = win32file.CreateFileW(
-            path,
-            win32file.GENERIC_READ |
-            win32file.GENERIC_WRITE,  # Open for reading and writing
-            0,  # Open exclusive
-            None,  # No security attributes, ensures handle is not inherited by children
-            win32file.OPEN_ALWAYS,  # If file does not exist, create it
-            win32file.FILE_ATTRIBUTE_NORMAL,  # Normal attributes
-            None,  # No template file
-        )
-    except pywintypes.error as err:
-        raise WindowsError(err[0], err[2], path)
-    fd = msvcrt.open_osfhandle(h.Detach(), 0)
-    return os.fdopen(fd, 'r+b')
+        path = os.fsdecode(path)
+    h = winutil.create_file(
+        path,
+        winutil.GENERIC_READ |
+        winutil.GENERIC_WRITE,  # Open for reading and writing
+        0,  # Open exclusive
+        winutil.OPEN_ALWAYS,  # If file does not exist, create it
+        winutil.FILE_ATTRIBUTE_NORMAL,  # Normal attributes
+    )
+    fd = msvcrt.open_osfhandle(int(h), 0)
+    ans = os.fdopen(fd, 'r+b')
+    h.detach()
+    return ans
 
 
 def windows_retry(err):
     return err.winerror in (
-        winerror.ERROR_SHARING_VIOLATION, winerror.ERROR_LOCK_VIOLATION
+        winutil.ERROR_SHARING_VIOLATION, winutil.ERROR_LOCK_VIOLATION
     )
 
 
@@ -79,13 +74,30 @@ def retry_for_a_time(timeout, sleep_time, func, error_retry, *args):
     while True:
         try:
             return func(*args)
-        except EnvironmentError as err:
+        except OSError as err:
             if not error_retry(err) or monotonic() > limit:
                 raise
         time.sleep(sleep_time)
 
 
-class ExclusiveFile(object):
+def lock_file(path, timeout=15, sleep_time=0.2):
+    if iswindows:
+        return retry_for_a_time(
+            timeout, sleep_time, windows_open, windows_retry, path
+        )
+    f = unix_open(path)
+    try:
+        retry_for_a_time(
+            timeout, sleep_time, fcntl.flock, unix_retry,
+            f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB
+        )
+    except Exception:
+        f.close()
+        raise
+    return f
+
+
+class ExclusiveFile:
 
     def __init__(self, path, timeout=15, sleep_time=0.2):
         if iswindows and isinstance(path, bytes):
@@ -95,17 +107,7 @@ class ExclusiveFile(object):
         self.sleep_time = sleep_time
 
     def __enter__(self):
-        if iswindows:
-            self.file = retry_for_a_time(
-                self.timeout, self.sleep_time, windows_open, windows_retry, self.path
-            )
-        else:
-            f = unix_open(self.path)
-            retry_for_a_time(
-                self.timeout, self.sleep_time, fcntl.flock, unix_retry,
-                f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB
-            )
-            self.file = f
+        self.file = lock_file(self.path, self.timeout, self.sleep_time)
         return self.file
 
     def __exit__(self, type, value, traceback):
@@ -115,45 +117,41 @@ class ExclusiveFile(object):
 def _clean_lock_file(file_obj):
     try:
         os.remove(file_obj.name)
-    except EnvironmentError:
+    except OSError:
         pass
     try:
         file_obj.close()
-    except EnvironmentError:
+    except OSError:
         pass
 
 
 if iswindows:
-
     def create_single_instance_mutex(name, per_user=True):
         mutexname = '{}-singleinstance-{}-{}'.format(
             __appname__, (get_windows_username() if per_user else ''), name
         )
-        mutex = win32event.CreateMutex(None, False, mutexname)
-        if not mutex:
+        try:
+            mutex = winutil.create_mutex(mutexname, False)
+        except FileExistsError:
             return
-        err = win32api.GetLastError()
-        if err == winerror.ERROR_ALREADY_EXISTS:
-            # Close this handle other wise this handle will prevent the mutex
-            # from being deleted when the process that created it exits.
-            win32api.CloseHandle(mutex)
-            return
-        return partial(win32api.CloseHandle, mutex)
+        return mutex.close
 
 elif islinux:
 
     def create_single_instance_mutex(name, per_user=True):
         import socket
+
         from calibre.utils.ipc import eintr_retry_call
-        name = '%s-singleinstance-%s-%s' % (
+        name = '{}-singleinstance-{}-{}'.format(
             __appname__, (os.geteuid() if per_user else ''), name
         )
-        name = name.encode('utf-8')
-        address = b'\0' + name.replace(b' ', b'_')
+        name = name
+        address = '\0' + name.replace(' ', '_')
         sock = socket.socket(family=socket.AF_UNIX)
         try:
             eintr_retry_call(sock.bind, address)
-        except socket.error as err:
+        except OSError as err:
+            sock.close()
             if getattr(err, 'errno', None) == errno.EADDRINUSE:
                 return
             raise
@@ -165,34 +163,52 @@ elif islinux:
 else:
 
     def singleinstance_path(name, per_user=True):
-        name = '%s-singleinstance-%s-%s.lock' % (
+        name = '{}-singleinstance-{}-{}.lock'.format(
             __appname__, (os.geteuid() if per_user else ''), name
         )
         home = os.path.expanduser('~')
-        locs = ['/var/lock', home, tempfile.gettempdir()]
-        if isosx:
+        base_dir()  # initialize get_default_tempdir()
+        locs = ['/var/lock', home, get_default_tempdir()]
+        if ismacos:
             locs.insert(0, '/Library/Caches')
         for loc in locs:
             if os.access(loc, os.W_OK | os.R_OK | os.X_OK):
                 return os.path.join(loc, ('.' if loc is home else '') + name)
-        raise EnvironmentError(
+        raise OSError(
             'Failed to find a suitable filesystem location for the lock file'
         )
 
     def create_single_instance_mutex(name, per_user=True):
         from calibre.utils.ipc import eintr_retry_call
         path = singleinstance_path(name, per_user)
-        f = lopen(path, 'w')
+        f = open(path, 'w')
         try:
             eintr_retry_call(fcntl.lockf, f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
             return partial(_clean_lock_file, f)
-        except EnvironmentError as err:
+        except OSError as err:
+            f.close()
             if err.errno not in (errno.EAGAIN, errno.EACCES):
                 raise
 
 
+class SingleInstance:
+
+    def __init__(self, name):
+        self.name = name
+        self.release_mutex = None
+
+    def __enter__(self):
+        self.release_mutex = create_single_instance_mutex(self.name)
+        return self.release_mutex is not None
+
+    def __exit__(self, *a):
+        if self.release_mutex is not None:
+            self.release_mutex()
+            self.release_mutex = None
+
+
 def singleinstance(name):
-    ' Ensure that only a single process holding exists with the specified mutex key '
+    ' Ensure that only a single process exists with the specified mutex key '
     release_mutex = create_single_instance_mutex(name)
     if release_mutex is None:
         return False

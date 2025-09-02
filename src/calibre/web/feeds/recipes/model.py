@@ -1,27 +1,34 @@
-#!/usr/bin/env python2
-# vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
-from __future__ import with_statement
+#!/usr/bin/env python
+# License: GPLv3 Copyright: 2009, Kovid Goyal <kovid at kovidgoyal.net>
 
-__license__   = 'GPL v3'
-__copyright__ = '2009, Kovid Goyal <kovid@kovidgoyal.net>'
-__docformat__ = 'restructuredtext en'
+import copy
+import zipfile
+from functools import total_ordering
 
-import copy, zipfile
+from qt.core import QAbstractItemModel, QApplication, QFont, QIcon, QModelIndex, QPalette, QPixmap, Qt, pyqtSignal
 
-from PyQt5.Qt import QAbstractItemModel, Qt, QColor, QFont, QIcon, \
-        QModelIndex, pyqtSignal, QPixmap
+from calibre import force_unicode
+from calibre.utils.icu import primary_sort_key
+from calibre.utils.localization import _, countrycode_to_name, get_language
+from calibre.utils.resources import get_path as P
+from calibre.utils.search_query_parser import ParseException, SearchQueryParser
+from calibre.web.feeds.recipes.collection import (
+    SchedulerConfig,
+    add_custom_recipe,
+    add_custom_recipes,
+    download_builtin_recipe,
+    get_builtin_recipe,
+    get_builtin_recipe_collection,
+    get_custom_recipe,
+    get_custom_recipe_collection,
+    remove_custom_recipe,
+    update_custom_recipe,
+    update_custom_recipes,
+)
+from polyglot.builtins import iteritems
 
-from calibre.utils.search_query_parser import SearchQueryParser
-from calibre.utils.localization import get_language
-from calibre.web.feeds.recipes.collection import \
-        get_builtin_recipe_collection, get_custom_recipe_collection, \
-        SchedulerConfig, download_builtin_recipe, update_custom_recipe, \
-        update_custom_recipes, add_custom_recipe, add_custom_recipes, \
-        remove_custom_recipe, get_custom_recipe, get_builtin_recipe
-from calibre.utils.search_query_parser import ParseException
 
-
-class NewsTreeItem(object):
+class NewsTreeItem:
 
     def __init__(self, builtin, custom, scheduler_config, parent=None):
         self.builtin, self.custom = builtin, custom
@@ -44,7 +51,7 @@ class NewsTreeItem(object):
         return None
 
     def flags(self):
-        return Qt.ItemIsEnabled|Qt.ItemIsSelectable
+        return Qt.ItemFlag.ItemIsEnabled|Qt.ItemFlag.ItemIsSelectable
 
     def sort(self):
         self.children.sort()
@@ -58,47 +65,64 @@ class NewsTreeItem(object):
                 child.parent = None
 
 
+def parse_lang_code(x: str) -> str:
+    lang, sep, country = x.partition('_')
+    country = country.upper()
+    ans = get_language(lang)
+    if country:
+        ans = _('{language} ({country})').format(language=ans, country=countrycode_to_name(country))
+    return ans
+
+
+@total_ordering
 class NewsCategory(NewsTreeItem):
 
     def __init__(self, category, builtin, custom, scheduler_config, parent):
         NewsTreeItem.__init__(self, builtin, custom, scheduler_config, parent)
-        self.category = category
-        self.cdata = get_language(self.category)
+        self.category = self.cdata = category
+        self.cdata = self.category
+        if self.category == _('Scheduled'):
+            self.sortq = 0, ''
+        elif self.category == _('Custom'):
+            self.sortq = 1, ''
+        else:
+            self.cdata = parse_lang_code(self.cdata)
+            self.sortq = 2, self.cdata
         self.bold_font = QFont()
         self.bold_font.setBold(True)
         self.bold_font = (self.bold_font)
 
     def data(self, role):
-        if role == Qt.DisplayRole:
-            return (self.cdata + ' [%d]'%len(self.children))
-        elif role == Qt.FontRole:
+        if role == Qt.ItemDataRole.DisplayRole:
+            return (self.cdata + f' [{len(self.children)}]')
+        elif role == Qt.ItemDataRole.FontRole:
             return self.bold_font
-        elif role == Qt.ForegroundRole and self.category == _('Scheduled'):
-            return (QColor(0, 255, 0))
+        elif role == Qt.ItemDataRole.ForegroundRole and self.category == _('Scheduled'):
+            return QApplication.instance().palette().color(QPalette.ColorRole.Link)
+        elif role == Qt.ItemDataRole.UserRole:
+            return f'::category::{self.sortq[0]}'
         return None
 
     def flags(self):
-        return Qt.ItemIsEnabled
+        return Qt.ItemFlag.ItemIsEnabled
 
-    def __cmp__(self, other):
-        def decorate(x):
-            if x == _('Scheduled'):
-                x = '0' + x
-            elif x == _('Custom'):
-                x = '1' + x
-            else:
-                x = '2' + x
-            return x
+    def __eq__(self, other):
+        return self.cdata == other.cdata
 
-        return cmp(decorate(self.cdata), decorate(getattr(other, 'cdata', '')))
+    def __lt__(self, other):
+        return self.sortq < getattr(other, 'sortq', (3, ''))
 
 
+@total_ordering
 class NewsItem(NewsTreeItem):
 
     def __init__(self, urn, title, default_icon, custom_icon, favicons, zf,
             builtin, custom, scheduler_config, parent):
         NewsTreeItem.__init__(self, builtin, custom, scheduler_config, parent)
         self.urn, self.title = urn, title
+        if isinstance(self.title, bytes):
+            self.title = force_unicode(self.title)
+        self.sortq = primary_sort_key(self.title)
         self.icon = self.default_icon = None
         self.default_icon = default_icon
         self.favicons, self.zf = favicons, zf
@@ -106,27 +130,31 @@ class NewsItem(NewsTreeItem):
             self.icon = custom_icon
 
     def data(self, role):
-        if role == Qt.DisplayRole:
+        if role == Qt.ItemDataRole.DisplayRole:
             return (self.title)
-        if role == Qt.DecorationRole:
+        if role == Qt.ItemDataRole.DecorationRole:
             if self.icon is None:
-                icon = '%s.png'%self.urn[8:]
+                icon = f'{self.urn[8:]}.png'
                 p = QPixmap()
                 if icon in self.favicons:
                     try:
                         with zipfile.ZipFile(self.zf, 'r') as zf:
                             p.loadFromData(zf.read(self.favicons[icon]))
-                    except:
+                    except Exception:
                         pass
                 if not p.isNull():
                     self.icon = (QIcon(p))
                 else:
                     self.icon = self.default_icon
             return self.icon
-        return None
+        if role == Qt.ItemDataRole.UserRole:
+            return self.urn
 
-    def __cmp__(self, other):
-        return cmp(self.title.lower(), getattr(other, 'title', '').lower())
+    def __eq__(self, other):
+        return self.urn == other.urn
+
+    def __lt__(self, other):
+        return self.sortq < other.sortq
 
 
 class AdaptSQP(SearchQueryParser):
@@ -143,16 +171,17 @@ class RecipeModel(QAbstractItemModel, AdaptSQP):
     def __init__(self, *args):
         QAbstractItemModel.__init__(self, *args)
         SearchQueryParser.__init__(self, locations=['all'])
-        self.default_icon = (QIcon(I('news.png')))
-        self.custom_icon = (QIcon(I('user_profile.png')))
+        self.default_icon = QIcon.ic('news.png')
+        self.custom_icon = QIcon.ic('user_profile.png')
         self.builtin_recipe_collection = get_builtin_recipe_collection()
         self.scheduler_config = SchedulerConfig()
+        self.favicon_cache = {}
         try:
             with zipfile.ZipFile(P('builtin_recipes.zip',
                     allow_user_override=False), 'r') as zf:
-                self.favicons = dict([(x.filename, x) for x in zf.infolist() if
-                    x.filename.endswith('.png')])
-        except:
+                self.favicons = {x.filename: x for x in zf.infolist() if
+                    x.filename.endswith('.png')}
+        except Exception:
             self.favicons = {}
         self.do_refresh()
 
@@ -160,7 +189,7 @@ class RecipeModel(QAbstractItemModel, AdaptSQP):
         if download:
             try:
                 return download_builtin_recipe(urn)
-            except:
+            except Exception:
                 import traceback
                 traceback.print_exc()
         return get_builtin_recipe(urn)
@@ -181,9 +210,9 @@ class RecipeModel(QAbstractItemModel, AdaptSQP):
 
     def update_custom_recipes(self, script_urn_map):
         script_ids = []
-        for urn, title_script in script_urn_map.iteritems():
+        for urn, title_script in iteritems(script_urn_map):
             id_ = int(urn[len('custom:'):])
-            (title, script) = title_script
+            title, script = title_script
             script_ids.append((id_, title, script))
 
         update_custom_recipes(script_ids)
@@ -203,7 +232,7 @@ class RecipeModel(QAbstractItemModel, AdaptSQP):
             remove_custom_recipe(id_)
         self.custom_recipe_collection = get_custom_recipe_collection()
 
-    def do_refresh(self, restrict_to_urns=set([])):
+    def do_refresh(self, restrict_to_urns=frozenset()):
         self.custom_recipe_collection = get_custom_recipe_collection()
         zf = P('builtin_recipes.zip', allow_user_override=False)
 
@@ -226,7 +255,7 @@ class RecipeModel(QAbstractItemModel, AdaptSQP):
         scheduled = factory(NewsCategory, new_root, _('Scheduled'))
         custom = factory(NewsCategory, new_root, _('Custom'))
         lang_map = {}
-        self.all_urns = set([])
+        self.all_urns = set()
         self.showing_count = 0
         self.builtin_count = 0
         for x in self.custom_recipe_collection:
@@ -259,6 +288,23 @@ class RecipeModel(QAbstractItemModel, AdaptSQP):
         self.root = new_root
         self.reset()
 
+    def favicon_for_urn(self, urn: str) -> QIcon:
+        icon = urn[8:] + '.png'
+        if not (p := self.favicon_cache.get(icon)):
+            p = QPixmap()
+            if icon in self.favicons:
+                try:
+                    f = P('builtin_recipes.zip', allow_user_override=False)
+                    with zipfile.ZipFile(f, 'r') as zf:
+                        p.loadFromData(zf.read(self.favicons[icon]))
+                except Exception:
+                    pass
+            elif urn.startswith('custom:'):
+                p = self.custom_icon
+            p = QIcon(p)
+            self.favicon_cache[icon] = p
+        return p
+
     def reset(self):
         self.beginResetModel(), self.endResetModel()
 
@@ -281,11 +327,14 @@ class RecipeModel(QAbstractItemModel, AdaptSQP):
     def get_customize_info(self, urn):
         return self.scheduler_config.get_customize_info(urn)
 
+    def get_recipe_specific_option_metadata(self, urn):
+        return self.scheduler_config.get_recipe_specific_option_metadata(urn)
+
     def get_matches(self, location, query):
         query = query.strip().lower()
         if not query:
             return self.universal_set()
-        results = set([])
+        results = set()
         for urn in self.universal_set():
             recipe = self.recipe_from_urn(urn)
             if query in recipe.get('title', '').lower() or \
@@ -296,7 +345,7 @@ class RecipeModel(QAbstractItemModel, AdaptSQP):
     def search(self, query):
         results = []
         try:
-            query = unicode(query).strip()
+            query = str(query).strip()
             if query:
                 results = self.parse(query)
                 if not results:
@@ -320,7 +369,7 @@ class RecipeModel(QAbstractItemModel, AdaptSQP):
 
     def flags(self, index):
         if not index.isValid():
-            return Qt.ItemIsEnabled|Qt.ItemIsSelectable
+            return Qt.ItemFlag.ItemIsEnabled|Qt.ItemFlag.ItemIsSelectable
         item = index.internalPointer()
         return item.flags()
 
@@ -396,9 +445,8 @@ class RecipeModel(QAbstractItemModel, AdaptSQP):
         self.scheduler_config.schedule_recipe(self.recipe_from_urn(urn),
                 sched_type, schedule)
 
-    def customize_recipe(self, urn, add_title_tag, custom_tags, keep_issues):
-        self.scheduler_config.customize_recipe(urn, add_title_tag,
-                custom_tags, keep_issues)
+    def customize_recipe(self, urn, val):
+        self.scheduler_config.customize_recipe(urn, val)
 
     def get_to_be_downloaded_recipes(self):
         ans = self.scheduler_config.get_to_be_downloaded_recipes()
@@ -413,6 +461,3 @@ class RecipeModel(QAbstractItemModel, AdaptSQP):
             for recipe in self.scheduler_config.iter_recipes():
                 ans.append(recipe.get('id'))
         return ans
-
-
-

@@ -1,32 +1,36 @@
-#!/usr/bin/env python2
-# vim:fileencoding=utf-8
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
+#!/usr/bin/env python
+
 
 __license__ = 'GPL v3'
 __copyright__ = '2015, Kovid Goyal <kovid at kovidgoyal.net>'
 
-import re, shlex, os, cPickle
+import os
+import re
+import shlex
 from collections import defaultdict
 
-from calibre import walk, guess_type, prints, force_unicode
-from calibre.constants import filesystem_encoding, cache_dir
+from calibre import force_unicode, guess_type, prints, walk
+from calibre.constants import cache_dir, filesystem_encoding
 from calibre.utils.icu import numeric_sort_key as sort_key
 from calibre.utils.localization import canonicalize_lang, get_lang
+from calibre.utils.serialize import msgpack_dumps, msgpack_loads
+from polyglot.builtins import iteritems, itervalues, string_or_bytes
 
 
 def parse_localized_key(key):
     name, rest = key.partition('[')[0::2]
     if not rest:
         return name, None
-    rest = rest[:-1]
-    lang = re.split(r'[_.@]', rest)[0]
-    return name, canonicalize_lang(lang)
+    return name, rest[:-1]
 
 
 def unquote_exec(val):
     val = val.replace(r'\\', '\\')
     return shlex.split(val)
+
+
+def known_localized_items():
+    return {'Name': {}, 'GenericName': {}, 'Comment': {}, 'Icon': {}}
 
 
 def parse_desktop_file(path):
@@ -35,11 +39,12 @@ def parse_desktop_file(path):
     try:
         with open(path, 'rb') as f:
             raw = f.read().decode('utf-8')
-    except (EnvironmentError, UnicodeDecodeError):
+    except (OSError, UnicodeDecodeError):
         return
     group = None
     ans = {}
     ans['desktop_file_path'] = path
+    localized_items = known_localized_items()
     for line in raw.splitlines():
         m = gpat.match(line)
         if m is not None:
@@ -61,17 +66,20 @@ def parse_desktop_file(path):
                         ans[k] = cmdline
                 elif k == 'MimeType':
                     ans[k] = frozenset(x.strip() for x in v.split(';'))
-                elif k in {'Name', 'GenericName', 'Comment', 'Icon'} or '[' in k:
+                elif k in localized_items or '[' in k:
                     name, lang = parse_localized_key(k)
-                    if name not in ans:
-                        ans[name] = {}
-                    if isinstance(ans[name], type('')):
-                        ans[name] = {None:ans[name]}
-                    ans[name][lang] = v
+                    vals = localized_items.setdefault(name, {})
+                    vals[lang] = v
+                    if name in ans:
+                        vals[None] = ans.pop(name)
                 else:
                     ans[k] = v
+    for k, vals in localized_items.items():
+        if vals:
+            ans[k] = dict(vals)
     if 'Exec' in ans and 'MimeType' in ans and 'Name' in ans:
         return ans
+
 
 icon_data = None
 
@@ -88,7 +96,7 @@ def find_icons():
                 '/usr/share/pixmaps']
     ans = defaultdict(list)
     sz_pat = re.compile(r'/((?:\d+x\d+)|scalable)/')
-    cache_file = os.path.join(cache_dir(), 'icon-theme-cache.pickle')
+    cache_file = os.path.join(cache_dir(), 'icon-theme-cache.calibre_msgpack')
     exts = {'.svg', '.png', '.xpm'}
 
     def read_icon_theme_dir(dirpath):
@@ -106,14 +114,15 @@ def find_icons():
                         sz = int(sz.partition('x')[0])
                     idx = len(ans[name])
                     ans[name].append((-sz, idx, sz, path))
-        for icons in ans.itervalues():
-            icons.sort()
-        return {k:(-v[0][2], v[0][3]) for k, v in ans.iteritems()}
+        for icons in itervalues(ans):
+            icons.sort(key=list)
+        return {k:(-v[0][2], v[0][3]) for k, v in iteritems(ans)}
 
     try:
         with open(cache_file, 'rb') as f:
-            cache = cPickle.load(f)
-            mtimes, cache = cache['mtimes'], cache['data']
+            cache = f.read()
+        cache = msgpack_loads(cache)
+        mtimes, cache = defaultdict(int, cache['mtimes']), defaultdict(dict, cache['data'])
     except Exception:
         mtimes, cache = defaultdict(int), defaultdict(dict)
 
@@ -123,14 +132,14 @@ def find_icons():
     for loc in base_dirs:
         try:
             subdirs = os.listdir(loc)
-        except EnvironmentError:
+        except OSError:
             continue
         for dname in subdirs:
             d = os.path.join(loc, dname)
             if os.path.isdir(d):
                 try:
                     mtime = os.stat(d).st_mtime
-                except EnvironmentError:
+                except OSError:
                     continue
                 seen_dirs.add(d)
                 if mtime != mtimes[d]:
@@ -138,33 +147,61 @@ def find_icons():
                     try:
                         cache[d] = read_icon_theme_dir(d)
                     except Exception:
-                        prints('Failed to read icon theme dir: %r with error:' % d)
+                        prints(f'Failed to read icon theme dir: {d!r} with error:')
                         import traceback
                         traceback.print_exc()
                     mtimes[d] = mtime
-                for name, data in cache[d].iteritems():
+                for name, data in iteritems(cache[d]):
                     ans[name].append(data)
     for removed in set(mtimes) - seen_dirs:
         mtimes.pop(removed), cache.pop(removed)
         changed = True
 
     if changed:
+        data = msgpack_dumps({'data':cache, 'mtimes':mtimes})
         try:
             with open(cache_file, 'wb') as f:
-                cPickle.dump({'data':cache, 'mtimes':mtimes}, f, -1)
+                f.write(data)
         except Exception:
             import traceback
             traceback.print_exc()
 
-    for icons in ans.itervalues():
-        icons.sort()
-    icon_data = {k:v[0][1] for k, v in ans.iteritems()}
+    for icons in itervalues(ans):
+        icons.sort(key=list)
+    icon_data = {k:v[0][1] for k, v in iteritems(ans)}
     return icon_data
 
 
 def localize_string(data):
     lang = canonicalize_lang(get_lang())
-    return data.get(lang, data.get(None)) or ''
+
+    def key_matches(key):
+        if key is None:
+            return False
+        base = re.split(r'[_.@]', key)[0]
+        return canonicalize_lang(base) == lang
+
+    matches = tuple(filter(key_matches, data))
+    if matches:
+        return data[matches[0]]
+    return data.get(None) or ''
+
+
+def process_desktop_file(data):
+    icon = data.get('Icon', {}).get(None)
+    if icon and not os.path.isabs(icon):
+        icon = find_icons().get(icon)
+        if icon:
+            data['Icon'] = icon
+        else:
+            data.pop('Icon')
+    if not isinstance(data.get('Icon'), string_or_bytes):
+        data.pop('Icon', None)
+    for k in ('Name', 'GenericName', 'Comment'):
+        val = data.get(k)
+        if val:
+            data[k] = localize_string(val)
+    return data
 
 
 def find_programs(extensions):
@@ -182,7 +219,7 @@ def find_programs(extensions):
                 bn = os.path.basename(f)
                 if f not in desktop_files:
                     desktop_files[bn] = f
-    for bn, path in desktop_files.iteritems():
+    for bn, path in iteritems(desktop_files):
         try:
             data = parse_desktop_file(path)
         except Exception:
@@ -190,21 +227,8 @@ def find_programs(extensions):
             traceback.print_exc()
             continue
         if data is not None and mime_types.intersection(data['MimeType']):
-            icon = data.get('Icon', {}).get(None)
-            if icon and not os.path.isabs(icon):
-                icon = find_icons().get(icon)
-                if icon:
-                    data['Icon'] = icon
-                else:
-                    data.pop('Icon')
-            if not isinstance(data.get('Icon'), basestring):
-                data.pop('Icon', None)
-            for k in ('Name', 'GenericName', 'Comment'):
-                val = data.get(k)
-                if val:
-                    data[k] = localize_string(val)
-            ans.append(data)
-    ans.sort(key=lambda d:sort_key(d.get('Name')))
+            ans.append(process_desktop_file(data))
+    ans.sort(key=lambda d: sort_key(d.get('Name')))
     return ans
 
 

@@ -1,29 +1,78 @@
-#!/usr/bin/env python2
-# vim:fileencoding=utf-8
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
+#!/usr/bin/env python
+# License: GPLv3 Copyright: 2013, Kovid Goyal <kovid at kovidgoyal.net>
 
-__license__ = 'GPL v3'
-__copyright__ = '2013, Kovid Goyal <kovid at kovidgoyal.net>'
 
 import weakref
 
-from PyQt5.Qt import (
-    QPushButton, QPixmap, QIcon, QColor, Qt, QColorDialog, pyqtSignal,
-    QKeySequence, QToolButton, QDialog, QDialogButtonBox, QComboBox, QFont,
-    QAbstractListModel, QModelIndex, QApplication, QStyledItemDelegate,
-    QUndoCommand, QUndoStack, QLayout, QRect, QSize, QStyle, QSizePolicy,
-    QPoint, QWidget, QLabel, QCheckBox)
+from qt.core import (
+    QApplication,
+    QBrush,
+    QByteArray,
+    QCalendarWidget,
+    QCheckBox,
+    QColor,
+    QColorDialog,
+    QComboBox,
+    QDate,
+    QDateTime,
+    QDateTimeEdit,
+    QDialog,
+    QDialogButtonBox,
+    QFont,
+    QFontInfo,
+    QFontMetrics,
+    QFrame,
+    QIcon,
+    QKeySequence,
+    QLabel,
+    QLayout,
+    QMenu,
+    QMimeData,
+    QPainter,
+    QPalette,
+    QPixmap,
+    QPoint,
+    QPushButton,
+    QRect,
+    QScrollArea,
+    QSize,
+    QSizePolicy,
+    QSplitter,
+    QStyle,
+    QStyledItemDelegate,
+    QStyleOptionToolButton,
+    QStylePainter,
+    Qt,
+    QTabWidget,
+    QTextBrowser,
+    QTextCursor,
+    QTextDocument,
+    QTimer,
+    QToolButton,
+    QUndoCommand,
+    QUndoStack,
+    QUrl,
+    QVBoxLayout,
+    QWidget,
+    pyqtSignal,
+)
 
+from calibre import prepare_string_for_xml
+from calibre.constants import builtin_colors_dark, builtin_colors_light
 from calibre.ebooks.metadata import rating_to_stars
-from calibre.gui2 import gprefs, rating_font
-from calibre.gui2.complete2 import LineEdit, EditWithComplete
+from calibre.gui2 import UNDEFINED_QDATETIME, gprefs, local_path_for_resource, rating_font
+from calibre.gui2.complete2 import EditWithComplete, LineEdit
 from calibre.gui2.widgets import history
+from calibre.utils.config_base import tweaks
+from calibre.utils.date import UNDEFINED_DATE
+from calibre.utils.localization import _
+from polyglot.functools import lru_cache
 
 
-class HistoryMixin(object):
+class HistoryMixin:
 
     max_history_items = None
+    min_history_entry_length = 3
 
     def __init__(self, *args, **kwargs):
         pass
@@ -34,7 +83,7 @@ class HistoryMixin(object):
 
     def initialize(self, name):
         self._name = name
-        self.history = history.get(self.store_name, [])
+        self.history = self.load_history()
         self.set_separator(None)
         self.update_items_cache(self.history)
         self.setText('')
@@ -43,9 +92,12 @@ class HistoryMixin(object):
         except AttributeError:
             self.lineEdit().editingFinished.connect(self.save_history)
 
+    def load_history(self):
+        return history.get(self.store_name, [])
+
     def save_history(self):
-        ct = unicode(self.text())
-        if len(ct) > 2:
+        ct = str(self.text())
+        if len(ct) >= self.min_history_entry_length:
             try:
                 self.history.remove(ct)
             except ValueError:
@@ -64,14 +116,25 @@ class HistoryMixin(object):
 
 class HistoryLineEdit2(LineEdit, HistoryMixin):
 
-    def __init__(self, parent=None, completer_widget=None, sort_func=lambda x:None):
+    def __init__(self, parent=None, completer_widget=None, sort_func=lambda x:b''):
         LineEdit.__init__(self, parent=parent, completer_widget=completer_widget, sort_func=sort_func)
+
+    def set_uniform_item_sizes(self, on=False):
+        if hasattr(self.mcompleter, 'setUniformItemSizes'):
+            self.mcompleter.setUniformItemSizes(on)
+
+    def add_items_to_context_menu(self, s, menu):
+        menu.addAction(QIcon.ic('trash.png'), _('Clear history')).triggered.connect(self.clear_history)
+        return menu
 
 
 class HistoryComboBox(EditWithComplete, HistoryMixin):
 
-    def __init__(self, parent=None):
-        EditWithComplete.__init__(self, parent, sort_func=lambda x:None)
+    def __init__(self, parent=None, strip_completion_entries=True):
+        EditWithComplete.__init__(self, parent, sort_func=lambda x:b'', strip_completion_entries=strip_completion_entries)
+
+    def set_uniform_item_sizes(self, on=False):
+        self.lineEdit().mcompleter.setUniformItemSizes(on)
 
 
 class ColorButton(QPushButton):
@@ -85,69 +148,103 @@ class ColorButton(QPushButton):
         self.color = initial_color
         self.clicked.connect(self.choose_color)
 
-    @dynamic_property
+    @property
     def color(self):
-        def fget(self):
-            return self._color
+        return self._color
 
-        def fset(self, val):
-            val = unicode(val or '')
-            col = QColor(val)
-            orig = self._color
-            if col.isValid():
-                self._color = val
-                self.setText(val)
-                p = QPixmap(self.iconSize())
-                p.fill(col)
-                self.setIcon(QIcon(p))
-            else:
-                self._color = None
-                self.setText(self.choose_text)
-                self.setIcon(QIcon())
-            if orig != col:
-                self.color_changed.emit(self._color)
-        return property(fget=fget, fset=fset)
+    @color.setter
+    def color(self, val):
+        val = str(val or '')
+        col = QColor(val)
+        orig = self._color
+        if col.isValid():
+            self._color = val
+            self.setText(val)
+            p = QPixmap(self.iconSize())
+            p.fill(col)
+            self.setIcon(QIcon(p))
+        else:
+            self._color = None
+            self.setText(self.choose_text)
+            self.setIcon(QIcon())
+        if orig != col:
+            self.color_changed.emit(self._color)
 
     def choose_color(self):
-        col = QColorDialog.getColor(QColor(self._color or Qt.white), self, _('Choose a color'))
+        col = QColorDialog.getColor(QColor(self._color or Qt.GlobalColor.white), self, _('Choose a color'))
         if col.isValid():
-            self.color = unicode(col.name())
+            self.color = str(col.name())
 
 
 def access_key(k):
     'Return shortcut text suitable for adding to a menu item'
     if QKeySequence.keyBindings(k):
-        return '\t' + QKeySequence(k).toString(QKeySequence.NativeText)
+        return '\t' + QKeySequence(k).toString(QKeySequence.SequenceFormat.NativeText)
     return ''
 
 
-def populate_standard_spinbox_context_menu(spinbox, menu, add_clear=False):
+def populate_standard_spinbox_context_menu(spinbox, menu, add_clear=False, use_self_for_copy_actions=False):
     m = menu
     le = spinbox.lineEdit()
-    m.addAction(_('Cu&t') + access_key(QKeySequence.Cut), le.cut).setEnabled(not le.isReadOnly() and le.hasSelectedText())
-    m.addAction(_('&Copy') + access_key(QKeySequence.Copy), le.copy).setEnabled(le.hasSelectedText())
-    m.addAction(_('&Paste') + access_key(QKeySequence.Paste), le.paste).setEnabled(not le.isReadOnly())
-    m.addAction(_('Delete') + access_key(QKeySequence.Delete), le.del_).setEnabled(not le.isReadOnly() and le.hasSelectedText())
+    ca = spinbox if use_self_for_copy_actions else le
+    m.addAction(_('Cu&t') + access_key(QKeySequence.StandardKey.Cut), ca.cut).setEnabled(not le.isReadOnly() and le.hasSelectedText())
+    m.addAction(_('&Copy') + access_key(QKeySequence.StandardKey.Copy), ca.copy).setEnabled(le.hasSelectedText())
+    m.addAction(_('&Paste') + access_key(QKeySequence.StandardKey.Paste), ca.paste).setEnabled(not le.isReadOnly())
+    m.addAction(_('Delete') + access_key(QKeySequence.StandardKey.Delete), le.del_).setEnabled(not le.isReadOnly() and le.hasSelectedText())
     m.addSeparator()
-    m.addAction(_('Select &all') + access_key(QKeySequence.SelectAll), spinbox.selectAll)
+    m.addAction(_('Select &all') + access_key(QKeySequence.StandardKey.SelectAll), spinbox.selectAll)
     m.addSeparator()
     m.addAction(_('&Step up'), spinbox.stepUp)
     m.addAction(_('Step &down'), spinbox.stepDown)
-    m.setAttribute(Qt.WA_DeleteOnClose)
+    m.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
 
 
 class RightClickButton(QToolButton):
 
     def mousePressEvent(self, ev):
-        if ev.button() == Qt.RightButton and self.menu() is not None:
+        if ev.button() == Qt.MouseButton.RightButton and self.menu() is not None:
             self.showMenu()
             ev.accept()
             return
         return QToolButton.mousePressEvent(self, ev)
 
 
-class Dialog(QDialog):
+class CenteredToolButton(RightClickButton):
 
+    def __init__(self, icon, text, parent=None):
+        super().__init__(parent)
+        self.setText(text)
+        self.setIcon(icon)
+        self.setSizePolicy(QSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed))
+        self.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.text_flags = Qt.TextFlag.TextSingleLine | Qt.AlignmentFlag.AlignCenter
+
+    def paintEvent(self, ev):
+        painter = QStylePainter(self)
+        opt = QStyleOptionToolButton()
+        self.initStyleOption(opt)
+        text = opt.text
+        opt.text = ''
+        opt.icon = QIcon()
+        s = painter.style()
+        painter.drawComplexControl(QStyle.ComplexControl.CC_ToolButton, opt)
+        if s.styleHint(QStyle.StyleHint.SH_UnderlineShortcut, opt, self):
+            flags = self.text_flags | Qt.TextFlag.TextShowMnemonic
+        else:
+            flags = self.text_flags | Qt.TextFlag.TextHideMnemonic
+        fw = s.pixelMetric(QStyle.PixelMetric.PM_DefaultFrameWidth, opt, self)
+        opt.rect.adjust(fw, fw, -fw, -fw)
+        w = opt.iconSize.width()
+        text_rect = opt.rect.adjusted(w, 0, 0, 0)
+        painter.drawItemText(text_rect, flags, opt.palette, self.isEnabled(), text)
+        fm = QFontMetrics(opt.font)
+        text_rect = s.itemTextRect(fm, text_rect, flags, self.isEnabled(), text)
+        left = text_rect.left() - w - 4
+        pixmap_rect = QRect(left, opt.rect.top(), opt.iconSize.width(), opt.rect.height())
+        painter.drawItemPixmap(pixmap_rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, self.icon().pixmap(opt.iconSize))
+
+
+class Dialog(QDialog):
     '''
     An improved version of Qt's QDialog class. This automatically remembers the
     last used size, automatically connects the signals for QDialogButtonBox,
@@ -159,59 +256,41 @@ class Dialog(QDialog):
     for the first time.
     '''
 
-    def __init__(self, title, name, parent=None, prefs=gprefs):
+    def __init__(
+            self, title,
+            name, parent=None, prefs=gprefs,
+            default_buttons=QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+    ):
         QDialog.__init__(self, parent)
         self.prefs_for_persistence = prefs
         self.setWindowTitle(title)
         self.name = name
-        self.bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        self.bb = QDialogButtonBox(default_buttons)
         self.bb.accepted.connect(self.accept)
         self.bb.rejected.connect(self.reject)
 
         self.setup_ui()
 
-        self.resize(self.sizeHint())
-        geom = self.prefs_for_persistence.get(name + '-geometry', None)
-        if geom is not None:
-            self.restoreGeometry(geom)
+        self.restore_geometry(self.prefs_for_persistence, self.name + '-geometry')
         if hasattr(self, 'splitter'):
-            state = self.prefs_for_persistence.get(name + '-splitter-state', None)
+            state = self.prefs_for_persistence.get(self.name + '-splitter-state', None)
             if state is not None:
                 self.splitter.restoreState(state)
 
     def accept(self):
-        self.prefs_for_persistence.set(self.name + '-geometry', bytearray(self.saveGeometry()))
+        self.save_geometry(self.prefs_for_persistence, self.name + '-geometry')
         if hasattr(self, 'splitter'):
             self.prefs_for_persistence.set(self.name + '-splitter-state', bytearray(self.splitter.saveState()))
         QDialog.accept(self)
 
     def reject(self):
-        self.prefs_for_persistence.set(self.name + '-geometry', bytearray(self.saveGeometry()))
+        self.save_geometry(self.prefs_for_persistence, self.name + '-geometry')
         if hasattr(self, 'splitter'):
             self.prefs_for_persistence.set(self.name + '-splitter-state', bytearray(self.splitter.saveState()))
         QDialog.reject(self)
 
     def setup_ui(self):
         raise NotImplementedError('You must implement this method in Dialog subclasses')
-
-
-class RatingModel(QAbstractListModel):
-
-    def __init__(self, parent=None, is_half_star=False):
-        QAbstractListModel.__init__(self, parent)
-        self.is_half_star = is_half_star
-        self.rating_font = QFont(rating_font())
-        self.null_text = _('Not rated')
-
-    def rowCount(self, parent=QModelIndex()):
-        return 11 if self.is_half_star else 6
-
-    def data(self, index, role=Qt.DisplayRole):
-        if role == Qt.DisplayRole:
-            val = index.row() * (1 if self.is_half_star else 2)
-            return rating_to_stars(val, self.is_half_star) or self.null_text
-        if role == Qt.FontRole:
-            return QApplication.instance().font() if index.row() == 0 else self.rating_font
 
 
 class UndoCommand(QUndoCommand):
@@ -231,17 +310,34 @@ class UndoCommand(QUndoCommand):
             w.setCurrentIndex(self.redo_val)
 
 
+@lru_cache(maxsize=16)
+def stars(num, is_half_star=False):
+    return rating_to_stars(num, is_half_star)
+
+
+class RatingItemDelegate(QStyledItemDelegate):
+
+    def initStyleOption(self, option, index):
+        QStyledItemDelegate.initStyleOption(self, option, index)
+        option.font = QApplication.instance().font() if index.row() <= 0 else self.parent().rating_font
+        option.fontMetrics = QFontMetrics(option.font)
+
+
 class RatingEditor(QComboBox):
 
     def __init__(self, parent=None, is_half_star=False):
         QComboBox.__init__(self, parent)
+        self.addItem(_('Not rated'))
+        if is_half_star:
+            [self.addItem(stars(x, True)) for x in range(1, 11)]
+        else:
+            [self.addItem(stars(x)) for x in (2, 4, 6, 8, 10)]
+        self.rating_font = QFont(rating_font())
         self.undo_stack = QUndoStack(self)
         self.undo, self.redo = self.undo_stack.undo, self.undo_stack.redo
         self.allow_undo = False
         self.is_half_star = is_half_star
-        self._model = RatingModel(is_half_star=is_half_star, parent=self)
-        self.setModel(self._model)
-        self.delegate = QStyledItemDelegate(self)
+        self.delegate = RatingItemDelegate(self)
         self.view().setItemDelegate(self.delegate)
         self.view().setStyleSheet('QListView { background: palette(window) }\nQListView::item { padding: 6px }')
         self.setMaxVisibleItems(self.count())
@@ -249,18 +345,17 @@ class RatingEditor(QComboBox):
 
     @property
     def null_text(self):
-        return self._model.null_text
+        return self.itemText(0)
 
     @null_text.setter
     def null_text(self, val):
-        self._model.null_text = val
-        self._model.dataChanged.emit(self._model.index(0, 0), self._model.index(0, 0))
+        self.setItemtext(0, val)
 
     def update_font(self):
         if self.currentIndex() == 0:
             self.setFont(QApplication.instance().font())
         else:
-            self.setFont(self._model.rating_font)
+            self.setFont(self.rating_font)
 
     def clear_to_undefined(self):
         self.setCurrentIndex(0)
@@ -286,14 +381,14 @@ class RatingEditor(QComboBox):
         self.setCurrentIndex(val)
 
     def keyPressEvent(self, ev):
-        if ev == QKeySequence.Undo:
+        if ev == QKeySequence.StandardKey.Undo:
             self.undo()
             return ev.accept()
-        if ev == QKeySequence.Redo:
+        if ev == QKeySequence.StandardKey.Redo:
             self.redo()
             return ev.accept()
         k = ev.key()
-        num = {getattr(Qt, 'Key_%d'%i):i for i in range(6)}.get(k)
+        num = {getattr(Qt, f'Key_{i}'):i for i in range(6)}.get(k)
         if num is None:
             return QComboBox.keyPressEvent(self, ev)
         ev.accept()
@@ -315,9 +410,21 @@ class FlowLayout(QLayout):  # {{{
     def __init__(self, parent=None):
         QLayout.__init__(self, parent)
         self.items = []
+        self.height_for_width_cache = {}
+
+    def clear_caches(self):
+        self.height_for_width_cache.clear()
 
     def addItem(self, item):
+        self.clear_caches()
         self.items.append(item)
+
+    def isEmpty(self):
+        return not bool(self.items)
+
+    def invalidate(self):
+        self.clear_caches()
+        super().invalidate()
 
     def itemAt(self, idx):
         try:
@@ -339,14 +446,16 @@ class FlowLayout(QLayout):  # {{{
         return True
 
     def heightForWidth(self, width):
-        return self.do_layout(QRect(0, 0, width, 0), apply_geometry=False)
+        if (ans := self.height_for_width_cache.get(width)) is None:
+            ans = self.height_for_width_cache[width] = self.do_layout(QRect(0, 0, width, 0), apply_geometry=False)
+        return ans
 
     def setGeometry(self, rect):
         QLayout.setGeometry(self, rect)
         self.do_layout(rect, apply_geometry=True)
 
     def expandingDirections(self):
-        return Qt.Orientations(0)
+        return Qt.Orientation(0)
 
     def minimumSize(self):
         size = QSize()
@@ -361,7 +470,7 @@ class FlowLayout(QLayout):  # {{{
         if p is None:
             return -1
         if p.isWidgetType():
-            which = QStyle.PM_LayoutHorizontalSpacing if horizontal else QStyle.PM_LayoutVerticalSpacing
+            which = QStyle.PixelMetric.PM_LayoutHorizontalSpacing if horizontal else QStyle.PixelMetric.PM_LayoutVerticalSpacing
             return p.style().pixelMetric(which, None, p)
         return p.spacing()
 
@@ -378,7 +487,10 @@ class FlowLayout(QLayout):  # {{{
                 return ans
             if wid is None:
                 return 0
-            return wid.style().layoutSpacing(QSizePolicy.PushButton, QSizePolicy.PushButton, Qt.Horizontal if horizontal else Qt.Vertical)
+            return wid.style().layoutSpacing(
+                QSizePolicy.ControlType.PushButton,
+                QSizePolicy.ControlType.PushButton,
+                Qt.Orientation.Horizontal if horizontal else Qt.Orientation.Vertical)
 
         lines, current_line = [], []
         gmap = {}
@@ -414,7 +526,18 @@ class FlowLayout(QLayout):  # {{{
 
     @staticmethod
     def test():
+        s = QSplitter()
+        h = QSplitter()
+        h.setOrientation(Qt.Orientation.Vertical)
+        def filler():
+            la = QLabel(' filler')
+            la.sizeHint = lambda *a: QSize(10000, 10000)
+            la.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+            return la
         w = QWidget()
+        h.addWidget(w), h.addWidget(filler())
+        s.addWidget(h)
+        s.addWidget(filler())
         l = FlowLayout(w)
         la = QLabel('Some text in a label')
         l.addWidget(la)
@@ -423,14 +546,377 @@ class FlowLayout(QLayout):  # {{{
         cb = QComboBox()
         cb.addItems(['Item one'])
         l.addWidget(cb)
-        return w
+        return s
 # }}}
+
+
+class Separator(QWidget):  # {{{
+
+    ''' Vertical separator lines usable in FlowLayout '''
+
+    def __init__(self, parent, widget_for_height=None):
+        '''
+        You must provide a widget in the layout either here or with setBuddy.
+        The height of the separator is computed using this widget,
+        '''
+        QWidget.__init__(self, parent)
+        self.bcol = QApplication.instance().palette().color(QPalette.ColorRole.Text)
+        self.update_brush()
+        self.widget_for_height = widget_for_height
+        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.MinimumExpanding)
+
+    def update_brush(self):
+        self.brush = QBrush(self.bcol)
+        self.update()
+
+    def setBuddy(self, widget_for_height):
+        ''' See __init__. This is repurposed to support Qt Designer .ui files. '''
+        self.widget_for_height = widget_for_height
+
+    def sizeHint(self):
+        return QSize(1, 1 if self.widget_for_height is None else self.widget_for_height.height())
+
+    def paintEvent(self, ev):
+        painter = QPainter(self)
+        # Purely subjective: shorten the line a bit to look 'better'
+        r = ev.rect()
+        r.setTop(r.top() + 3)
+        r.setBottom(r.bottom() - 3)
+        painter.fillRect(r, self.brush)
+        painter.end()
+# }}}
+
+
+class HTMLDisplay(QTextBrowser):
+
+    anchor_clicked = pyqtSignal(object)
+    notes_resource_scheme = ''  # set to scheme to use to load resources for notes from the current db
+
+    def __init__(self, parent=None, save_resources_in_document=True):
+        QTextBrowser.__init__(self, parent)
+        self.save_resources_in_document = save_resources_in_document
+        self.last_set_html = ''
+        self.default_css = self.external_css = ''
+        app = QApplication.instance()
+        app.palette_changed.connect(self.palette_changed)
+        self.palette_changed()
+        font = self.font()
+        f = QFontInfo(font)
+        delta = tweaks['change_book_details_font_size_by'] + 1
+        if delta:
+            font.setPixelSize(int(f.pixelSize() + delta))
+            self.setFont(font)
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        self.setOpenLinks(False)
+        self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent, False)
+        palette = self.palette()
+        palette.setBrush(QPalette.ColorRole.Base, Qt.GlobalColor.transparent)
+        self.setPalette(palette)
+        self.setAcceptDrops(False)
+        self.anchorClicked.connect(self.on_anchor_clicked)
+
+    def get_base_qurl(self):
+        return None
+
+    def setHtml(self, html):
+        self.last_set_html = html
+        QTextBrowser.setHtml(self, html)
+
+    def setDefaultStyleSheet(self, css=''):
+        self.external_css = css
+        self.document().setDefaultStyleSheet(self.default_css + self.process_external_css(self.external_css))
+
+    def palette_changed(self):
+        app = QApplication.instance()
+        if app.is_dark_theme:
+            pal = app.palette()
+            col = pal.color(QPalette.ColorRole.Link)
+            self.default_css = f'a {{ color: {col.name(QColor.NameFormat.HexRgb)} }}\n\n'
+        else:
+            self.default_css = ''
+        self.document().setDefaultStyleSheet(self.default_css + self.process_external_css(self.external_css))
+        self.setHtml(self.last_set_html)
+
+    def process_external_css(self, css):
+        return css
+
+    def on_anchor_clicked(self, qurl):
+        if not qurl.scheme() and qurl.hasFragment() and qurl.toString().startswith('#'):
+            frag = qurl.fragment(QUrl.ComponentFormattingOption.FullyDecoded)
+            if frag:
+                self.scrollToAnchor(frag)
+                return
+        self.anchor_clicked.emit(qurl)
+
+    def load_local_file_resource(self, rtype, qurl, path):
+        from calibre.utils.filenames import make_long_path_useable
+        try:
+            with open(make_long_path_useable(path), 'rb') as f:
+                data = f.read()
+        except OSError:
+            if path.rpartition('.')[-1].lower() in {'jpg', 'jpeg', 'gif', 'png', 'bmp', 'webp'}:
+                r = QByteArray(bytearray.fromhex(
+                    '89504e470d0a1a0a0000000d49484452'
+                    '000000010000000108060000001f15c4'
+                    '890000000a49444154789c6300010000'
+                    '0500010d0a2db40000000049454e44ae'
+                    '426082'))
+                if self.save_resources_in_document:
+                    self.document().addResource(rtype, qurl, r)
+                return r
+        else:
+            r = QByteArray(data)
+            if self.save_resources_in_document:
+                self.document().addResource(rtype, qurl, r)
+            return r
+        return super().loadResource(rtype, qurl)
+
+    def loadResource(self, rtype, qurl):
+        path = local_path_for_resource(qurl, base_qurl=self.get_base_qurl())
+        if path:
+            return self.load_local_file_resource(rtype, qurl, path)
+        if qurl.scheme() == 'calibre-icon':
+            r = QIcon.icon_as_png(qurl.path().lstrip('/'), as_bytearray=True)
+            self.document().addResource(rtype, qurl, r)
+            return r
+        if self.notes_resource_scheme and qurl.scheme() == self.notes_resource_scheme and int(rtype) == int(QTextDocument.ResourceType.ImageResource):
+            from calibre.gui2.ui import get_gui
+            gui = get_gui()
+            if gui is not None:
+                db = gui.current_db.new_api
+                resource = db.get_notes_resource(f'{qurl.host()}:{qurl.path()[1:]}')
+                if resource is not None:
+                    r = QByteArray(resource['data'])
+                    if self.save_resources_in_document:
+                        self.document().addResource(rtype, qurl, r)
+                    return r
+        else:
+            return super().loadResource(rtype, qurl)
+
+    def anchorAt(self, pos):
+        # Anchors in a document can be "focused" with the tab key.
+        # Unfortunately, the focus point that Qt provides when using the context
+        # menu key can be 1 pixel out of the anchor's focus rectangle. We
+        # correct for that here by checking if there is an anchor under the
+        # point, moving the point a pixel one direction then the other if there
+        # isn't. This process also slightly dejitters the mouse FWIW.
+        url = super().anchorAt(pos)
+        if not url:
+            url = super().anchorAt(QPoint(pos.x()-1, pos.y()-1))
+        if not url:
+            url = super().anchorAt(QPoint(pos.x()+1, pos.y()+1))
+        return url
+
+
+class ScrollingTabWidget(QTabWidget):
+
+    def __init__(self, parent=None):
+        QTabWidget.__init__(self, parent)
+
+    def wrap_widget(self, page):
+        sw = QScrollArea(self)
+        pl = page.layout()
+        if pl is not None:
+            cm = pl.contentsMargins()
+            # For some reasons designer insists on setting zero margins for
+            # widgets added to a tab widget, which looks horrible.
+            if (cm.left(), cm.top(), cm.right(), cm.bottom()) == (0, 0, 0, 0):
+                pl.setContentsMargins(9, 9, 9, 9)
+        name = f'STW{abs(id(self))}'
+        sw.setObjectName(name)
+        sw.setWidget(page)
+        sw.setWidgetResizable(True)
+        page.setAutoFillBackground(False)
+        sw.setStyleSheet(f'#{name} {{ background: transparent }}')
+        return sw
+
+    @property
+    def all_widgets(self):
+        for i in range(self.count()):
+            yield self.widget(i).widget()
+
+    def indexOf(self, page):
+        for i in range(self.count()):
+            t = self.widget(i)
+            if t.widget() is page:
+                return i
+        return -1
+
+    def currentWidget(self):
+        return QTabWidget.currentWidget(self).widget()
+
+    def addTab(self, page, *args):
+        return QTabWidget.addTab(self, self.wrap_widget(page), *args)
+
+
+PARAGRAPH_SEPARATOR = '\u2029'
+
+
+def to_plain_text(self):
+    # QPlainTextEdit's toPlainText implementation replaces nbsp with normal
+    # space, so we re-implement it using QTextCursor, which does not do
+    # that
+    c = self.textCursor()
+    c.clearSelection()
+    c.movePosition(QTextCursor.MoveOperation.Start)
+    c.movePosition(QTextCursor.MoveOperation.End, QTextCursor.MoveMode.KeepAnchor)
+    ans = c.selectedText().replace(PARAGRAPH_SEPARATOR, '\n')
+    # QTextCursor pads the return value of selectedText with null bytes if
+    # non BMP characters such as 0x1f431 are present.
+    return ans.rstrip('\0')
+
+
+class CalendarWidget(QCalendarWidget):
+
+    def showEvent(self, ev):
+        if self.selectedDate().year() == UNDEFINED_DATE.year:
+            self.setSelectedDate(QDate.currentDate())
+
+
+class DateTimeEdit(QDateTimeEdit):
+
+    MIME_TYPE = 'application/x-calibre-datetime-value'
+
+    def __init__(self, parent=None):
+        QDateTimeEdit.__init__(self, parent)
+        self.setMinimumDateTime(UNDEFINED_QDATETIME)
+        self.setCalendarPopup(True)
+        self.cw = CalendarWidget(self)
+        if tweaks['calendar_start_day_of_week'] != 'Default':
+            try:
+                dow = Qt.DayOfWeek[tweaks['calendar_start_day_of_week']]
+                self.cw.setFirstDayOfWeek(dow)
+            except Exception:
+                print(f"Bad value for tweak calendar_start_day_of_week: {tweaks['calendar_start_day_of_week']}")
+        self.cw.setVerticalHeaderFormat(QCalendarWidget.VerticalHeaderFormat.NoVerticalHeader)
+        self.setCalendarWidget(self.cw)
+        self.setSpecialValueText(_('Undefined'))
+
+    @property
+    def mime_data_for_copy(self):
+        md = QMimeData()
+        text = self.lineEdit().selectedText()
+        md.setText(text or self.dateTime().toString())
+        md.setData(self.MIME_TYPE, self.dateTime().toString(Qt.DateFormat.ISODate).encode('ascii'))
+        return md
+
+    def copy(self):
+        QApplication.instance().clipboard().setMimeData(self.mime_data_for_copy)
+
+    def cut(self):
+        md = self.mime_data_for_copy
+        self.lineEdit().cut()
+        QApplication.instance().clipboard().setMimeData(md)
+
+    def paste(self):
+        md = QApplication.instance().clipboard().mimeData()
+        if md.hasFormat(self.MIME_TYPE):
+            self.setDateTime(QDateTime.fromString(md.data(self.MIME_TYPE).data().decode('ascii'), Qt.DateFormat.ISODate))
+        else:
+            self.lineEdit().paste()
+
+    def create_context_menu(self):
+        m = QMenu(self)
+        m.addAction(_('Set date to undefined') + '\t' + QKeySequence(Qt.Key.Key_Minus).toString(QKeySequence.SequenceFormat.NativeText),
+                    self.clear_date)
+        m.addAction(_('Set date to today') + '\t' + QKeySequence(Qt.Key.Key_Equal).toString(QKeySequence.SequenceFormat.NativeText),
+                    self.today_date)
+        m.addSeparator()
+        populate_standard_spinbox_context_menu(self, m, use_self_for_copy_actions=True)
+        return m
+
+    def contextMenuEvent(self, ev):
+        m = self.create_context_menu()
+        m.popup(ev.globalPos())
+
+    def today_date(self):
+        self.setDateTime(QDateTime.currentDateTime())
+
+    def clear_date(self):
+        self.setDateTime(UNDEFINED_QDATETIME)
+
+    def keyPressEvent(self, ev):
+        if ev.key() == Qt.Key.Key_Minus:
+            ev.accept()
+            self.clear_date()
+        elif ev.key() == Qt.Key.Key_Equal:
+            self.today_date()
+            ev.accept()
+        elif ev.matches(QKeySequence.StandardKey.Copy):
+            self.copy()
+            ev.accept()
+        elif ev.matches(QKeySequence.StandardKey.Cut):
+            self.cut()
+            ev.accept()
+        elif ev.matches(QKeySequence.StandardKey.Paste):
+            self.paste()
+            ev.accept()
+        else:
+            return QDateTimeEdit.keyPressEvent(self, ev)
+
+
+class MessagePopup(QLabel):
+
+    undo_requested = pyqtSignal(object)
+    OFFSET_FROM_TOP = 25
+
+    def __init__(self, parent):
+        QLabel.__init__(self, parent)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.undo_data = None
+        if QApplication.instance().is_dark_theme:
+            c = builtin_colors_dark['green']
+        else:
+            c = builtin_colors_light['green']
+        self.color = self.palette().color(QPalette.ColorRole.WindowText).name()
+        bg = QColor(c).getRgb()
+        self.setStyleSheet(f'''QLabel {{
+            background-color: rgba({bg[0]}, {bg[1]}, {bg[2]}, 0.85);
+            border-radius: 4px;
+            color: {self.color};
+            padding: 0.5em;
+        }}'''
+        )
+        self.linkActivated.connect(self.link_activated)
+        self.close_timer = t = QTimer()
+        t.setSingleShot(True)
+        t.timeout.connect(self.hide)
+        self.setMouseTracking(True)
+        self.hide()
+
+    def mouseMoveEvent(self, ev):
+        self.close_timer.start()
+        return super().mouseMoveEvent(ev)
+
+    def link_activated(self, link):
+        self.hide()
+        if link.startswith('undo://'):
+            self.undo_requested.emit(self.undo_data)
+
+    def __call__(self, text='Testing message popup', show_undo=True, timeout=5000, has_markup=False):
+        text = '<p>' + (text if has_markup else prepare_string_for_xml(text))
+        if show_undo:
+            self.undo_data = show_undo
+            text += '\xa0\xa0<a style="text-decoration: none" href="undo://me.com">{}</a>'.format(_('Undo'))
+        text += f'\xa0\xa0<a style="text-decoration: none; color: {self.color}" href="close://me.com">✖</a>'
+        self.setText(text)
+        self.resize(self.sizeHint())
+        self.position_in_parent()
+        self.show()
+        self.raise_without_focus()
+        self.close_timer.start(timeout)
+
+    def position_in_parent(self):
+        p = self.parent()
+        self.move((p.width() - self.width()) // 2, self.OFFSET_FROM_TOP)
 
 
 if __name__ == '__main__':
     from calibre.gui2 import Application
     app = Application([])
     app.load_builtin_fonts()
+    d = QDialog()
+    l = QVBoxLayout(d)
     w = FlowLayout.test()
-    w.show()
-    app.exec_()
+    l.addWidget(w)
+    d.exec()

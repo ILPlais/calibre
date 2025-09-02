@@ -1,21 +1,34 @@
-#!/usr/bin/env python2
-# vim:fileencoding=utf-8
+#!/usr/bin/env python
 # License: GPLv3 Copyright: 2018, Kovid Goyal <kovid at kovidgoyal.net>
 
-from __future__ import absolute_import, division, print_function, unicode_literals
 
 from lxml import etree
 
 from calibre.ebooks.metadata.opf3 import (
-    DC, OPF, XPath, create_rating, create_series, create_timestamp,
-    encode_is_multiple, ensure_id, normalize_whitespace, parse_date, read_prefixes,
-    read_refines, read_user_metadata2, refdef, remove_element, set_last_modified,
-    set_refines, set_user_metadata3
+    DC,
+    OPF,
+    XPath,
+    create_rating,
+    create_series,
+    create_timestamp,
+    encode_is_multiple,
+    ensure_id,
+    normalize_whitespace,
+    parse_date,
+    read_prefixes,
+    read_refines,
+    read_user_metadata2,
+    refdef,
+    remove_element,
+    set_last_modified,
+    set_refines,
+    set_user_metadata3,
 )
 from calibre.ebooks.metadata.utils import parse_opf, pretty_print_opf
+from polyglot.builtins import itervalues
 
 
-class Data(object):
+class Data:
     pass
 
 
@@ -29,7 +42,7 @@ def upgrade_identifiers(root, data):
             if prefix and rest:
                 scheme, val = prefix, rest
         if scheme and val:
-            ident.text = '{}:{}'.format(scheme, val)
+            ident.text = f'{scheme}:{val}'
         for attr in tuple(ident.attrib):
             if attr != 'id':
                 del ident.attrib[attr]
@@ -140,7 +153,7 @@ def upgrade_series(root, data):
 def upgrade_custom(root, data):
     m = read_user_metadata2(root, remove_tags=True)
     if m:
-        for fm in m.itervalues():
+        for fm in itervalues(m):
             encode_is_multiple(fm)
         set_user_metadata3(root, data.prefixes, data.refines, m)
 
@@ -168,7 +181,9 @@ def upgrade_meta(root, data):
 
 def upgrade_cover(root, data):
     for item in XPath('./opf:metadata/opf:meta[@name="cover"]')(root):
-        remove_element(item, data.refines)
+        # Google Play Books does not recognize covers unless the old style
+        # <meta name="cover"> is present, so leave it in
+        # remove_element(item, data.refines)
         item_id = item.get('content')
         for item in XPath('./opf:manifest/opf:item[@id and @href and @media-type]')(root):
             if item.get('id') == item_id:

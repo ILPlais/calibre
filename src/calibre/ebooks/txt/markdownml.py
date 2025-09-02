@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-
 __license__ = 'GPL 3'
 __copyright__ = '''2011, John Schember <john@nachtimwald.com>
 2011, Leigh Parry <leighparry@blueyonder.co.uk>'''
@@ -9,12 +7,12 @@ __docformat__ = 'restructuredtext en'
 Transform OEB content into Textile formatted plain text
 '''
 import re
-
 from functools import partial
 
 from calibre.ebooks.htmlz.oeb2html import OEB2HTML
 from calibre.ebooks.oeb.base import XHTML, XHTML_NS, barename, namespace, rewrite_links
 from calibre.ebooks.oeb.stylizer import Stylizer
+from polyglot.builtins import string_or_bytes
 
 
 class MarkdownMLizer(OEB2HTML):
@@ -41,9 +39,9 @@ class MarkdownMLizer(OEB2HTML):
         return txt
 
     def mlize_spine(self, oeb_book):
-        output = [u'']
+        output = ['']
         for item in oeb_book.spine:
-            self.log.debug('Converting %s to Markdown formatted TXT...' % item.href)
+            self.log.debug(f'Converting {item.href} to Markdown formatted TXT...')
             self.rewrite_ids(item.data, item)
             rewrite_links(item.data, partial(self.rewrite_link, page=item))
             stylizer = Stylizer(item.data, item.href, oeb_book, self.opts, self.opts.output_profile)
@@ -53,31 +51,31 @@ class MarkdownMLizer(OEB2HTML):
 
     def tidy_up(self, text):
         # Remove blank space form beginning of paragraph.
-        text = re.sub('(?msu)^[ ]{1,3}', '', text)
+        text = re.sub(r'(?msu)^[ ]{1,3}', '', text)
         # pre has 4 spaces. We trimmed 3 so anything with a space left is a pre.
-        text = re.sub('(?msu)^[ ]', '    ', text)
+        text = re.sub(r'(?msu)^[ ]', '    ', text)
 
-        # Remove tabs that aren't at the beinning of a line
+        # Remove tabs that aren't at the beginning of a line
         new_text = []
         for l in text.splitlines():
-            start = re.match('\t+', l)
+            start = re.match(r'\t+', l)
             if start:
                 start = start.group()
             else:
                 start = ''
-            l = re.sub('\t', '', l)
+            l = l.replace('\t', '')
             new_text.append(start + l)
         text = '\n'.join(new_text)
 
         # Remove spaces from blank lines.
-        text = re.sub('(?msu)^[ ]+$', '', text)
+        text = re.sub(r'(?msu)^[ ]+$', '', text)
 
         # Reduce blank lines
-        text = re.sub('(?msu)\n{7,}', '\n' * 6, text)
+        text = re.sub(r'(?msu)\n{7,}', '\n' * 6, text)
 
         # Remove blank lines at beginning and end of document.
-        text = re.sub('^\s*', '', text)
-        text = re.sub('\s*$', '\n\n', text)
+        text = re.sub(r'^\s*', '', text)
+        text = re.sub(r'\s*$', '\n\n', text)
 
         return text
 
@@ -88,7 +86,7 @@ class MarkdownMLizer(OEB2HTML):
         # Condense redundant spaces created by replacing newlines with spaces.
         text = re.sub(r'[ ]{2,}', ' ', text)
         text = re.sub(r'\t+', '', text)
-        if self.remove_space_after_newline == True:  # noqa
+        if self.remove_space_after_newline == True:  # noqa: E712
             text = re.sub(r'^ +', '', text)
             self.remove_space_after_newline = False
         return text
@@ -110,10 +108,10 @@ class MarkdownMLizer(OEB2HTML):
         '''
 
         # We can only processes tags. If there isn't a tag return any text.
-        if not isinstance(elem.tag, basestring) \
+        if not isinstance(elem.tag, string_or_bytes) \
            or namespace(elem.tag) != XHTML_NS:
             p = elem.getparent()
-            if p is not None and isinstance(p.tag, basestring) and namespace(p.tag) == XHTML_NS \
+            if p is not None and isinstance(p.tag, string_or_bytes) and namespace(p.tag) == XHTML_NS \
                     and elem.tail:
                 return [elem.tail]
             return ['']
@@ -136,7 +134,7 @@ class MarkdownMLizer(OEB2HTML):
         if 'margin-top' in style.cssdict() and style['margin-top'] != 'auto':
             ems = int(round(float(style.marginTop) / style.fontSize) - 1)
             if ems >= 1:
-                text.append(u'\n\n' * ems)
+                text.append('\n\n' * ems)
 
         bq = '> ' * self.blockquotes
         # Block level elements
@@ -150,13 +148,13 @@ class MarkdownMLizer(OEB2HTML):
 
         if style['font-style'] == 'italic' or tag in ('i', 'em'):
             if tag not in ('h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'cite'):
-                if self.style_italic == False:  # noqa
+                if self.style_italic == False:  # noqa: E712
                     text.append('*')
                     tags.append('*')
                     self.style_italic = True
         if style['font-weight'] in ('bold', 'bolder') or tag in ('b', 'strong'):
             if tag not in ('h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'th'):
-                if self.style_bold == False:  # noqa
+                if self.style_bold == False:  # noqa: E712
                     text.append('**')
                     tags.append('**')
                     self.style_bold = True
@@ -182,9 +180,9 @@ class MarkdownMLizer(OEB2HTML):
             tags.append('\n')
         elif tag == 'a':
             # Only write links with absolute (external) urls.
-            if self.opts.keep_links and attribs.has_key('href') and '://' in attribs['href']:  # noqa
+            if self.opts.keep_links and 'href' in attribs and '://' in attribs['href']:
                 title = ''
-                if attribs.has_key('title'):  # noqa
+                if 'title' in attribs:
                     title = ' "' + attribs['title'] + '"'
                     remove_space = self.remove_space_after_newline
                     title = self.remove_newlines(title)
@@ -194,7 +192,7 @@ class MarkdownMLizer(OEB2HTML):
         elif tag == 'img':
             if self.opts.keep_image_references:
                 txt = '!'
-                if attribs.has_key('alt'):  # noqa
+                if 'alt' in attribs:
                     remove_space = self.remove_space_after_newline
                     txt += '[' + self.remove_newlines(attribs['alt']) + ']'
                     self.remove_space_after_newline = remove_space
@@ -225,7 +223,7 @@ class MarkdownMLizer(OEB2HTML):
                 text.append('+ ')
             elif li['name'] == 'ol':
                 li['num'] += 1
-                text.append(unicode(li['num']) + '. ')
+                text.append(str(li['num']) + '. ')
 
         # Process tags that contain text.
         if hasattr(elem, 'text') and elem.text:
@@ -262,13 +260,13 @@ class MarkdownMLizer(OEB2HTML):
                     self.style_italic = False
                 elif t == '`':
                     self.in_code = False
-                text.append('%s' % t)
+                text.append(f'{t}')
 
         # Soft scene breaks.
         if 'margin-bottom' in style.cssdict() and style['margin-bottom'] != 'auto':
-            ems = int(round((float(style.marginBottom) / style.fontSize) - 1))
+            ems = round((float(style.marginBottom) / style.fontSize) - 1)
             if ems >= 1:
-                text.append(u'\n\n' * ems)
+                text.append('\n\n' * ems)
 
         # Add the text that is outside of the tag.
         if hasattr(elem, 'tail') and elem.tail:

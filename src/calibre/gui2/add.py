@@ -1,39 +1,46 @@
-#!/usr/bin/env python2
-# vim:fileencoding=utf-8
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
+#!/usr/bin/env python
+
 
 __license__ = 'GPL v3'
 __copyright__ = '2014, Kovid Goyal <kovid at kovidgoyal.net>'
 
-import shutil, os, weakref, traceback, tempfile, time
-from threading import Thread
+import os
+import shutil
+import sys
+import tempfile
+import time
+import traceback
+import weakref
 from collections import OrderedDict
-from Queue import Empty
 from io import BytesIO
-from polyglot.builtins import map
+from threading import Thread
 
-from PyQt5.Qt import QObject, Qt, pyqtSignal
+from qt.core import QObject, Qt, pyqtSignal
 
-from calibre import prints, as_unicode
-from calibre.constants import DEBUG, iswindows, isosx, filesystem_encoding
-from calibre.customize.ui import run_plugins_on_postimport, run_plugins_on_postadd
-from calibre.db.adding import find_books_in_directory, compile_rule
+from calibre import as_unicode, prints
+from calibre.constants import DEBUG, filesystem_encoding, ismacos, iswindows
+from calibre.customize.ui import run_plugins_on_postadd, run_plugins_on_postimport
+from calibre.db.adding import compile_rule, find_books_in_directory
 from calibre.db.utils import find_identical_books
 from calibre.ebooks.metadata import authors_to_sort_string
 from calibre.ebooks.metadata.book.base import Metadata
 from calibre.ebooks.metadata.opf2 import OPF
-from calibre.gui2 import error_dialog, warning_dialog, gprefs
+from calibre.gui2 import error_dialog, gprefs, warning_dialog
 from calibre.gui2.dialogs.duplicates import DuplicatesQuestion
 from calibre.gui2.dialogs.progress import ProgressDialog
 from calibre.ptempfile import PersistentTemporaryDirectory
 from calibre.utils import join_with_timeout
 from calibre.utils.config import prefs
-from calibre.utils.ipc.pool import Pool, Failure
+from calibre.utils.filenames import make_long_path_useable
+from calibre.utils.icu import lower as icu_lower
+from calibre.utils.ipc.pool import Failure, Pool
+from calibre.utils.localization import ngettext
+from polyglot.builtins import iteritems, string_or_bytes
+from polyglot.queue import Empty
 
 
 def validate_source(source, parent=None):  # {{{
-    if isinstance(source, basestring):
+    if isinstance(source, string_or_bytes):
         if not os.path.exists(source):
             error_dialog(parent, _('Cannot add books'), _(
                 'The path %s does not exist') % source, show=True)
@@ -57,11 +64,30 @@ def validate_source(source, parent=None):  # {{{
 # }}}
 
 
+def resolve_windows_links(paths, hwnd=None):
+    from calibre_extensions.winutil import resolve_lnk
+    for x in paths:
+        if x.lower().endswith('.lnk'):
+            try:
+                if hwnd is None:
+                    x = resolve_lnk(x)
+                else:
+                    x = resolve_lnk(x, 0, hwnd)
+            except Exception as e:
+                print('Failed to resolve link', x, 'with error:', e, file=sys.stderr)
+                continue
+        yield x
+
+
 class Adder(QObject):
 
     do_one_signal = pyqtSignal()
 
     def __init__(self, source, single_book_per_directory=True, db=None, parent=None, callback=None, pool=None, list_of_archives=False):
+        if isinstance(source, str):
+            source = make_long_path_useable(source)
+        else:
+            source = list(map(make_long_path_useable, source))
         if not validate_source(source, parent):
             return
         QObject.__init__(self, parent)
@@ -74,9 +100,14 @@ class Adder(QObject):
         self.list_of_archives = list_of_archives
         self.callback = callback
         self.add_formats_to_existing = prefs['add_formats_to_existing']
-        self.do_one_signal.connect(self.tick, type=Qt.QueuedConnection)
+        self.do_one_signal.connect(self.tick, type=Qt.ConnectionType.QueuedConnection)
         self.pool = pool
         self.pd = ProgressDialog(_('Adding books...'), _('Scanning for files...'), min=0, max=0, parent=parent, icon='add_book.png')
+        self.win_id = None
+        if parent is not None and hasattr(parent, 'effectiveWinId'):
+            self.win_id = parent.effectiveWinId()
+            if self.win_id is not None:
+                self.win_id = int(self.win_id)
         self.db = getattr(db, 'new_api', None)
         if self.db is not None:
             self.dbref = weakref.ref(db)
@@ -89,6 +120,7 @@ class Adder(QObject):
         self.report = []
         self.items = []
         self.added_book_ids = set()
+        self.merged_formats_added_to = set()
         self.merged_books = set()
         self.added_duplicate_info = set()
         self.pd.show()
@@ -110,7 +142,7 @@ class Adder(QObject):
         if not self.items:
             shutil.rmtree(self.tdir, ignore_errors=True)
         self.setParent(None)
-        self.find_identical_books_data = self.merged_books = self.added_duplicate_info = self.pool = self.items = self.duplicates = self.pd = self.db = self.dbref = self.tdir = self.file_groups = self.scan_thread = None  # noqa
+        self.find_identical_books_data = self.merged_books = self.added_duplicate_info = self.pool = self.items = self.duplicates = self.pd = self.db = self.dbref = self.tdir = self.file_groups = self.scan_thread = None  # noqa: E501
         self.deleteLater()
 
     def tick(self):
@@ -134,16 +166,19 @@ class Adder(QObject):
             import traceback
             traceback.print_exc()
 
-        if iswindows or isosx:
+        if iswindows or ismacos:
             def find_files(root):
                 for dirpath, dirnames, filenames in os.walk(root):
                     for files in find_books_in_directory(dirpath, self.single_book_per_directory, compiled_rules=compiled_rules):
                         if self.abort_scan:
                             return
-                        self.file_groups[len(self.file_groups)] = files
+                        if iswindows:
+                            files = list(resolve_windows_links(files, hwnd=self.win_id))
+                        if files:
+                            self.file_groups[len(self.file_groups)] = files
         else:
             def find_files(root):
-                if isinstance(root, type(u'')):
+                if isinstance(root, str):
                     root = root.encode(filesystem_encoding)
                 for dirpath, dirnames, filenames in os.walk(root):
                     try:
@@ -159,10 +194,9 @@ class Adder(QObject):
         def extract(source):
             tdir = tempfile.mkdtemp(suffix='_archive', dir=self.tdir)
             if source.lower().endswith('.zip'):
-                from calibre.utils.zipfile import ZipFile
+                from calibre.utils.zipfile import extractall
                 try:
-                    with ZipFile(source) as zf:
-                        zf.extractall(tdir)
+                    extractall(source, tdir)
                 except Exception:
                     prints('Corrupt ZIP file, trying to use local headers')
                     from calibre.utils.localunzip import extractall
@@ -170,10 +204,13 @@ class Adder(QObject):
             elif source.lower().endswith('.rar'):
                 from calibre.utils.unrar import extract
                 extract(source, tdir)
+            elif source.lower().endswith('.7z'):
+                from calibre.utils.seven_zip import extract
+                extract(source, tdir)
             return tdir
 
         try:
-            if isinstance(self.source, basestring):
+            if isinstance(self.source, string_or_bytes):
                 find_files(self.source)
                 self.ignore_opf = True
             else:
@@ -186,7 +223,13 @@ class Adder(QObject):
                             find_files(extract(path))
                             self.ignore_opf = True
                         else:
-                            self.file_groups[len(self.file_groups)] = [path]
+                            x = [path]
+                            if iswindows:
+                                x = list(resolve_windows_links(x, hwnd=self.win_id))
+                            if x:
+                                self.file_groups[len(self.file_groups)] = x
+                            else:
+                                unreadable_files.append(path)
                     else:
                         unreadable_files.append(path)
                 if unreadable_files:
@@ -197,7 +240,7 @@ class Adder(QObject):
                     else:
                         a = self.report.append
                         for f in unreadable_files:
-                            a(_('Could not add %s as you do not have permission to read the file' % f))
+                            a(_('Could not add {} as you do not have permission to read the file').format(f))
                             a('')
         except Exception:
             self.scan_error = traceback.format_exc()
@@ -271,7 +314,7 @@ class Adder(QObject):
             except Failure as err:
                 error_dialog(self.pd, _('Cannot add books'), _(
                 'Failed to add some books, click "Show details" for more information.'),
-                det_msg=unicode(err.failure_message) + '\n' + unicode(err.details), show=True)
+                det_msg=str(err.failure_message) + '\n' + str(err.details), show=True)
                 self.pd.canceled = True
             else:
                 # All tasks completed
@@ -348,7 +391,7 @@ class Adder(QObject):
 
         self.pd.msg = mi.title
 
-        cover_path = os.path.join(self.tdir, '%s.cdata' % group_id) if has_cover else None
+        cover_path = os.path.join(self.tdir, f'{group_id}.cdata') if has_cover else None
 
         if self.db is None:
             if paths:
@@ -383,6 +426,7 @@ class Adder(QObject):
             ib_fmts = {fmt.upper() for fmt in self.db.formats(identical_book_id)}
             seen_fmts |= ib_fmts
             self.add_formats(identical_book_id, paths, mi, replace=replace)
+            self.merged_formats_added_to.add(identical_book_id)
         if gprefs['automerge'] == 'new record':
             incoming_fmts = {path.rpartition(os.extsep)[-1].upper() for path in paths}
             if incoming_fmts.intersection(seen_fmts):
@@ -430,12 +474,12 @@ class Adder(QObject):
             # detection/automerge will fail for this book.
             traceback.print_exc()
         if DEBUG:
-            prints('Added', mi.title, 'to db in: %.1f' % (time.time() - st))
+            prints('Added', mi.title, f'to db in: {time.time()-st:.1f}')
 
     def add_formats(self, book_id, paths, mi, replace=True, is_an_add=False):
         fmap = {p.rpartition(os.path.extsep)[-1].lower():p for p in paths}
         fmt_map = {}
-        for fmt, path in fmap.iteritems():
+        for fmt, path in iteritems(fmap):
             # The onimport plugins have already been run by the read metadata
             # worker
             if self.ignore_opf and fmt.lower() == 'opf':
@@ -480,7 +524,7 @@ class Adder(QObject):
 
     def finish(self):
         if DEBUG:
-            prints('Added %s books in %.1f seconds' % (len(self.added_book_ids or self.items), time.time() - self.start_time))
+            prints(f'Added {len(self.added_book_ids or self.items)} books in {time.time() - self.start_time:.1f} seconds')
         if self.report:
             added_some = self.items or self.added_book_ids
             d = warning_dialog if added_some else error_dialog
@@ -488,9 +532,9 @@ class Adder(QObject):
                 'Failed to add any books, click "Show details" for more information')
             d(self.pd, _('Errors while adding'), msg, det_msg='\n'.join(self.report), show=True)
 
-        if gprefs['manual_add_auto_convert'] and self.added_book_ids and self.parent() is not None:
-            self.parent().iactions['Convert Books'].auto_convert_auto_add(
-                self.added_book_ids)
+        potentially_convertible = self.added_book_ids | self.merged_formats_added_to
+        if gprefs['manual_add_auto_convert'] and potentially_convertible and self.parent() is not None:
+            self.parent().iactions['Convert Books'].auto_convert_auto_add(potentially_convertible)
 
         try:
             if callable(self.callback):

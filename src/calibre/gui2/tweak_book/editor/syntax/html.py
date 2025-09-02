@@ -1,38 +1,45 @@
-#!/usr/bin/env python2
-# vim:fileencoding=utf-8
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
+#!/usr/bin/env python
+
 
 __license__ = 'GPL v3'
 __copyright__ = '2013, Kovid Goyal <kovid at kovidgoyal.net>'
 
 import re
-from functools import partial
 from collections import namedtuple
+from functools import partial
 
-from PyQt5.Qt import QFont, QTextBlockUserData, QTextCharFormat
+from qt.core import QFont, QTextBlockUserData, QTextCharFormat, QVariant
 
-from calibre.ebooks.oeb.polish.spell import html_spell_tags, xml_spell_tags
-from calibre.spell.dictionary import parse_lang_code
-from calibre.spell.break_iterator import split_into_words_and_positions
+from calibre.ebooks.oeb.polish.spell import html_spell_tags, patterns, xml_spell_tags
 from calibre.gui2.tweak_book import dictionaries, tprefs, verify_link
 from calibre.gui2.tweak_book.editor import (
-    syntax_text_char_format, SPELL_PROPERTY, SPELL_LOCALE_PROPERTY,
-    store_locale, LINK_PROPERTY, TAG_NAME_PROPERTY, CLASS_ATTRIBUTE_PROPERTY)
+    CLASS_ATTRIBUTE_PROPERTY,
+    LINK_PROPERTY,
+    SPELL_LOCALE_PROPERTY,
+    SPELL_PROPERTY,
+    TAG_NAME_PROPERTY,
+    store_locale,
+    syntax_text_char_format,
+)
 from calibre.gui2.tweak_book.editor.syntax.base import SyntaxHighlighter, run_loop
-from calibre.gui2.tweak_book.editor.syntax.css import (
-    create_formats as create_css_formats, state_map as css_state_map, CSSState, CSSUserData)
+from calibre.gui2.tweak_book.editor.syntax.css import CSSState, CSSUserData
+from calibre.gui2.tweak_book.editor.syntax.css import create_formats as create_css_formats
+from calibre.gui2.tweak_book.editor.syntax.css import state_map as css_state_map
+from calibre.spell.break_iterator import split_into_words_and_positions
+from calibre.spell.dictionary import parse_lang_code
+from calibre_extensions import html_syntax_highlighter as _speedup
+from polyglot.builtins import iteritems
 
 cdata_tags = frozenset(['title', 'textarea', 'style', 'script', 'xmp', 'iframe', 'noembed', 'noframes', 'noscript'])
 normal_pat = re.compile(r'[^<>&]+')
 entity_pat = re.compile(r'&#{0,1}[a-zA-Z0-9]{1,8};')
 tag_name_pat = re.compile(r'/{0,1}[a-zA-Z0-9:-]+')
 space_chars = ' \t\r\n\u000c'
-attribute_name_pat = re.compile(r'''[^%s"'/><=]+''' % space_chars)
+attribute_name_pat = re.compile(rf'''[^{space_chars}"'/><=]+''')
 self_closing_pat = re.compile(r'/\s*>')
-unquoted_val_pat = re.compile(r'''[^%s'"=<>`]+''' % space_chars)
-cdata_close_pats = {x:re.compile(r'</%s' % x, flags=re.I) for x in cdata_tags}
-nbsp_pat = re.compile('[\xa0\u2000-\u200A\u202F\u205F\u3000\u2011-\u2015\uFE58\uFE63\uFF0D]+')  # special spaces and hyphens
+unquoted_val_pat = re.compile(rf'''[^{space_chars}'"=<>`]+''')
+cdata_close_pats = {x:re.compile(rf'</{x}', flags=re.I) for x in cdata_tags}
+nbsp_pat = re.compile(r'[\xa0\u2000-\u200A\u202F\u205F\u3000\u2011-\u2015\uFE58\uFE63\uFF0D]+')  # special spaces and hyphens
 
 NORMAL = 0
 IN_OPENING_TAG = 1
@@ -62,113 +69,31 @@ def refresh_spell_check_status():
     do_spell_check = tprefs['inline_spell_check'] and hasattr(dictionaries, 'active_user_dictionaries')
 
 
-from calibre.constants import plugins
-
-_speedup = plugins['html'][0]
-if _speedup is not None:
-    Tag = _speedup.Tag
-    bold_tags, italic_tags = _speedup.bold_tags, _speedup.italic_tags
-    State = _speedup.State
-
-    def spell_property(sfmt, locale):
-        s = QTextCharFormat(sfmt)
-        s.setProperty(SPELL_LOCALE_PROPERTY, locale)
-        return s
-    _speedup.init(spell_property, dictionaries.recognized, split_into_words_and_positions)
-    del spell_property
-    check_spelling = _speedup.check_spelling
-else:
-    bold_tags = {'b', 'strong'} | {'h%d' % d for d in range(1, 7)}
-    italic_tags = {'i', 'em'}
-
-    class Tag(object):
-
-        __slots__ = ('name', 'bold', 'italic', 'lang')
-
-        def __init__(self, name, bold=None, italic=None, lang=None):
-            self.name = name
-            self.bold = name in bold_tags if bold is None else bold
-            self.italic = name in italic_tags if italic is None else italic
-            self.lang = lang
-
-        def __eq__(self, other):
-            try:
-                return self.name == other.name and self.lang == other.lang
-            except AttributeError:
-                return False
-
-        def copy(self):
-            ans = Tag(self.name, self.bold, self.italic, self.lang)
-            return ans
-
-    class State(object):
-
-        __slots__ = (
-            'tag_being_defined', 'tags', 'is_bold', 'is_italic', 'current_lang',
-            'parse', 'css_formats', 'sub_parser_state', 'default_lang', 'attribute_name',)
-
-        def __init__(self, tags=None):
-            self.tags = []
-            self.is_bold = self.is_italic = False
-            self.tag_being_defined = self.current_lang =  self.css_formats = \
-                self.sub_parser_state = self.default_lang = self.attribute_name = None
-            self.parse = NORMAL
-
-        def copy(self):
-            ans = State()
-            for x in self.__slots__:
-                setattr(ans, x, getattr(self, x))
-            self.tags = [x.copy() for x in self.tags]
-            if self.tag_being_defined is not None:
-                self.tag_being_defined = self.tag_being_defined.copy()
-            if self.sub_parser_state is not None:
-                ans.sub_parser_state = self.sub_parser_state.copy()
-            return ans
-
-        def __eq__(self, other):
-            try:
-                return (
-                    self.parse == other.parse and
-                    self.sub_parser_state == other.sub_parser_state and
-                    self.tag_being_defined == other.tag_being_defined and
-                    self.attribute_name == other.attribute_name and
-                    self.tags == other.tags
-                )
-            except AttributeError:
-                return False
-
-        def __ne__(self, other):
-            return not self.__eq__(other)
-
-        def __repr__(self):
-            return '<State %s is_bold=%s is_italic=%s current_lang=%s>' % (
-                '->'.join(x.name for x in self.tags), self.is_bold, self.is_italic, self.current_lang)
-        __str__ = __repr__
-
-    def check_spelling(text, tlen, fmt, locale, sfmt, store_locale):
-        split_ans = []
-        ppos = 0
-        r, a = dictionaries.recognized, split_ans.append
-        for start, length in split_into_words_and_positions(text, lang=locale.langcode):
-            if start > ppos:
-                a((start - ppos, fmt))
-            ppos = start + length
-            recognized = r(text[start:ppos], locale)
-            if recognized:
-                a((length, fmt))
-            else:
-                if store_locale:
-                    s = QTextCharFormat(sfmt)
-                    s.setProperty(SPELL_LOCALE_PROPERTY, locale)
-                    a((length, s))
-                else:
-                    a((length, sfmt))
-        if ppos < tlen:
-            a((tlen - ppos, fmt))
-        return split_ans
+Tag = _speedup.Tag
+bold_tags, italic_tags = _speedup.bold_tags, _speedup.italic_tags
+State = _speedup.State
 
 
-del _speedup
+def spell_property(sfmt, locale):
+    s = QTextCharFormat(sfmt)
+    s.setProperty(SPELL_LOCALE_PROPERTY, QVariant(locale))
+    return s
+
+
+def sanitizing_recognizer():
+    sanitize = patterns().sanitize_invisible_pat.sub
+    r = dictionaries.recognized
+
+    def recognized(word, locale=None):
+        word = sanitize('', word).strip()
+        return r(word, locale)
+
+    return recognized
+
+
+_speedup.init(spell_property, sanitizing_recognizer(), split_into_words_and_positions)
+del spell_property
+check_spelling = _speedup.check_spelling
 
 
 def finish_opening_tag(state, cdata_tags):
@@ -297,7 +222,7 @@ def process_text(state, text, nbsp_format, spell_format, user_data):
     if state.is_bold or state.is_italic:
         fmt = syntax_text_char_format()
         if state.is_bold:
-            fmt.setFontWeight(QFont.Bold)
+            fmt.setFontWeight(QFont.Weight.Bold)
         if state.is_italic:
             fmt.setFontItalic(True)
     last = 0
@@ -544,7 +469,7 @@ def create_formats(highlighter, add_css=True):
         'nbsp': t['SpecialCharacter'],
         'spell': t['SpellError'],
     }
-    for name, msg in {
+    for name, msg in iteritems({
             '<': _('An unescaped < is not allowed. Replace it with &lt;'),
             '&': _('An unescaped ampersand is not allowed. Replace it with &amp;'),
             '>': _('An unescaped > is not allowed. Replace it with &gt;'),
@@ -553,16 +478,17 @@ def create_formats(highlighter, add_css=True):
             'bad-closing': _('A closing tag must contain only the tag name and nothing else'),
             'no-attr-value': _('Expecting an attribute value'),
             'only-prefix': _('A tag name cannot end with a colon'),
-    }.iteritems():
+    }):
         f = formats[name] = syntax_text_char_format(formats['error'])
         f.setToolTip(msg)
     f = formats['title'] = syntax_text_char_format()
-    f.setFontWeight(QFont.Bold)
+    f.setFontWeight(QFont.Weight.Bold)
     if add_css:
         formats['css_sub_formats'] = create_css_formats(highlighter)
     formats['spell'].setProperty(SPELL_PROPERTY, True)
     formats['class_attr'] = syntax_text_char_format(t['Special'])
     formats['class_attr'].setProperty(CLASS_ATTRIBUTE_PROPERTY, True)
+    formats['class_attr'].setToolTip(_('Hold down the Ctrl key and click to open the first matching CSS style rule'))
     formats['link'] = syntax_text_char_format(t['Link'])
     formats['link'].setProperty(LINK_PROPERTY, True)
     formats['link'].setToolTip(_('Hold down the Ctrl key and click to open this link'))
@@ -600,13 +526,16 @@ class XMLHighlighter(Highlighter):
 
 def profile():
     import sys
-    from PyQt5.Qt import QTextDocument
+
+    from qt.core import QTextDocument
+
     from calibre.gui2 import Application
     from calibre.gui2.tweak_book import set_book_locale
     from calibre.gui2.tweak_book.editor.themes import get_theme
     app = Application([])
     set_book_locale('en')
-    raw = open(sys.argv[-2], 'rb').read().decode('utf-8')
+    with open(sys.argv[-2], 'rb') as f:
+        raw = f.read().decode('utf-8')
     doc = QTextDocument()
     doc.setPlainText(raw)
     h = Highlighter()

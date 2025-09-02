@@ -1,8 +1,6 @@
-#!/usr/bin/env python2
-# vim:fileencoding=utf-8
+#!/usr/bin/env python
 # License: GPLv3 Copyright: 2017, Kovid Goyal <kovid at kovidgoyal.net>
 
-from __future__ import absolute_import, division, print_function, unicode_literals
 
 from calibre import prints
 from calibre.db.restore import Restore
@@ -23,7 +21,7 @@ def option_parser(get_parser, args):
 %prog restore_database [options]
 
 Restore this database from the metadata stored in OPF files in each
-directory of the calibre library. This is useful if your metadata.db file
+folder of the calibre library. This is useful if your metadata.db file
 has been corrupted.
 
 WARNING: This command completely regenerates your database. You will lose
@@ -47,7 +45,7 @@ what is found in the OPF files.
     return parser
 
 
-class Progress(object):
+class Progress:
 
     def __init__(self):
         self.total = 1
@@ -56,7 +54,7 @@ class Progress(object):
         if msg is None:
             self.total = float(step)
         else:
-            prints(msg, '...', '%d%%' % int(100 * (step / self.total)))
+            prints(msg, '...', f'{int(100*(step/self.total))}%')
 
 
 def main(opts, args, dbctx):
@@ -78,8 +76,8 @@ def main(opts, args, dbctx):
         prints('old database saved as', r.olddb)
         if r.errors_occurred:
             name = 'calibre_db_restore_report.txt'
-            lopen('calibre_db_restore_report.txt',
+            open('calibre_db_restore_report.txt',
                   'wb').write(r.report.encode('utf-8'))
-            prints('Some errors occurred. A detailed report was ' 'saved to', name)
+            prints('Some errors occurred. A detailed report was saved to', name)
 
     return 0

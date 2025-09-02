@@ -1,13 +1,13 @@
-#!/usr/bin/env python2
-# vim:fileencoding=utf-8
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
+#!/usr/bin/env python
+
 
 __license__ = 'GPL v3'
 __copyright__ = '2015, Kovid Goyal <kovid at kovidgoyal.net>'
 
 from collections import defaultdict
 from operator import attrgetter
+
+from polyglot.builtins import iteritems, itervalues
 
 LIST_STYLES = frozenset(
     'disc circle square decimal decimal-leading-zero lower-roman upper-roman'
@@ -49,7 +49,7 @@ def find_list_containers(list_tag, tag_style):
     return ans
 
 
-class NumberingDefinition(object):
+class NumberingDefinition:
 
     def __init__(self, top_most, stylizer, namespace):
         self.namespace = namespace
@@ -62,7 +62,7 @@ class NumberingDefinition(object):
         items_for_level = defaultdict(list)
         container_for_level = {}
         type_for_level = {}
-        for ilvl, items in self.level_map.iteritems():
+        for ilvl, items in iteritems(self.level_map):
             for container, list_tag, block, list_type, tag_style in items:
                 items_for_level[ilvl].append(list_tag)
                 container_for_level[ilvl] = container
@@ -76,7 +76,7 @@ class NumberingDefinition(object):
         return hash(self.levels)
 
     def link_blocks(self):
-        for ilvl, items in self.level_map.iteritems():
+        for ilvl, items in iteritems(self.level_map):
             for container, list_tag, block, list_type, tag_style in items:
                 block.numbering_id = (self.num_id + 1, ilvl)
 
@@ -84,12 +84,12 @@ class NumberingDefinition(object):
         makeelement = self.namespace.makeelement
         an = makeelement(parent, 'w:abstractNum', w_abstractNumId=str(self.num_id))
         makeelement(an, 'w:multiLevelType', w_val='hybridMultilevel')
-        makeelement(an, 'w:name', w_val='List %d' % (self.num_id + 1))
+        makeelement(an, 'w:name', w_val=f'List {self.num_id + 1}')
         for level in self.levels:
             level.serialize(an, makeelement)
 
 
-class Level(object):
+class Level:
 
     def __init__(self, list_type, container, items, ilvl=0):
         self.ilvl = ilvl
@@ -106,7 +106,7 @@ class Level(object):
             self.num_fmt = 'bullet'
             self.lvl_text = '\uf0b7' if list_type == 'disc' else STYLE_MAP[list_type]
         else:
-            self.lvl_text = '%{}.'.format(self.ilvl + 1)
+            self.lvl_text = f'%{self.ilvl + 1}.'
             self.num_fmt = STYLE_MAP.get(list_type, 'decimal')
 
     def __hash__(self):
@@ -121,10 +121,10 @@ class Level(object):
         makeelement(makeelement(lvl, 'w:pPr'), 'w:ind', w_hanging='360', w_left=str(1152 + self.ilvl * 360))
         if self.num_fmt == 'bullet':
             ff = {'\uf0b7':'Symbol', '\uf0a7':'Wingdings'}.get(self.lvl_text, 'Courier New')
-            makeelement(makeelement(lvl, 'w:rPr'), 'w:rFonts', w_ascii=ff, w_hAnsi=ff, w_hint="default")
+            makeelement(makeelement(lvl, 'w:rPr'), 'w:rFonts', w_ascii=ff, w_hAnsi=ff, w_hint='default')
 
 
-class ListsManager(object):
+class ListsManager:
 
     def __init__(self, docx):
         self.namespace = docx.namespace
@@ -148,16 +148,16 @@ class ListsManager(object):
                 ilvl = len(container_tags) - 1
                 l.level_map[ilvl].append((container_tags[0], list_tag, block, list_type, tag_style))
 
-        [nd.finalize() for nd in lists.itervalues()]
+        [nd.finalize() for nd in itervalues(lists)]
         definitions = {}
-        for defn in lists.itervalues():
+        for defn in itervalues(lists):
             try:
                 defn = definitions[defn]
             except KeyError:
                 definitions[defn] = defn
                 defn.num_id = len(definitions) - 1
             defn.link_blocks()
-        self.definitions = sorted(definitions.itervalues(), key=attrgetter('num_id'))
+        self.definitions = sorted(itervalues(definitions), key=attrgetter('num_id'))
 
     def serialize(self, parent):
         for defn in self.definitions:

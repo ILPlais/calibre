@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-
 __license__   = 'GPL v3'
 __copyright__ = '2009, Tijmen Ruizendaal <tijmen at mybebook.com>'
 __docformat__ = 'restructuredtext en'
@@ -45,12 +43,12 @@ class HANLINV3(USBMS):
         card = names.get('carda', None)
 
         try:
-            main_num = int(re.findall('\d+', main)[0]) if main else None
-        except:
+            main_num = int(re.findall(r'\d+', main)[0]) if main else None
+        except Exception:
             main_num = None
         try:
-            card_num = int(re.findall('\d+', card)[0]) if card else None
-        except:
+            card_num = int(re.findall(r'\d+', card)[0]) if card else None
+        except Exception:
             card_num = None
 
         if card_num is not None and main_num is not None and card_num > main_num:
@@ -99,8 +97,8 @@ class HANLINV5(HANLINV3):
     gui_name       = 'Hanlin V5'
     description    = _('Communicate with Hanlin V5 e-book readers.')
 
-    VENDOR_ID	= [0x0492]
-    PRODUCT_ID	= [0x8813]
+    VENDOR_ID   = [0x0492]
+    PRODUCT_ID  = [0x8813]
     BCD         = [0x319]
 
     OSX_MAIN_MEM = 'Hanlin V5 Internal Memory'
@@ -121,7 +119,7 @@ class BOOX(HANLINV3):
     supported_platforms = ['windows', 'osx', 'linux']
     METADATA_CACHE = '.metadata.calibre'
     DRIVEINFO = '.driveinfo.calibre'
-    icon           = I('devices/boox.png')
+    icon           = 'devices/boox.png'
 
     # Ordered list of supported formats
     FORMATS     = ['epub', 'fb2', 'djvu', 'pdf', 'html', 'txt', 'rtf', 'mobi',
@@ -135,7 +133,7 @@ class BOOX(HANLINV3):
     STORAGE_CARD_VOLUME_LABEL = 'BOOX Storage Card'
 
     EBOOK_DIR_MAIN = ['MyBooks']
-    EXTRA_CUSTOMIZATION_MESSAGE = _('Comma separated list of directories to '
+    EXTRA_CUSTOMIZATION_MESSAGE = _('Comma separated list of folders to '
             'send e-books to on the device. The first one that exists will '
             'be used.')
     EXTRA_CUSTOMIZATION_DEFAULT = ', '.join(EBOOK_DIR_MAIN)

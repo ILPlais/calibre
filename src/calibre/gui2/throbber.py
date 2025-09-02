@@ -1,16 +1,26 @@
-#!/usr/bin/env python2
-# vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
+#!/usr/bin/env python
+
 
 __license__   = 'GPL v3'
 __copyright__ = '2010, Kovid Goyal <kovid@kovidgoyal.net>'
 __docformat__ = 'restructuredtext en'
 
 
-from PyQt5.Qt import (
-    QToolButton, QSize, QPropertyAnimation, Qt, QMetaObject, pyqtProperty, QSizePolicy,
-    QWidget, QIcon, QPainter, QStyleOptionToolButton)
+from qt.core import (
+    QAbstractAnimation,
+    QIcon,
+    QMetaObject,
+    QPainter,
+    QPropertyAnimation,
+    QSize,
+    QSizePolicy,
+    QStyle,
+    QStyleOptionToolButton,
+    Qt,
+    QToolButton,
+    QWidget,
+    pyqtProperty,
+)
 
 from calibre.gui2 import config
 
@@ -29,15 +39,15 @@ class ThrobbingButton(QToolButton):
         QToolButton.__init__(self, *args)
         # vertically size policy must be expanding for it to align inside a
         # toolbar
-        self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
         self._icon_size = -1
-        QToolButton.setIcon(self, QIcon(I('donate.png')))
+        QToolButton.setIcon(self, QIcon.ic('donate.png'))
         self.setText('\xa0')
         self.animation = QPropertyAnimation(self, b'icon_size', self)
-        self.animation.setDuration(60/72.*1000)
+        self.animation.setDuration(int(60/72.*1000))
         self.animation.setLoopCount(4)
         self.animation.valueChanged.connect(self.value_changed)
-        self.setCursor(Qt.PointingHandCursor)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.animation.finished.connect(self.animation_finished)
 
     def animation_finished(self):
@@ -55,13 +65,15 @@ class ThrobbingButton(QToolButton):
     def start_animation(self):
         if config['disable_animations']:
             return
-        if self.animation.state() != self.animation.Stopped or not self.isVisible():
+        if self.animation.state() != QAbstractAnimation.State.Stopped or not self.isVisible():
             return
         size = self.iconSize().width()
+        if size < 1:
+            size = max(0, self.width() - 4)
         smaller = int(0.7 * size)
         self.animation.setStartValue(smaller)
         self.animation.setEndValue(size)
-        QMetaObject.invokeMethod(self.animation, 'start', Qt.QueuedConnection)
+        QMetaObject.invokeMethod(self.animation, 'start', Qt.ConnectionType.QueuedConnection)
 
     def stop_animation(self):
         self.animation.stop()
@@ -69,24 +81,25 @@ class ThrobbingButton(QToolButton):
 
     def paintEvent(self, ev):
         size = self._icon_size if self._icon_size > 10 else self.iconSize().width()
+        size = size or max(0, self.width() - 4)
         p = QPainter(self)
         opt = QStyleOptionToolButton()
         self.initStyleOption(opt)
         s = self.style()
         opt.iconSize = QSize(size, size)
-        s.drawComplexControl(s.CC_ToolButton, opt, p, self)
+        s.drawComplexControl(QStyle.ComplexControl.CC_ToolButton, opt, p, self)
 
 
 if __name__ == '__main__':
-    from PyQt5.Qt import QApplication, QHBoxLayout
+    from qt.core import QApplication, QHBoxLayout
     app = QApplication([])
     w = QWidget()
     w.setLayout(QHBoxLayout())
     b = ThrobbingButton()
-    b.setIcon(QIcon(I('donate.png')))
+    b.setIcon(QIcon.ic('donate.png'))
     w.layout().addWidget(b)
     w.show()
     b.set_normal_icon_size(64, 64)
     b.start_animation()
 
-    app.exec_()
+    app.exec()

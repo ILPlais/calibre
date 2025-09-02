@@ -1,21 +1,24 @@
-#!/usr/bin/env python2
-# vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
+#!/usr/bin/env python
+
 
 __license__   = 'GPL v3'
 __copyright__ = '2010, Kovid Goyal <kovid@kovidgoyal.net>'
 __docformat__ = 'restructuredtext en'
 
 
-from PyQt5.Qt import QToolButton
+from qt.core import QToolButton
 
 from calibre.gui2.actions import InterfaceAction
+from calibre.startup import connect_lambda
+from calibre.utils.icu import lower as icu_lower
+from polyglot.builtins import string_or_bytes
 
 
 class SimilarBooksAction(InterfaceAction):
 
     name = 'Similar Books'
-    action_spec = (_('Similar books...'), 'similar.png', _('Show books similar to the current book'), None)
-    popup_type = QToolButton.InstantPopup
+    action_spec = (_('Similar books'), 'similar.png', _('Show books similar to the current book'), None)
+    popup_type = QToolButton.ToolButtonPopupMode.InstantPopup
     action_type = 'current'
     action_add_menu = True
 
@@ -42,7 +45,8 @@ class SimilarBooksAction(InterfaceAction):
         row = idx.row()
 
         # Get the parameters for this search
-        col = db.prefs['similar_' + typ + '_search_key']
+        key = 'similar_' + typ + '_search_key'
+        col = db.prefs[key]
         match = db.prefs['similar_' + typ + '_match_kind']
         if match == 'match_all':
             join = ' and '
@@ -64,18 +68,28 @@ class SimilarBooksAction(InterfaceAction):
                 v = mi.get(f, None)
                 if not v:
                     continue
+                v = db.new_api.split_if_is_multiple_composite(f, v)
                 if isinstance(v, list):
                     val.update(v)
                 else:
                     val.add(v)
         else:
-            # Get the value of the requested field. Can be a list or a simple val
-            val = mi.get(col, None)
+            # Get the value of the requested field. Can be a list or a simple
+            # val. It is possible that col no longer exists, in which case fall
+            # back to the default
+            if col not in mi.all_field_keys():
+                col = db.prefs.defaults[key]
+            val = db.new_api.split_if_is_multiple_composite(col, mi.get(col, None))
         if not val:
             return
 
-        if isinstance(val, basestring):
+        if isinstance(val, string_or_bytes):
             val = [val]
+        if typ == 'authors':
+            import re
+            def remove_et_al(au):
+                return re.sub(r'\s+et al\.$', '', au)
+            val = list(map(remove_et_al, val))
         search = [col + ':"='+t.replace('"', '\\"')+'"' for t in val]
         if search:
             self.gui.search.set_search_string(join.join(search),

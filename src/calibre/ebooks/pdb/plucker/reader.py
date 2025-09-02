@@ -1,7 +1,3 @@
-# -*- coding: utf-8 -*-
-
-# from __future__ import (unicode_literals, division, absolute_import, print_function)
-
 __license__   = 'GPL v3'
 __copyright__ = '20011, John Schember <john@nachtimwald.com>'
 __docformat__ = 'restructuredtext en'
@@ -9,14 +5,14 @@ __docformat__ = 'restructuredtext en'
 import os
 import struct
 import zlib
-
 from collections import OrderedDict
 
 from calibre import CurrentDir
-from calibre.ebooks.pdb.formatreader import FormatReader
 from calibre.ebooks.compression.palmdoc import decompress_doc
+from calibre.ebooks.pdb.formatreader import FormatReader
+from calibre.utils.img import Canvas, image_from_data, save_cover_data_to
 from calibre.utils.imghdr import identify
-from calibre.utils.img import save_cover_data_to, Canvas, image_from_data
+from polyglot.builtins import codepoint_to_chr
 
 DATATYPE_PHTML = 0
 DATATYPE_PHTML_COMPRESSED = 1
@@ -111,14 +107,14 @@ MIBNUM_TO_NAME = {
 }
 
 
-class HeaderRecord(object):
+class HeaderRecord:
     '''
     Plucker header. PDB record 0.
     '''
 
     def __init__(self, raw):
         self.uid, = struct.unpack('>H', raw[0:2])
-        # This is labled version in the spec.
+        # This is labeled version in the spec.
         # 2 is ZLIB compressed,
         # 1 is DOC compressed
         self.compression, = struct.unpack('>H', raw[2:4])
@@ -128,7 +124,7 @@ class HeaderRecord(object):
         self.home_html = None
 
         self.reserved = {}
-        for i in xrange(self.records):
+        for i in range(self.records):
             adv = 4*i
             name, = struct.unpack('>H', raw[6+adv:8+adv])
             id, = struct.unpack('>H', raw[8+adv:10+adv])
@@ -137,7 +133,7 @@ class HeaderRecord(object):
                 self.home_html = id
 
 
-class SectionHeader(object):
+class SectionHeader:
     '''
     Every sections (record) has this header. It gives
     details about the section such as it's uid.
@@ -147,11 +143,11 @@ class SectionHeader(object):
         self.uid, = struct.unpack('>H', raw[0:2])
         self.paragraphs, = struct.unpack('>H', raw[2:4])
         self.size, = struct.unpack('>H', raw[4:6])
-        self.type, = struct.unpack('>B', raw[6])
-        self.flags, = struct.unpack('>B', raw[7])
+        self.type, = struct.unpack('>B', raw[6:7])
+        self.flags, = struct.unpack('>B', raw[7:8])
 
 
-class SectionHeaderText(object):
+class SectionHeaderText:
     '''
     Sub header for text records.
     '''
@@ -165,7 +161,7 @@ class SectionHeaderText(object):
         # Paragraph attributes.
         self.attributes = []
 
-        for i in xrange(section_header.paragraphs):
+        for i in range(section_header.paragraphs):
             adv = 4*i
             self.sizes.append(struct.unpack('>H', raw[adv:2+adv])[0])
             self.attributes.append(struct.unpack('>H', raw[2+adv:4+adv])[0])
@@ -176,13 +172,13 @@ class SectionHeaderText(object):
             self.paragraph_offsets.append(running_offset)
 
 
-class SectionMetadata(object):
+class SectionMetadata:
     '''
     Metadata.
 
     This does not store metadata such as title, or author.
     That metadata would be best retrieved with the PDB (plucker)
-    metdata reader.
+    metadata reader.
 
     This stores document specific information such as the
     text encoding.
@@ -199,7 +195,7 @@ class SectionMetadata(object):
         record_count, = struct.unpack('>H', raw[0:2])
 
         adv = 0
-        for i in xrange(record_count):
+        for i in range(record_count):
             try:
                 type, length = struct.unpack_from('>HH', raw, 2 + adv)
             except struct.error:
@@ -212,7 +208,7 @@ class SectionMetadata(object):
             # ExceptionalCharSets
             elif type == 2:
                 ii_adv = 0
-                for ii in xrange(length / 2):
+                for ii in range(length // 2):
                     uid, = struct.unpack('>H', raw[6+adv+ii_adv:8+adv+ii_adv])
                     mib, = struct.unpack('>H', raw[8+adv+ii_adv:10+adv+ii_adv])
                     self.exceptional_uid_encodings[uid] = MIBNUM_TO_NAME.get(mib, 'latin-1')
@@ -234,7 +230,7 @@ class SectionMetadata(object):
             adv += 2*length
 
 
-class SectionText(object):
+class SectionText:
     '''
     Text data. Stores a text section header and the PHTML.
     '''
@@ -244,7 +240,7 @@ class SectionText(object):
         self.data = raw[section_header.paragraphs * 4:]
 
 
-class SectionCompositeImage(object):
+class SectionCompositeImage:
     '''
     A composite image consists of a 2D array
     of rows and columns. The entries in the array
@@ -269,9 +265,9 @@ class SectionCompositeImage(object):
         # to an image record.
         self.layout = []
         offset = 4
-        for i in xrange(self.rows):
+        for i in range(self.rows):
             col = []
-            for j in xrange(self.columns):
+            for j in range(self.columns):
                 col.append(struct.unpack('>H', raw[offset:offset+2])[0])
                 offset += 2
             self.layout.append(col)
@@ -358,20 +354,20 @@ class Reader(FormatReader):
     def extract_content(self, output_dir):
         # Each text record is independent (unless the continuation
         # value is set in the previous record). Put each converted
-        # text recored into a separate file. We will reference the
+        # text recorded into a separate file. We will reference the
         # home.html file as the first file and let the HTML input
         # plugin assemble the order based on hyperlinks.
         with CurrentDir(output_dir):
             for uid, num in self.uid_text_secion_number.items():
-                self.log.debug('Writing record with uid: %s as %s.html' % (uid, uid))
-                with open('%s.html' % uid, 'wb') as htmlf:
-                    html = u'<html><body>'
+                self.log.debug(f'Writing record with uid: {uid} as {uid}.html')
+                with open(f'{uid}.html', 'wb') as htmlf:
+                    html = '<html><body>'
                     section_header, section_data = self.sections[num]
                     if section_header.type == DATATYPE_PHTML:
                         html += self.process_phtml(section_data.data, section_data.header.paragraph_offsets)
                     elif section_header.type == DATATYPE_PHTML_COMPRESSED:
                         d = self.decompress_phtml(section_data.data)
-                        html += self.process_phtml(d, section_data.header.paragraph_offsets).decode(self.get_text_uid_encoding(section_header.uid), 'replace')
+                        html += self.process_phtml(d, section_data.header.paragraph_offsets)
                     html += '</body></html>'
                     htmlf.write(html.encode('utf-8'))
 
@@ -394,13 +390,13 @@ class Reader(FormatReader):
                         elif self.header_record.compression == 2:
                             idata = zlib.decompress(section_data)
                     try:
-                        save_cover_data_to(idata, '%s.jpg' % uid, compression_quality=70)
+                        save_cover_data_to(idata, f'{uid}.jpg', compression_quality=70)
                         images.add(uid)
-                        self.log.debug('Wrote image with uid %s to images/%s.jpg' % (uid, uid))
+                        self.log.debug(f'Wrote image with uid {uid} to images/{uid}.jpg')
                     except Exception as e:
-                        self.log.error('Failed to write image with uid %s: %s' % (uid, e))
+                        self.log.error(f'Failed to write image with uid {uid}: {e}')
                 else:
-                    self.log.error('Failed to write image with uid %s: No data.' % uid)
+                    self.log.error(f'Failed to write image with uid {uid}: No data.')
             # Composite images.
             # We're going to use the already compressed .jpg images here.
             for uid, num in self.uid_composite_image_section_number.items():
@@ -414,8 +410,8 @@ class Reader(FormatReader):
                         col_height = 0
                         for col in row:
                             if col not in images:
-                                raise Exception('Image with uid: %s missing.' % col)
-                            w, h = identify(lopen('%s.jpg' % col, 'rb'))[1:]
+                                raise Exception(f'Image with uid: {col} missing.')
+                            w, h = identify(open(f'{col}.jpg', 'rb'))[1:]
                             row_width += w
                             if col_height < h:
                                 col_height = h
@@ -430,18 +426,18 @@ class Reader(FormatReader):
                             x_off = 0
                             largest_height = 0
                             for col in row:
-                                im = image_from_data(lopen('%s.jpg' % col, 'rb').read())
+                                im = image_from_data(open(f'{col}.jpg', 'rb').read())
                                 canvas.compose(im, x_off, y_off)
                                 w, h = im.width(), im.height()
                                 x_off += w
                                 if largest_height < h:
                                     largest_height = h
                             y_off += largest_height
-                    with lopen('%s.jpg' % uid) as out:
+                    with open(f'{uid}.jpg') as out:
                         out.write(canvas.export(compression_quality=70))
-                    self.log.debug('Wrote composite image with uid %s to images/%s.jpg' % (uid, uid))
+                    self.log.debug(f'Wrote composite image with uid {uid} to images/{uid}.jpg')
                 except Exception as e:
-                    self.log.error('Failed to write composite image with uid %s: %s' % (uid, e))
+                    self.log.error(f'Failed to write composite image with uid {uid}: {e}')
 
         # Run the HTML through the html processing plugin.
         from calibre.customize.ui import plugin_for_input_format
@@ -452,17 +448,17 @@ class Reader(FormatReader):
         odi = self.options.debug_pipeline
         self.options.debug_pipeline = None
         # Determine the home.html record uid. This should be set in the
-        # reserved values in the metadata recored. home.html is the first
+        # reserved values in the metadata recorded. home.html is the first
         # text record (should have hyper link references to other records)
         # in the document.
         try:
             home_html = self.header_record.home_html
             if not home_html:
                 home_html = self.uid_text_secion_number.items()[0][0]
-        except:
+        except Exception:
             raise Exception('Could not determine home.html')
         # Generate oeb from html conversion.
-        oeb = html_input.convert(open('%s.html' % home_html, 'rb'), self.options, 'html', self.log, {})
+        oeb = html_input.convert(open(f'{home_html}.html', 'rb'), self.options, 'html', self.log, {})
         self.options.debug_pipeline = odi
 
         return oeb
@@ -476,8 +472,8 @@ class Reader(FormatReader):
             from calibre.ebooks.compression.palmdoc import decompress_doc
             return decompress_doc(data)
 
-    def process_phtml(self, d, paragraph_offsets=[]):
-        html = u'<p id="p0">'
+    def process_phtml(self, d, paragraph_offsets=()):
+        html = '<p id="p0">'
         offset = 0
         paragraph_open = True
         link_open = False
@@ -488,18 +484,18 @@ class Reader(FormatReader):
         while offset < len(d):
             if not paragraph_open:
                 if need_set_p_id:
-                    html += u'<p id="p%s">' % p_num
+                    html += f'<p id="p{p_num}">'
                     p_num += 1
                     need_set_p_id = False
                 else:
-                    html += u'<p>'
+                    html += '<p>'
                 paragraph_open = True
 
-            c = ord(d[offset])
+            c = ord(d[offset:offset+1])
             # PHTML "functions"
             if c == 0x0:
                 offset += 1
-                c = ord(d[offset])
+                c = ord(d[offset:offset+1])
                 # Page link begins
                 # 2 Bytes
                 # record ID
@@ -507,7 +503,7 @@ class Reader(FormatReader):
                     offset += 1
                     id = struct.unpack('>H', d[offset:offset+2])[0]
                     if id in self.uid_text_secion_number:
-                        html += '<a href="%s.html">' % id
+                        html += f'<a href="{id}.html">'
                         link_open = True
                     offset += 1
                 # Targeted page link begins
@@ -524,7 +520,7 @@ class Reader(FormatReader):
                     offset += 2
                     pid = struct.unpack('>H', d[offset:offset+2])[0]
                     if id in self.uid_text_secion_number:
-                        html += '<a href="%s.html#p%s">' % (id, pid)
+                        html += f'<a href="{id}.html#p{pid}">'
                         link_open = True
                     offset += 1
                 # Targeted paragraph link begins
@@ -598,7 +594,7 @@ class Reader(FormatReader):
                 elif c == 0x1a:
                     offset += 1
                     uid = struct.unpack('>H', d[offset:offset+2])[0]
-                    html += '<img src="images/%s.jpg" />' % uid
+                    html += f'<img src="images/{uid}.jpg" />'
                     offset += 1
                 # Set margin
                 # 2 Bytes
@@ -616,23 +612,23 @@ class Reader(FormatReader):
                 elif c == 0x33:
                     offset += 3
                     if paragraph_open:
-                        html += u'</p>'
+                        html += '</p>'
                         paragraph_open = False
-                    html += u'<hr />'
+                    html += '<hr />'
                 # New line
                 # 0 Bytes
                 elif c == 0x38:
                     if paragraph_open:
-                        html += u'</p>\n'
+                        html += '</p>\n'
                         paragraph_open = False
                 # Italic text begins
                 # 0 Bytes
                 elif c == 0x40:
-                    html += u'<i>'
+                    html += '<i>'
                 # Italic text ends
                 # 0 Bytes
                 elif c == 0x48:
-                    html += u'</i>'
+                    html += '</i>'
                 # Set text color
                 # 3 Bytes
                 # 8-bit red, 8-bit green, 8-bit blue
@@ -644,24 +640,24 @@ class Reader(FormatReader):
                 elif c == 0x5c:
                     offset += 3
                     uid = struct.unpack('>H', d[offset:offset+2])[0]
-                    html += '<img src="images/%s.jpg" />' % uid
+                    html += f'<img src="images/{uid}.jpg" />'
                     offset += 1
                 # Underline text begins
                 # 0 Bytes
                 elif c == 0x60:
-                    html += u'<u>'
+                    html += '<u>'
                 # Underline text ends
                 # 0 Bytes
                 elif c == 0x68:
-                    html += u'</u>'
+                    html += '</u>'
                 # Strike-through text begins
                 # 0 Bytes
                 elif c == 0x70:
-                    html += u'<s>'
+                    html += '<s>'
                 # Strike-through text ends
                 # 0 Bytes
                 elif c == 0x78:
-                    html += u'</s>'
+                    html += '</s>'
                 # 16-bit Unicode character
                 # 3 Bytes
                 # alternate text length, 16-bit unicode character
@@ -716,21 +712,15 @@ class Reader(FormatReader):
             elif c == 0xa0:
                 html += '&nbsp;'
             else:
-                html += unichr(c)
+                html += codepoint_to_chr(c)
             offset += 1
             if offset in paragraph_offsets:
                 need_set_p_id = True
                 if paragraph_open:
-                    html += u'</p>\n'
+                    html += '</p>\n'
                     paragraph_open = False
 
         if paragraph_open:
-            html += u'</p>'
+            html += '</p>'
 
         return html
-
-    def get_text_uid_encoding(self, uid):
-        # Return the user sepcified input encoding,
-        # otherwise return the alternate encoding specified for the uid,
-        # otherwise retur the default encoding for the document.
-        return self.options.input_encoding if self.options.input_encoding else self.uid_text_secion_encoding.get(uid, self.default_encoding)

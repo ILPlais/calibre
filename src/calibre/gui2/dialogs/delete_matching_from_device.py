@@ -1,15 +1,15 @@
-#!/usr/bin/env python2
+#!/usr/bin/env python
+
+
 __copyright__ = '2008, Kovid Goyal kovid@kovidgoyal.net'
 __docformat__ = 'restructuredtext en'
 __license__   = 'GPL v3'
 
-from PyQt5.Qt import Qt, QDialog, QTableWidgetItem, QAbstractItemView
+from qt.core import QAbstractItemView, QDialog, Qt, QTableWidgetItem
 
 from calibre import strftime
-from calibre.ebooks.metadata import authors_to_string, authors_to_sort_string, \
-                                    title_sort
-from calibre.gui2.dialogs.delete_matching_from_device_ui import \
-                                            Ui_DeleteMatchingFromDeviceDialog
+from calibre.ebooks.metadata import authors_to_sort_string, authors_to_string, title_sort
+from calibre.gui2.dialogs.delete_matching_from_device_ui import Ui_DeleteMatchingFromDeviceDialog
 from calibre.utils.date import UNDEFINED_DATE
 
 
@@ -17,7 +17,7 @@ class tableItem(QTableWidgetItem):
 
     def __init__(self, text):
         QTableWidgetItem.__init__(self, text)
-        self.setFlags(Qt.ItemIsEnabled)
+        self.setFlags(Qt.ItemFlag.ItemIsEnabled)
         self.sort = text.lower()
 
     def __ge__(self, other):
@@ -31,7 +31,7 @@ class centeredTableItem(tableItem):
 
     def __init__(self, text):
         tableItem.__init__(self, text)
-        self.setTextAlignment(Qt.AlignCenter)
+        self.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
 
 
 class titleTableItem(tableItem):
@@ -75,7 +75,7 @@ class DeleteMatchingFromDeviceDialog(QDialog, Ui_DeleteMatchingFromDeviceDialog)
         self.buttonBox.accepted.connect(self.accepted)
         self.buttonBox.rejected.connect(self.rejected)
         self.table.cellClicked.connect(self.cell_clicked)
-        self.table.setSelectionMode(QAbstractItemView.NoSelection)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         self.table.setColumnCount(7)
         self.table.setHorizontalHeaderLabels(
                                     ['', _('Location'), _('Title'), _('Author'),
@@ -86,12 +86,12 @@ class DeleteMatchingFromDeviceDialog(QDialog, Ui_DeleteMatchingFromDeviceDialog)
         self.table.setRowCount(rows)
         row = 0
         for card in items:
-            (model,books) = items[card]
-            for (id,book) in books:
+            model, books = items[card]
+            for id,book in books:
                 item = QTableWidgetItem()
-                item.setFlags(Qt.ItemIsUserCheckable|Qt.ItemIsEnabled)
-                item.setCheckState(Qt.Checked)
-                item.setData(Qt.UserRole, (model, id, book.path))
+                item.setFlags(Qt.ItemFlag.ItemIsUserCheckable|Qt.ItemFlag.ItemIsEnabled)
+                item.setCheckState(Qt.CheckState.Checked)
+                item.setData(Qt.ItemDataRole.UserRole, (model, id, book.path))
                 self.table.setItem(row, 0, item)
                 self.table.setItem(row, 1, tableItem(card))
                 self.table.setItem(row, 2, titleTableItem(book.title))
@@ -103,7 +103,7 @@ class DeleteMatchingFromDeviceDialog(QDialog, Ui_DeleteMatchingFromDeviceDialog)
         self.table.setCurrentCell(0, 1)
         self.table.resizeColumnsToContents()
         self.table.setSortingEnabled(True)
-        self.table.sortByColumn(2, Qt.AscendingOrder)
+        self.table.sortByColumn(2, Qt.SortOrder.AscendingOrder)
         self.table.setCurrentCell(0, 1)
 
     def cell_clicked(self, row, col):
@@ -113,10 +113,9 @@ class DeleteMatchingFromDeviceDialog(QDialog, Ui_DeleteMatchingFromDeviceDialog)
     def accepted(self):
         self.result = []
         for row in range(self.table.rowCount()):
-            if self.table.item(row, 0).checkState() == Qt.Unchecked:
+            if self.table.item(row, 0).checkState() == Qt.CheckState.Unchecked:
                 continue
-            (model, id, path) = self.table.item(row, 0).data(Qt.UserRole)
-            path = unicode(path)
+            model, id, path = self.table.item(row, 0).data(Qt.ItemDataRole.UserRole)
+            path = str(path)
             self.result.append((model, id, path))
         return
-

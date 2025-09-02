@@ -1,17 +1,15 @@
-#!/usr/bin/env python2
-# vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:fdm=marker:ai
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
+#!/usr/bin/env python
+# License: GPLv3 Copyright: 2012, Kovid Goyal <kovid at kovidgoyal.net>
 
-__license__   = 'GPL v3'
-__copyright__ = '2012, Kovid Goyal <kovid at kovidgoyal.net>'
-__docformat__ = 'restructuredtext en'
 
-from PyQt5.Qt import (QLabel, QVBoxLayout, QListWidget, QListWidgetItem, Qt,
-                      QIcon)
+import textwrap
+
+from qt.core import QIcon, QLabel, QListWidget, QListWidgetItem, QPushButton, Qt, QVBoxLayout
 
 from calibre.customize.ui import enable_plugin
+from calibre.gui2 import gprefs
 from calibre.gui2.preferences import ConfigWidgetBase, test_widget
+from polyglot.builtins import iteritems
 
 
 class ConfigWidget(ConfigWidgetBase):
@@ -22,6 +20,7 @@ class ConfigWidget(ConfigWidgetBase):
         self.gui = gui
         self.l = l = QVBoxLayout()
         self.setLayout(l)
+        self.confirms_reset = False
 
         self.la = la = QLabel(_(
             'The list of devices that you have asked calibre to ignore. '
@@ -46,29 +45,42 @@ class ConfigWidget(ConfigWidgetBase):
         f.itemChanged.connect(self.changed_signal)
         f.itemDoubleClicked.connect(self.toggle_item)
 
+        self.reset_confirmations_button = b = QPushButton(_('Reset allowed devices'))
+        b.setToolTip(textwrap.fill(_(
+            'This will erase the list of devices that calibre knows about'
+            ' causing it to ask you for permission to manage them again,'
+            ' the next time they connect')))
+        b.clicked.connect(self.reset_confirmations)
+        l.addWidget(b)
+
+    def reset_confirmations(self):
+        self.confirms_reset = True
+        self.changed_signal.emit()
+
     def toggle_item(self, item):
-        item.setCheckState(Qt.Checked if item.checkState() == Qt.Unchecked else
-                Qt.Unchecked)
+        item.setCheckState(Qt.CheckState.Checked if item.checkState() == Qt.CheckState.Unchecked else
+                Qt.CheckState.Unchecked)
 
     def initialize(self):
+        self.confirms_reset = False
         self.devices.blockSignals(True)
         self.devices.clear()
         for dev in self.gui.device_manager.devices:
-            for d, name in dev.get_user_blacklisted_devices().iteritems():
-                item = QListWidgetItem('%s [%s]'%(name, d), self.devices)
-                item.setData(Qt.UserRole, (dev, d))
-                item.setFlags(Qt.ItemIsEnabled|Qt.ItemIsUserCheckable|Qt.ItemIsSelectable)
-                item.setCheckState(Qt.Checked)
+            for d, name in iteritems(dev.get_user_blacklisted_devices()):
+                item = QListWidgetItem(f'{name} [{d}]', self.devices)
+                item.setData(Qt.ItemDataRole.UserRole, (dev, d))
+                item.setFlags(Qt.ItemFlag.ItemIsEnabled|Qt.ItemFlag.ItemIsUserCheckable|Qt.ItemFlag.ItemIsSelectable)
+                item.setCheckState(Qt.CheckState.Checked)
         self.devices.blockSignals(False)
 
         self.device_plugins.blockSignals(True)
         for dev in self.gui.device_manager.disabled_device_plugins:
             n = dev.get_gui_name()
             item = QListWidgetItem(n, self.device_plugins)
-            item.setData(Qt.UserRole, dev)
-            item.setFlags(Qt.ItemIsEnabled|Qt.ItemIsUserCheckable|Qt.ItemIsSelectable)
-            item.setCheckState(Qt.Checked)
-            item.setIcon(QIcon(I('plugins.png')))
+            item.setData(Qt.ItemDataRole.UserRole, dev)
+            item.setFlags(Qt.ItemFlag.ItemIsEnabled|Qt.ItemFlag.ItemIsUserCheckable|Qt.ItemFlag.ItemIsSelectable)
+            item.setCheckState(Qt.CheckState.Checked)
+            item.setIcon(QIcon.ic('plugins.png'))
         self.device_plugins.sortItems()
         self.device_plugins.blockSignals(False)
 
@@ -78,27 +90,29 @@ class ConfigWidget(ConfigWidgetBase):
 
     def commit(self):
         devs = {}
-        for i in xrange(0, self.devices.count()):
+        for i in range(self.devices.count()):
             e = self.devices.item(i)
-            dev, uid = e.data(Qt.UserRole)
+            dev, uid = e.data(Qt.ItemDataRole.UserRole)
             if dev not in devs:
                 devs[dev] = []
-            if e.checkState() == Qt.Checked:
+            if e.checkState() == Qt.CheckState.Checked:
                 devs[dev].append(uid)
 
-        for dev, bl in devs.iteritems():
+        for dev, bl in iteritems(devs):
             dev.set_user_blacklisted_devices(bl)
 
-        for i in xrange(self.device_plugins.count()):
+        for i in range(self.device_plugins.count()):
             e = self.device_plugins.item(i)
-            dev = e.data(Qt.UserRole)
-            if e.checkState() == Qt.Unchecked:
+            dev = e.data(Qt.ItemDataRole.UserRole)
+            if e.checkState() == Qt.CheckState.Unchecked:
                 enable_plugin(dev)
+        if self.confirms_reset:
+            gprefs['ask_to_manage_device'] = []
 
         return True  # Restart required
 
-if __name__ == '__main__':
-    from PyQt5.Qt import QApplication
-    app = QApplication([])
-    test_widget('Sharing', 'Ignored Devices')
 
+if __name__ == '__main__':
+    from calibre.gui2 import Application
+    app = Application([])
+    test_widget('Sharing', 'Ignored Devices')

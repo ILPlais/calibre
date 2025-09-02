@@ -1,7 +1,5 @@
-#!/usr/bin/env python2
-# vim:fileencoding=utf-8
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
+#!/usr/bin/env python
+
 
 __license__ = 'GPL v3'
 __copyright__ = '2014, Kovid Goyal <kovid at kovidgoyal.net>'
@@ -9,14 +7,12 @@ __copyright__ = '2014, Kovid Goyal <kovid at kovidgoyal.net>'
 from collections import defaultdict, namedtuple
 from operator import itemgetter
 
-from PyQt5.Qt import (
-    QDialog, QFormLayout, QHBoxLayout, QLineEdit, QToolButton, QIcon,
-    QDialogButtonBox, Qt, QSpinBox, QCheckBox)
-
 from lxml import etree
+from qt.core import QCheckBox, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout, QIcon, QLineEdit, QSpinBox, Qt, QToolButton
 
 from calibre.gui2 import choose_files, error_dialog
 from calibre.utils.icu import sort_key
+from calibre.utils.xml_parse import safe_xml_fromstring
 
 Group = namedtuple('Group', 'title feeds')
 
@@ -32,7 +28,7 @@ def uniq(vals, kmap=lambda x:x):
 
 
 def import_opml(raw, preserve_groups=True):
-    root = etree.fromstring(raw)
+    root = safe_xml_fromstring(raw)
     groups = defaultdict(list)
     ax = etree.XPath('ancestor::outline[@title or @text]')
     for outline in root.xpath('//outline[@type="rss" and @xmlUrl]'):
@@ -48,7 +44,7 @@ def import_opml(raw, preserve_groups=True):
                         break
         groups[parent].append((title, url))
 
-    for title in sorted(groups.iterkeys(), key=sort_key):
+    for title in sorted(groups, key=sort_key):
         yield Group(title, uniq(groups[title], kmap=itemgetter(1)))
 
 
@@ -59,7 +55,7 @@ class ImportOPML(QDialog):
         self.l = l = QFormLayout(self)
         self.setLayout(l)
         self.setWindowTitle(_('Import OPML file'))
-        self.setWindowIcon(QIcon(I('opml.png')))
+        self.setWindowIcon(QIcon.ic('opml.png'))
 
         self.h = h = QHBoxLayout()
         self.path = p = QLineEdit(self)
@@ -67,13 +63,13 @@ class ImportOPML(QDialog):
         p.setPlaceholderText(_('Path to OPML file'))
         h.addWidget(p)
         self.cfb = b = QToolButton(self)
-        b.setIcon(QIcon(I('document_open.png')))
+        b.setIcon(QIcon.ic('document_open.png'))
         b.setToolTip(_('Browse for OPML file'))
         b.clicked.connect(self.choose_file)
         h.addWidget(b)
         l.addRow(_('&OPML file:'), h)
         l.labelForField(h).setBuddy(p)
-        b.setFocus(Qt.OtherFocusReason)
+        b.setFocus(Qt.FocusReason.OtherFocusReason)
 
         self._articles_per_feed = a = QSpinBox(self)
         a.setMinimum(1), a.setMaximum(1000), a.setValue(100)
@@ -99,7 +95,7 @@ class ImportOPML(QDialog):
         r.setChecked(True)
         l.addRow(r)
 
-        self.bb = bb = QDialogButtonBox(QDialogButtonBox.Ok|QDialogButtonBox.Cancel)
+        self.bb = bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok|QDialogButtonBox.StandardButton.Cancel)
         bb.accepted.connect(self.accept), bb.rejected.connect(self.reject)
         l.addRow(bb)
 
@@ -125,7 +121,7 @@ class ImportOPML(QDialog):
             self.path.setText(opml_files[0])
 
     def accept(self):
-        path = unicode(self.path.text())
+        path = str(self.path.text())
         if not path:
             return error_dialog(self, _('Path not specified'), _(
                 'You must specify the path to the OPML file to import'), show=True)
@@ -138,10 +134,11 @@ class ImportOPML(QDialog):
 
         QDialog.accept(self)
 
+
 if __name__ == '__main__':
     import sys
     for group in import_opml(open(sys.argv[-1], 'rb').read()):
-        print (group.title)
+        print(group.title)
         for title, url in group.feeds:
-            print ('\t%s - %s' % (title, url))
-        print ()
+            print(f'\t{title} - {url}')
+        print()

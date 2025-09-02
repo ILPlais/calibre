@@ -1,24 +1,24 @@
-#!/usr/bin/env python2
-# vim:fileencoding=utf-8
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
+#!/usr/bin/env python
+
 
 __license__ = 'GPL v3'
 __copyright__ = '2016, Kovid Goyal <kovid at kovidgoyal.net>'
 
 from functools import partial
 
-from cssutils import parseStyle
+from css_parser import parseStyle
 
 from calibre.constants import iswindows
-from calibre.ebooks.oeb.base import OEB_STYLES, OEB_DOCS
-from calibre.ebooks.oeb.polish.cascade import iterrules, resolve_styles, DEFAULTS
+from calibre.ebooks.oeb.base import OEB_DOCS, OEB_STYLES
+from calibre.ebooks.oeb.polish.cascade import DEFAULTS, iterrules, resolve_styles
+from calibre.ebooks.oeb.polish.container import ContainerBase, href_to_name
 from calibre.ebooks.oeb.polish.css import remove_property_value
 from calibre.ebooks.oeb.polish.embed import find_matching_font
-from calibre.ebooks.oeb.polish.container import ContainerBase, href_to_name
 from calibre.ebooks.oeb.polish.stats import StatsCollector, font_keys, normalize_font_properties, prepare_font_rule
 from calibre.ebooks.oeb.polish.tests.base import BaseTest
+from calibre.utils.icu import lower as icu_lower
 from calibre.utils.logging import Log, Stream
+from polyglot.builtins import iteritems
 
 
 class VirtualContainer(ContainerBase):
@@ -75,7 +75,7 @@ class CascadeTest(BaseTest):
         get_rules({'x/one.css':'@media screen { body { color: red; } }'})
         get_rules({'x/one.css':'@media xyz { body { color: red; } }'}, l=0)
         c = get_rules({'x/one.css':'@import "../two.css";', 'two.css':'@import "x/one.css"; body { color: red; }'})[1]
-        self.assertIn('Recursive import', c.log_stream.getvalue().decode('utf-8'))
+        self.assertIn('Recursive import', c.log_stream.getvalue())
 
     def test_resolve_styles(self):
 
@@ -83,7 +83,7 @@ class CascadeTest(BaseTest):
             elem = next(select(selector))
             ans = resolve_property(elem, name)
             if val is None:
-                val = type('')(DEFAULTS[name])
+                val = str(DEFAULTS[name])
             self.assertEqual(val, ans.cssText)
 
         def test_pseudo_property(select, resolve_pseudo_property, selector, prop, name, val=None, abort_on_missing=False):
@@ -94,11 +94,11 @@ class CascadeTest(BaseTest):
                     self.assertTrue(ans is None)
                     return
             if val is None:
-                val = type('')(DEFAULTS[name])
+                val = str(DEFAULTS[name])
             self.assertEqual(val, ans.cssText)
 
         def get_maps(html, styles=None, pseudo=False):
-            html = '<html><head><link href="styles.css"></head><body>{}</body></html>'.format(html)
+            html = f'<html><head><link href="styles.css"></head><body>{html}</body></html>'
             c = VirtualContainer({'index.html':html, 'styles.css':styles or 'body { color: red; font-family: "Kovid Goyal", sans-serif }'})
             resolve_property, resolve_pseudo_property, select = resolve_styles(c, 'index.html')
             if pseudo:
@@ -151,17 +151,16 @@ class CascadeTest(BaseTest):
 
         def get_stats(html, *fonts):
             styles = []
-            html = '<html><head><link href="styles.css"></head><body>{}</body></html>'.format(html)
+            html = f'<html><head><link href="styles.css"></head><body>{html}</body></html>'
             files = {'index.html':html, 'X.otf':b'xxx', 'XB.otf': b'xbxb'}
             for font in fonts:
                 styles.append('@font-face {')
-                for k, v in font.iteritems():
+                for k, v in iteritems(font):
                     if k == 'src':
                         files[v] = b'xxx'
-                        v = 'url(%s)' % v
-                    styles.append('%s : %s;' % (k, v))
+                        v = f'url({v})'
+                    styles.append(f'{k} : {v};')
                 styles.append('}\n')
-            html = '<html><head><link href="styles.css"></head><body>{}</body></html>'.format(html)
             files['styles.css'] = embeds + '\n'.join(styles)
             c = VirtualContainer(files)
             return StatsCollector(c, do_embed=True)
@@ -186,7 +185,7 @@ class CascadeTest(BaseTest):
         def fkey(*args, **kw):
             f = font(*args, **kw)
             f['font-family'] = icu_lower(f['font-family'][0])
-            return frozenset((k, v) for k, v in f.iteritems() if k in font_keys)
+            return frozenset((k, v) for k, v in iteritems(f) if k in font_keys)
 
         def fu(text, *args, **kw):
             key = fkey(*args, **kw)
@@ -208,12 +207,15 @@ class CascadeTest(BaseTest):
 
         s = get_stats('<p style="font-family: X; text-transform:uppercase">abc</p><b style="font-family: X; font-variant: small-caps">d\nef</b>')
         self.assertEqual(s.font_stats, {'XB.otf':set('defDEF'), 'X.otf':set('ABC')})
+        s = get_stats('<style>.fl::first-line { font-family: X }</style><p class="fl">abc<b>def</b></p>')
+        # Technically def should not be needed in X but that is hard to achieve
+        self.assertEqual(s.font_stats, {'XB.otf':set('def'), 'X.otf':set('abcdef')})
 
     def test_remove_property_value(self):
         style = parseStyle('background-image: url(b.png); background: black url(a.png) fixed')
         for prop in style.getProperties(all=True):
             remove_property_value(prop, lambda val:'png' in val.cssText)
-        self.assertEqual('background: black fixed', style.cssText)
+        self.assertEqual('background: black fixed', style.cssText.rstrip(';'))
 
     def test_fallback_font_matching(self):
         def cf(id, weight='normal', style='normal', stretch='normal'):

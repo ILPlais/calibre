@@ -1,6 +1,6 @@
-#!/usr/bin/env  python2
-# encoding: utf-8
-from __future__ import print_function
+#!/usr/bin/env python
+
+
 __license__   = 'GPL v3'
 __copyright__ = '2008, Kovid Goyal kovid@kovidgoyal.net'
 __docformat__ = 'restructuredtext en'
@@ -17,12 +17,16 @@ methods :method:`SearchQueryParser.universal_set` and
 If this module is run, it will perform a series of unit tests.
 '''
 
-import weakref, re
+import re
+import weakref
 
-from calibre.constants import preferred_encoding
-from calibre.utils.icu import sort_key
 from calibre import prints
-
+from calibre.constants import preferred_encoding
+from calibre.utils.icu import lower as icu_lower
+from calibre.utils.icu import sort_key
+from calibre.utils.localization import _
+from polyglot.binary import as_hex_unicode, from_hex_unicode
+from polyglot.builtins import codepoint_to_chr
 
 '''
 This class manages access to the preference holding the saved search queries.
@@ -31,7 +35,7 @@ adding other fields, such as whether the search is a 'favorite'
 '''
 
 
-class SavedSearchQueries(object):
+class SavedSearchQueries:
     queries = {}
     opt_name = ''
 
@@ -43,7 +47,7 @@ class SavedSearchQueries(object):
             self.queries = db.pref(self.opt_name, {})
         else:
             self.queries = {}
-            self._db = lambda : None
+            self._db = lambda: None
 
     @property
     def db(self):
@@ -55,7 +59,7 @@ class SavedSearchQueries(object):
             db.set_pref(self.opt_name, self.queries)
 
     def force_unicode(self, x):
-        if not isinstance(x, unicode):
+        if not isinstance(x, str):
             x = x.decode(preferred_encoding, 'replace')
         return x
 
@@ -64,7 +68,11 @@ class SavedSearchQueries(object):
         self.save_queries()
 
     def lookup(self, name):
-        return self.queries.get(self.force_unicode(name), None)
+        sn = self.force_unicode(name).lower()
+        for n, q in self.queries.items():
+            if sn == n.lower():
+                return q
+        return None
 
     def delete(self, name):
         self.queries.pop(self.force_unicode(name), False)
@@ -133,7 +141,7 @@ base_token ::= a sequence of letters and colons, perhaps quoted
 '''
 
 
-class Parser(object):
+class Parser:
 
     def __init__(self):
         self.current_token = 0
@@ -143,15 +151,18 @@ class Parser(object):
     WORD = 2
     QUOTED_WORD = 3
     EOF = 4
-    REPLACEMENTS = tuple((u'\\' + x, unichr(i + 1)) for i, x in enumerate(u'\\"()'))
+    REPLACEMENTS = tuple(('\\' + x, codepoint_to_chr(i + 1)) for i, x in enumerate('\\"()'))
+
+    # the sep must be a printable character sequence that won't actually appear naturally
+    docstring_sep = '□ༀ؆'  # Unicode white square, Tibetan Om, Arabic-Indic Cube Root
 
     # Had to translate named constants to numeric values
     lex_scanner = re.Scanner([
-            (unicode(r'[()]'), lambda x,t: (Parser.OPCODE, t)),
-            (unicode(r'@.+?:[^")\s]+'), lambda x,t: (Parser.WORD, unicode(t))),
-            (unicode(r'[^"()\s]+'), lambda x,t: (Parser.WORD, unicode(t))),
-            (unicode(r'".*?((?<!\\)")'), lambda x,t: (Parser.QUOTED_WORD, t[1:-1])),
-            (unicode(r'\s+'),              None)
+            (r'[()]',           lambda x,t: (Parser.OPCODE, t)),
+            (r'@.+?:[^")\s]+',  lambda x,t: (Parser.WORD, str(t))),
+            (r'[^"()\s]+',      lambda x,t: (Parser.WORD, str(t))),
+            (r'".*?((?<!\\)")', lambda x,t: (Parser.QUOTED_WORD, t[1:-1])),
+            (r'\s+',            None)
     ], flags=re.DOTALL)
 
     def token(self, advance=False):
@@ -182,6 +193,12 @@ class Parser(object):
         self.current_token += 1
 
     def tokenize(self, expr):
+        # convert docstrings to base64 to avoid all processing. Change the docstring
+        # indicator to something unique with no characters special to the parser.
+        expr = re.sub(r'(""")(..*?)(""")',
+                  lambda mo: self.docstring_sep + as_hex_unicode(mo.group(2)) + self.docstring_sep,
+                  expr, flags=re.DOTALL)
+
         # Strip out escaped backslashes, quotes and parens so that the
         # lex scanner doesn't get confused. We put them back later.
         for k, v in self.REPLACEMENTS:
@@ -189,14 +206,14 @@ class Parser(object):
         tokens = self.lex_scanner.scan(expr)[0]
 
         def unescape(x):
+            # recover the docstrings
+            x = re.sub(f'({self.docstring_sep})(..*?)({self.docstring_sep})',
+                       lambda mo: from_hex_unicode(mo.group(2)), x)
             for k, v in self.REPLACEMENTS:
                 x = x.replace(v, k[1:])
             return x
 
-        return [
-            (tt, unescape(tv) if tt in (self.WORD, self.QUOTED_WORD) else tv)
-            for tt, tv in tokens
-        ]
+        return [(tt, unescape(tv)) for tt, tv in tokens]
 
     def parse(self, expr, locations):
         self.locations = locations
@@ -205,7 +222,6 @@ class Parser(object):
         prog = self.or_expression()
         if not self.is_eof():
             raise ParseException(_('Extra characters at end of search'))
-        # prints(self.tokens, '\n', prog)
         return prog
 
     def or_expression(self):
@@ -278,10 +294,10 @@ class ParseException(Exception):
     def msg(self):
         if len(self.args) > 0:
             return self.args[0]
-        return ""
+        return ''
 
 
-class SearchQueryParser(object):
+class SearchQueryParser:
     '''
     Parses a search query.
 
@@ -332,34 +348,54 @@ class SearchQueryParser(object):
         self._tests_failed = False
         self.optimize = optimize
 
+    def get_queried_fields(self, query):
+        # empty the list of searches used for recursion testing
+        self.searches_seen = set()
+        tree = self._get_tree(query)
+        yield from self._walk_expr(tree)
+
+    def _walk_expr(self, tree):
+        if tree[0] in ('or', 'and'):
+            yield from self._walk_expr(tree[1])
+            yield from self._walk_expr(tree[2])
+        elif tree[0] == 'not':
+            yield from self._walk_expr(tree[1])
+        else:
+            if tree[1] == 'search':
+                query, search_name_lower = self._check_saved_search_recursion(tree[2])
+                yield from self._walk_expr(self._get_tree(query))
+                self.searches_seen.discard(search_name_lower)
+            else:
+                yield tree[1], tree[2]
+
     def parse(self, query, candidates=None):
         # empty the list of searches used for recursion testing
-        self.recurse_level = 0
-        self.searches_seen = set([])
+        self.searches_seen = set()
         candidates = self.universal_set()
         return self._parse(query, candidates=candidates)
 
-    # this parse is used internally because it doesn't clear the
-    # recursive search test list. However, we permit seeing the
-    # same search a few times because the search might appear within
-    # another search.
-    def _parse(self, query, candidates=None):
-        self.recurse_level += 1
+    def _get_tree(self, query):
         try:
             res = self.sqp_parse_cache.get(query, None)
         except AttributeError:
             res = None
-        if res is None:
-            try:
-                res = self.parser.parse(query, self.locations)
-            except RuntimeError:
-                raise ParseException(_('Failed to parse query, recursion limit reached: %s')%repr(query))
-            if self.sqp_parse_cache is not None:
-                self.sqp_parse_cache[query] = res
+        if res is not None:
+            return res
+        try:
+            res = self.parser.parse(query, self.locations)
+        except RuntimeError:
+            raise ParseException(_('Failed to parse query, recursion limit reached: %s')%repr(query))
+        if self.sqp_parse_cache is not None:
+            self.sqp_parse_cache[query] = res
+        return res
+
+    # this parse is used internally because it doesn't clear the
+    # recursive search test list.
+    def _parse(self, query, candidates=None):
+        tree = self._get_tree(query)
         if candidates is None:
             candidates = self.universal_set()
-        t = self.evaluate(res, candidates)
-        self.recurse_level -= 1
+        t = self.evaluate(tree, candidates)
         return t
 
     def method(self, group_name):
@@ -388,30 +424,40 @@ class SearchQueryParser(object):
         #  return self.universal_set().difference(self.evaluate(argument[0]))
         return candidates.difference(self.evaluate(argument[0], candidates))
 
-#     def evaluate_parenthesis(self, argument, candidates):
-#         return self.evaluate(argument[0], candidates)
+    # def evaluate_parenthesis(self, argument, candidates):
+    #     return self.evaluate(argument[0], candidates)
+
+    def _check_saved_search_recursion(self, query):
+        if query.startswith('='):
+            query = query[1:]
+        search_name_lower = query.lower()
+        if search_name_lower in self.searches_seen:
+            raise ParseException(_('Recursive saved search: {0}').format(query))
+        self.searches_seen.add(search_name_lower)
+        query = self._get_saved_search_text(query)
+        return query, search_name_lower
+
+    def _get_saved_search_text(self, query):
+        try:
+            ss = self.lookup_saved_search(query)
+            if ss is None:
+                raise ParseException(_('Unknown saved search: {}').format(query))
+            return ss
+        except ParseException as e:
+            raise e
+        except Exception:  # convert all exceptions (e.g., missing key) to a parse error
+            import traceback
+            traceback.print_exc()
+            raise ParseException(_('Unknown error in saved search: {0}').format(query))
 
     def evaluate_token(self, argument, candidates):
         location = argument[0]
         query = argument[1]
         if location.lower() == 'search':
-            if query.startswith('='):
-                query = query[1:]
-            try:
-                if query in self.searches_seen:
-                    raise ParseException(_('Recursive saved search: {0}').format(query))
-                if self.recurse_level > 5:
-                    self.searches_seen.add(query)
-                ss = self.lookup_saved_search(query)
-                if ss is None:
-                    raise ParseException(_('Unknown saved search: {}').format(query))
-                return self._parse(ss, candidates)
-            except ParseException as e:
-                raise e
-            except:  # convert all exceptions (e.g., missing key) to a parse error
-                import traceback
-                traceback.print_exc()
-                raise ParseException(_('Unknown error in saved search: {0}').format(query))
+            query, search_name_lower = self._check_saved_search_recursion(query)
+            result = self._parse(query, candidates)
+            self.searches_seen.discard(search_name_lower)
+            return result
         return self._get_matches(location, query, candidates)
 
     def _get_matches(self, location, query, candidates):
@@ -431,10 +477,10 @@ class SearchQueryParser(object):
         :param:`query` is a string literal.
         :return: None or a subset of the set returned by :meth:`universal_set`.
         '''
-        return set([])
+        return set()
 
     def universal_set(self):
         '''
         Should return the set of all matches.
         '''
-        return set([])
+        return set()

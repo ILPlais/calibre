@@ -1,27 +1,26 @@
-#!/usr/bin/env python2
-# vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:fdm=marker:ai
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
+#!/usr/bin/env python
+
 
 __license__   = 'GPL v3'
 __copyright__ = '2013, Kovid Goyal <kovid at kovidgoyal.net>'
 __docformat__ = 'restructuredtext en'
 
 import sys
-from polyglot.builtins import map
 
 from lxml import etree
 
 from calibre import prints
 from calibre.ebooks.oeb.base import XHTML
 from calibre.utils.filenames import ascii_filename
+from calibre.utils.icu import lower as icu_lower
+from polyglot.builtins import iteritems, itervalues, string_or_bytes
 
 props = {'font-family':None, 'font-weight':'normal', 'font-style':'normal', 'font-stretch':'normal'}
 
 
 def matching_rule(font, rules):
     ff = font['font-family']
-    if not isinstance(ff, basestring):
+    if not isinstance(ff, string_or_bytes):
         ff = tuple(ff)[0]
     family = icu_lower(ff)
     wt = font['font-weight']
@@ -31,7 +30,7 @@ def matching_rule(font, rules):
     for rule in rules:
         if rule['font-style'] == style and rule['font-stretch'] == stretch and rule['font-weight'] == wt:
             ff = rule['font-family']
-            if not isinstance(ff, basestring):
+            if not isinstance(ff, string_or_bytes):
                 ff = tuple(ff)[0]
             if icu_lower(ff) == family:
                 return rule
@@ -40,14 +39,14 @@ def matching_rule(font, rules):
 def format_fallback_match_report(matched_font, font_family, css_font, report):
     msg = _('Could not find a font in the "%s" family exactly matching the CSS font specification,'
             ' will embed a fallback font instead. CSS font specification:') % font_family
-    msg += '\n\n* font-weight: %s' % css_font.get('font-weight', 'normal')
-    msg += '\n* font-style: %s' % css_font.get('font-style', 'normal')
-    msg += '\n* font-stretch: %s' % css_font.get('font-stretch', 'normal')
+    msg += '\n\n* font-weight: {}'.format(css_font.get('font-weight', 'normal'))
+    msg += '\n* font-style: {}'.format(css_font.get('font-style', 'normal'))
+    msg += '\n* font-stretch: {}'.format(css_font.get('font-stretch', 'normal'))
     msg += '\n\n' + _('Matched font specification:')
     msg += '\n' + matched_font['path']
-    msg += '\n\n* font-weight: %s' % matched_font.get('font-weight', 'normal').strip()
-    msg += '\n* font-style: %s' % matched_font.get('font-style', 'normal').strip()
-    msg += '\n* font-stretch: %s' % matched_font.get('font-stretch', 'normal').strip()
+    msg += '\n\n* font-weight: {}'.format(matched_font.get('font-weight', 'normal').strip())
+    msg += '\n* font-style: {}'.format(matched_font.get('font-style', 'normal').strip())
+    msg += '\n* font-stretch: {}'.format(matched_font.get('font-stretch', 'normal').strip())
     report(msg)
     report('')
 
@@ -59,8 +58,8 @@ def stretch_as_number(val):
         pass
     try:
         return ('ultra-condensed', 'extra-condensed', 'condensed', 'semi-condensed',
-         'normal', 'semi-expanded', 'expanded', 'extra-expanded',
-         'ultra-expanded').index(val)
+                'normal', 'semi-expanded', 'expanded', 'extra-expanded',
+                'ultra-expanded').index(val)
     except Exception:
         return 4  # normal
 
@@ -78,7 +77,7 @@ def filter_by_stretch(fonts, val):
     else:
         candidates = expanded or condensed
     distance_map = {i:abs(stretch_map[i] - val) for i in candidates}
-    min_dist = min(distance_map.itervalues())
+    min_dist = min(itervalues(distance_map))
     return [fonts[i] for i in candidates if distance_map[i] == min_dist]
 
 
@@ -126,14 +125,14 @@ def filter_by_weight(fonts, val):
             return [fonts[rmap[400]]]
         candidates = below or above
     distance_map = {i:abs(weight_map[i] - val) for i in candidates}
-    min_dist = min(distance_map.itervalues())
+    min_dist = min(itervalues(distance_map))
     return [fonts[i] for i in candidates if distance_map[i] == min_dist]
 
 
 def find_matching_font(fonts, weight='normal', style='normal', stretch='normal'):
     # See https://www.w3.org/TR/css-fonts-3/#font-style-matching
-    # We dont implement the unicode character range testing
-    # We also dont implement bolder, lighter
+    # We don't implement the unicode character range testing
+    # We also don't implement bolder, lighter
     for f, q in ((filter_by_stretch, stretch), (filter_by_style, style), (filter_by_weight, weight)):
         fonts = f(fonts, q)
         if len(fonts) == 1:
@@ -143,18 +142,18 @@ def find_matching_font(fonts, weight='normal', style='normal', stretch='normal')
 
 def do_embed(container, font, report):
     from calibre.utils.fonts.scanner import font_scanner
-    report('Embedding font %s from %s' % (font['full_name'], font['path']))
+    report('Embedding font {} from {}'.format(font['full_name'], font['path']))
     data = font_scanner.get_font_data(font)
     fname = font['full_name']
     ext = 'otf' if font['is_otf'] else 'ttf'
     fname = ascii_filename(fname).replace(' ', '-').replace('(', '').replace(')', '')
-    item = container.generate_item('fonts/%s.%s'%(fname, ext), id_prefix='font')
+    item = container.generate_item(f'fonts/{fname}.{ext}', id_prefix='font')
     name = container.href_to_name(item.get('href'), container.opf_name)
     with container.open(name, 'wb') as out:
         out.write(data)
     href = container.name_to_href(name)
-    rule = {k:font.get(k, v) for k, v in props.iteritems()}
-    rule['src'] = 'url(%s)' % href
+    rule = {k:font.get(k, v) for k, v in iteritems(props)}
+    rule['src'] = f'url({href})'
     rule['name'] = name
     return rule
 
@@ -162,10 +161,10 @@ def do_embed(container, font, report):
 def embed_font(container, font, all_font_rules, report, warned):
     rule = matching_rule(font, all_font_rules)
     ff = font['font-family']
-    if not isinstance(ff, basestring):
+    if not isinstance(ff, string_or_bytes):
         ff = ff[0]
     if rule is None:
-        from calibre.utils.fonts.scanner import font_scanner, NoFonts
+        from calibre.utils.fonts.scanner import NoFonts, font_scanner
         if ff in warned:
             return
         try:
@@ -187,8 +186,8 @@ def embed_font(container, font, all_font_rules, report, warned):
     else:
         name = rule['src']
         href = container.name_to_href(name)
-        rule = {k:ff if k == 'font-family' else rule.get(k, v) for k, v in props.iteritems()}
-        rule['src'] = 'url(%s)' % href
+        rule = {k:ff if k == 'font-family' else rule.get(k, v) for k, v in iteritems(props)}
+        rule['src'] = f'url({href})'
         rule['name'] = name
         return rule
 
@@ -198,7 +197,7 @@ def font_key(font):
 
 
 def embed_all_fonts(container, stats, report):
-    all_font_rules = tuple(stats.all_font_rules.itervalues())
+    all_font_rules = tuple(itervalues(stats.all_font_rules))
     warned = set()
     rules, nrules = [], {}
     modified = set()
@@ -211,7 +210,7 @@ def embed_all_fonts(container, stats, report):
         if None in (fs, fu, fr):
             continue
         fs = {icu_lower(x) for x in fs}
-        for font in fu.itervalues():
+        for font in itervalues(fu):
             if icu_lower(font['font-family']) not in fs:
                 continue
             rule = matching_rule(font, fr)
@@ -237,10 +236,10 @@ def embed_all_fonts(container, stats, report):
         return False
 
     # Write out CSS
-    rules = [';\n\t'.join('%s: %s' % (
-        k, '"%s"' % v if k == 'font-family' else v) for k, v in rulel.iteritems() if (k in props and props[k] != v and v != '400') or k == 'src')
+    rules = [';\n\t'.join('{}: {}'.format(
+        k, f'"{v}"' if k == 'font-family' else v) for k, v in iteritems(rulel) if (k in props and props[k] != v and v != '400') or k == 'src')
         for rulel in rules]
-    css = '\n\n'.join(['@font-face {\n\t%s\n}' % r for r in rules])
+    css = '\n\n'.join([f'@font-face {{\n\t{r}\n}}' for r in rules])
     item = container.generate_item('fonts.css', id_prefix='font_embed')
     name = container.href_to_name(item.get('href'), container.opf_name)
     with container.open(name, 'wb') as out:
@@ -249,7 +248,13 @@ def embed_all_fonts(container, stats, report):
     # Add link to CSS in all files that need it
     for spine_name in modified:
         root = container.parsed(spine_name)
-        head = root.xpath('//*[local-name()="head"][1]')[0]
+        try:
+            head = root.xpath('//*[local-name()="head"][1]')[0]
+        except IndexError:
+            head = root.makeelement(XHTML('head'))
+            root.insert(0, head)
+            head.tail = '\n'
+            head.text = '\n  '
         href = container.name_to_href(name, spine_name)
         etree.SubElement(head, XHTML('link'), rel='stylesheet', type='text/css', href=href).tail = '\n'
         container.dirty(spine_name)

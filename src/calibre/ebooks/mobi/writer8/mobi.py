@@ -1,20 +1,19 @@
-#!/usr/bin/env python2
-# vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
+#!/usr/bin/env python
+
 
 __license__   = 'GPL v3'
 __copyright__ = '2012, Kovid Goyal <kovid@kovidgoyal.net>'
 __docformat__ = 'restructuredtext en'
 
-import time, random
+import random
+import time
 from struct import pack
 
-from calibre.ebooks.mobi.utils import RECORD_SIZE, utf8_text
-from calibre.ebooks.mobi.writer8.header import Header
-from calibre.ebooks.mobi.writer2 import (PALMDOC, UNCOMPRESSED)
 from calibre.ebooks.mobi.langcodes import iana2mobi
+from calibre.ebooks.mobi.utils import RECORD_SIZE, utf8_text
+from calibre.ebooks.mobi.writer2 import PALMDOC, UNCOMPRESSED
 from calibre.ebooks.mobi.writer8.exth import build_exth
+from calibre.ebooks.mobi.writer8.header import Header
 from calibre.utils.filenames import ascii_filename
 
 NULL_INDEX = 0xffffffff
@@ -200,12 +199,12 @@ class MOBIHeader(Header):  # {{{
     def __init__(self, file_version=8):
         self.DEFINITION = self.DEFINITION.format(file_version=file_version,
                 record_size=RECORD_SIZE)
-        super(MOBIHeader, self).__init__()
+        super().__init__()
 
     def format_value(self, name, val):
         if name == 'compression':
             val = PALMDOC if val else UNCOMPRESSED
-        return super(MOBIHeader, self).format_value(name, val)
+        return super().format_value(name, val)
 
 # }}}
 
@@ -218,7 +217,7 @@ HEADER_FIELDS = {'compression', 'text_length', 'last_text_record', 'book_type',
                     'flis_record', 'fcis_record', 'uid'}
 
 
-class KF8Book(object):
+class KF8Book:
 
     def __init__(self, writer, for_joint=False):
         self.build_records(writer, for_joint)
@@ -282,7 +281,7 @@ class KF8Book(object):
         # Miscellaneous header fields
         self.compression = writer.compress
         self.book_type = 0x101 if writer.opts.mobi_periodical else 2
-        self.full_title = utf8_text(unicode(metadata.title[0]))
+        self.full_title = utf8_text(str(metadata.title[0]))
         self.title_length = len(self.full_title)
         self.extra_data_flags = 0b1
         if writer.has_tbs:
@@ -331,8 +330,10 @@ class KF8Book(object):
 
             # Write PalmDB Header
 
-            title = ascii_filename(self.full_title.decode('utf-8')).replace(
-                    ' ', '_')[:31]
+            title = ascii_filename(self.full_title.decode('utf-8')).replace(' ', '_')
+            if not isinstance(title, bytes):
+                title = title.encode('ascii')
+            title = title[:31]
             title += (b'\0' * (32 - len(title)))
             now = int(time.time())
             nrecords = len(records)

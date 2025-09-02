@@ -1,20 +1,17 @@
-#!/usr/bin/env python2
-# vim:fileencoding=utf-8
+#!/usr/bin/env python
 # License: GPLv3 Copyright: 2015, Kovid Goyal <kovid at kovidgoyal.net>
 
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
 
 from collections import OrderedDict
-from polyglot.builtins import map
 
-from calibre.db.adding import compile_glob, filter_filename, compile_rule
-from calibre.gui2 import elided_text, Application, error_dialog
-from calibre.gui2.tag_mapper import (
-    RuleEdit as RuleEditBase, RuleEditDialog as
-    RuleEditDialogBase, RuleItem as RuleItemBase, Rules as RulesBase,
-    Tester as TesterBase, RulesDialog as RulesDialogBase
-)
+from calibre.db.adding import compile_glob, compile_rule, filter_filename
+from calibre.gui2 import Application, elided_text, error_dialog
+from calibre.gui2.tag_mapper import RuleEdit as RuleEditBase
+from calibre.gui2.tag_mapper import RuleEditDialog as RuleEditDialogBase
+from calibre.gui2.tag_mapper import RuleItem as RuleItemBase
+from calibre.gui2.tag_mapper import Rules as RulesBase
+from calibre.gui2.tag_mapper import RulesDialog as RulesDialogBase
+from calibre.gui2.tag_mapper import Tester as TesterBase
 from calibre.utils.config import JSONConfig
 
 add_filters = JSONConfig('add-filter-rules')
@@ -66,15 +63,15 @@ class RuleEdit(RuleEditBase):
     def rule(self, rule):
         def sc(name):
             c = getattr(self, name)
-            idx = c.findData(unicode(rule.get(name, '')))
+            idx = c.findData(str(rule.get(name, '')))
             if idx < 0:
                 idx = 0
             c.setCurrentIndex(idx)
         sc('action'), sc('match_type')
-        self.query.setText(unicode(rule.get('query', '')).strip())
+        self.query.setText(str(rule.get('query', '')).strip())
 
     def validate(self):
-        ans = super(RuleEdit, self).validate()
+        ans = super().validate()
         if ans:
             rule = self.rule
             if 'glob' in rule['match_type']:
@@ -109,7 +106,7 @@ class Rules(RulesBase):
     RuleItemClass = RuleItem
     RuleEditDialogClass = RuleEditDialog
     MSG = _('You can specify rules to add/ignore files here. They will be used'
-            ' when recursively adding files from directories/archives and also'
+            ' when recursively adding files from folders/archives and also'
             ' when auto-adding. Click the "Add Rule" button'
             ' below to get started. The rules will be processed in order for every file until either an'
             ' "add" or an "ignore" rule matches. If no rules match, the file will be added only'
@@ -149,7 +146,7 @@ if __name__ == '__main__':
         {'action':'ignore', 'query':'ignore-me', 'match_type':'startswith'},
         {'action':'add', 'query':'*.moose', 'match_type':'glob'},
     ]
-    d.exec_()
+    d.exec()
     from pprint import pprint
     pprint(d.rules)
     del d, app

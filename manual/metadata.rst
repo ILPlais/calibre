@@ -16,7 +16,7 @@ Editing the metadata of one book at a time
 
 Click the book you want to edit and then click the :guilabel:`Edit metadata` button or press the ``E`` key. A dialog opens that allows you to edit all aspects of the metadata. It has various features to make editing faster and more efficient. A list of the commonly used tips:
 
-    * You can click the button in between title and authors to swap them automatically. 
+    * You can click the button in between title and authors to swap them automatically.
     * You can click the button next to author sort to have calibre automatically fill it in using the sort values stored with each author. Use the :guilabel:`Manage authors` dialog to see and change the authors' sort values. This dialog can be opened by clicking and holding the button next to author sort.
     * You can click the button next to tags to use the :guilabel:`Tag editor` to manage the tags associated with the book.
     * The "Ids" box can be used to enter an ISBN (and many other types of id), it will have a red background if you enter an invalid ISBN. It will be green for valid ISBNs.
@@ -25,7 +25,7 @@ Click the book you want to edit and then click the :guilabel:`Edit metadata` but
 Downloading metadata
 ^^^^^^^^^^^^^^^^^^^^^
 
-The nicest feature of the edit metadata dialog is its ability to automatically fill in many metadata fields by getting metadata from various websites. Currently, calibre uses isbndb.com, Google Books, Amazon and Library Thing. The metadata download can fill in Title, author, series, tags, rating, description and ISBN for you.
+The nicest feature of the edit metadata dialog is its ability to automatically fill in many metadata fields by getting metadata from various websites. Currently, calibre uses Google Books and Amazon. The metadata download can fill in Title, author, series, tags, rating, description and ISBN for you.
 
 To use the download, fill in the title and author fields and click the :guilabel:`Fetch metadata` button. calibre will present you with a list of books that most closely match the title and author. If you fill in the ISBN field first, it will be used in preference to the title and author. If no matches are found, try making your search a little less specific by including only some key words in the title and only the author last name.
 
@@ -45,16 +45,16 @@ In addition, there is a button to automatically trim borders from the cover, in 
 Editing the metadata of many books at a time
 ---------------------------------------------
 
-First select the books you want to edit by holding Ctrl or Shift and clicking on them. If you select more than one book, clicking the :guilabel:`Edit metadata` button will cause a new *Bulk* metadata edit dialog to open. Using this dialog, you can quickly set the author/publisher/rating/tags/series etc of a bunch of books to the same value. This is particularly useful if you have just imported a number of books that have some metadata in common. This dialog is very powerful, for example, it has a Search and Replace tab that you can use to perform bulk operations on metadata and even copy metadata from one column to another.
+First select the books you want to edit by holding :kbd:`Ctrl` or :kbd:`Shift` and clicking on them. If you select more than one book, clicking the :guilabel:`Edit metadata` button will cause the *Bulk* metadata edit dialog to open. Using this dialog, you can quickly set the author/publisher/rating/tags/series etc of a bunch of books to the same value. This is particularly useful if you have just imported a number of books that have some metadata in common. This dialog is very powerful, for example, it has a :guilabel:`Search and replace` tab that you can use to perform bulk operations on metadata and even copy metadata from one column to another.
 
-The normal edit metadata dialog also has :guilabel:`Next` and :guilabel:`Previous` buttons that you can use to edit the metadata of several books one after the other. 
+The normal edit metadata dialog also has :guilabel:`Next` and :guilabel:`Previous` buttons that you can use to edit the metadata of several books one after the other.
 
 Search and replace
 ^^^^^^^^^^^^^^^^^^^^
 
-The :guilabel:`Bulk metadata edit` dialog allows you to perform arbitrarily powerful search and replace operations on the selected books. By default it uses a simple text search and replace, but it also support *regular expressions*. For more on regular expressions, see :ref:`regexptutorial`.
+The :guilabel:`Edit metadata for many books` dialog allows you to perform arbitrarily powerful search and replace operations on the selected books. By default it uses a simple text search and replace, but it also support *regular expressions*. For more on regular expressions, see :ref:`regexptutorial`.
 
-As noted above, there are two search and replace modes: character match and regular expression. Character match will look in the `Search field` you choose for the characters you type in the `search for` box and replace those characters with what you type in the `replace with` box. Each occurance of the search characters in the field will be replaced. For example, assume the field being searched contains `a bad cat`. If you search for `a` to be replaced with `HELLO`, then the result will be `HELLO bHELLOd cHELLOt`.
+As noted above, there are two search and replace modes: character match and regular expression. Character match will look in the `Search field` you choose for the characters you type in the `search for` box and replace those characters with what you type in the `replace with` box. Each occurrence of the search characters in the field will be replaced. For example, assume the field being searched contains `a bad cat`. If you search for `a` to be replaced with `HELLO`, then the result will be `HELLO bHELLOd cHELLOt`.
 
 If the field you are searching on is a `multiple` field like tags, then each tag is treated separately. For example, if your tags contain `Horror, Scary`, the search expression `r,` will not match anything because the expression will first be applied to `Horror` and then to `Scary`.
 
@@ -72,7 +72,7 @@ Regular expression mode has some differences from character mode, beyond (of cou
 
 The third and most important is that the replace string can make reference to parts of the search string by using backreferences. A backreference is ``\\n`` where n is an integer that refers to the n'th parenthesized group in the search expression. For example, given the same example as above, `a bad cat`, a search expression `a (...) (...)`, and a replace expression `a \\2 \\1`, the result will be `a cat bad`. Please see the :ref:`regexptutorial` for more information on backreferences.
 
-One useful pattern: assume you want to change the case of an entire field. The easiest way to do this is to use character mode, but lets further assume you want to use regular expression mode. The search expression should be `(.*)` the replace expression should be `\\1`, and the desired case change function should be selected.
+One useful pattern: assume you want to change the case of an entire field. The easiest way to do this is to use character mode, but lets further assume you want to use regular expression mode. The search expression should be `(^.*$)`, the replace expression should be `\\1`, and the desired case change function should be selected.
 
 Finally, in regular expression mode you can copy values from one field to another. Simply make the source and destination field different. The copy can replace the destination field, prepend to the field (add to the front), or append to the field (add at the end). The 'use comma' checkbox tells calibre to (or not to) add a comma between the text and the destination field in prepend and append modes. If the destination is multiple (e.g., tags), then you cannot uncheck this box.
 
@@ -84,3 +84,17 @@ Bulk downloading of metadata
 If you want to download the metadata for multiple books at once, right-click the :guilabel:`Edit metadata` button and select :guilabel:`Download metadata`. You can choose to download only metadata, only covers, or both.
 
 
+.. _data_files:
+
+Adding extra data files to a book
+--------------------------------------
+
+calibre can store any number of extra data files associated to a book. These
+can be alternate covers, supplementary material, etc. They cannot be viewed
+directly or used as conversion sources. Nor are they indexed by the Full text
+search engine in calibre. To view/add/delete them select the book and right
+click the :guilabel:`Edit metadata` button and choose :guilabel:`Manage data
+files`. This will pop-up a window where you can perform operations on these
+files. Alternately, you can right click the :guilabel:`Add books` button and
+choose :guilabel:`Add data files to selected book records` to more quickly add
+data files.

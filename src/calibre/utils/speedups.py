@@ -1,25 +1,22 @@
-#!/usr/bin/env python2
-# vim:fileencoding=utf-8
+#!/usr/bin/env python
 # License: GPLv3 Copyright: 2016, Kovid Goyal <kovid at kovidgoyal.net>
 
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
 
 import os
 
 
-class ReadOnlyFileBuffer(object):
-
+class ReadOnlyFileBuffer:
     ''' A zero copy implementation of a file like object. Uses memoryviews for efficiency. '''
 
-    def __init__(self, raw):
+    def __init__(self, raw: bytes, name: str = ''):
         self.sz, self.mv = len(raw), (raw if isinstance(raw, memoryview) else memoryview(raw))
         self.pos = 0
+        self.name: str = name
 
     def tell(self):
         return self.pos
 
-    def read(self, n=None):
+    def read(self, n: int | None = None) -> memoryview:
         if n is None:
             ans = self.mv[self.pos:]
             self.pos = self.sz
@@ -38,6 +35,9 @@ class ReadOnlyFileBuffer(object):
         self.pos = max(0, min(self.pos, self.sz))
         return self.pos
 
+    def seekable(self):
+        return True
+
     def getvalue(self):
         return self.mv
 
@@ -51,38 +51,43 @@ def svg_path_to_painter_path(d):
 
     :param d: The value of the d attribute of an SVG <path> tag
     '''
-    from PyQt5.Qt import QPainterPath
+    from qt.core import QPainterPath
     cmd = last_cmd = b''
     path = QPainterPath()
-    moveto_abs, moveto_rel = b'Mm'
-    closepath1, closepath2 = b'Zz'
-    lineto_abs, lineto_rel = b'Ll'
-    hline_abs, hline_rel = b'Hh'
-    vline_abs, vline_rel = b'Vv'
-    curveto_abs, curveto_rel = b'Cc'
-    smoothcurveto_abs, smoothcurveto_rel = b'Ss'
-    quadcurveto_abs, quadcurveto_rel = b'Qq'
-    smoothquadcurveto_abs, smoothquadcurveto_rel = b'Tt'
+    moveto_abs, moveto_rel = b'M', b'm'
+    closepath1, closepath2 = b'Z', b'z'
+    lineto_abs, lineto_rel = b'L', b'l'
+    hline_abs, hline_rel = b'H', b'h'
+    vline_abs, vline_rel = b'V', b'v'
+    curveto_abs, curveto_rel = b'C', b'c'
+    smoothcurveto_abs, smoothcurveto_rel = b'S', b's'
+    quadcurveto_abs, quadcurveto_rel = b'Q', b'q'
+    smoothquadcurveto_abs, smoothquadcurveto_rel = b'T', b't'
 
     # Store the last parsed values
     # x/y = end position
     # x1/y1 and x2/y2 = bezier control points
     x = y = x1 = y1 = x2 = y2 = 0
 
-    data = d.replace(b',', b' ').replace(b'\n', b' ')
-    if isinstance(data, type('')):
-        data = data.encode('ascii')
-    end = len(data)
-    data = ReadOnlyFileBuffer(data)
+    if isinstance(d, str):
+        d = d.encode('ascii')
+    d = d.replace(b',', b' ').replace(b'\n', b' ')
+    end = len(d)
+    pos = [0]
+
+    def read_byte():
+        p = pos[0]
+        pos[0] += 1
+        return d[p:p+1]
 
     def parse_float():
         chars = []
-        while data.tell() < end:
-            c = data.read(1)
+        while pos[0] < end:
+            c = read_byte()
             if c == b' ' and not chars:
                 continue
-            if c == b'-' or b'0' <= c[0] <= b'9' or c == b'.':
-                chars.append(c[0])
+            if c in b'-.0123456789':
+                chars.append(c)
             else:
                 break
         if not chars:
@@ -90,20 +95,20 @@ def svg_path_to_painter_path(d):
         return float(b''.join(chars))
 
     def parse_floats(num, x_offset=0, y_offset=0):
-        for i in xrange(num):
+        for i in range(num):
             val = parse_float()
             yield val + (x_offset if i % 2 == 0 else y_offset)
 
     repeated_command = None
 
-    while data.tell() < end:
+    while pos[0] < end:
         last_cmd = cmd
-        cmd = data.read(1) if repeated_command is None else repeated_command
+        cmd = read_byte() if repeated_command is None else repeated_command
         repeated_command = None
 
         if cmd == b' ':
             continue
-        elif cmd == moveto_abs:
+        if cmd == moveto_abs:
             x, y = parse_float(), parse_float()
             path.moveTo(x, y)
         elif cmd == moveto_rel:
@@ -175,11 +180,11 @@ def svg_path_to_painter_path(d):
                 x1, y1 = x, y
             x, y = parse_floats(2, x, y)
             path.quadTo(x1, y1, x, y)
-        elif cmd[0] in b'-.' or b'0' <= cmd[0] <= b'9':
+        elif cmd in b'-.0123456789':
             # A new number begins
             # In this case, multiple parameters tuples are specified for the last command
             # We rewind to reparse data correctly
-            data.seek(-1, os.SEEK_CUR)
+            pos[0] -= 1
 
             # Handle extra parameters
             if last_cmd == moveto_abs:
@@ -190,11 +195,11 @@ def svg_path_to_painter_path(d):
                 raise ValueError('Extra parameters after close path command')
             elif last_cmd in (
                 lineto_abs, lineto_rel, hline_abs, hline_rel, vline_abs,
-                vline_rel, curveto_abs, curveto_rel,smoothcurveto_abs,
+                vline_rel, curveto_abs, curveto_rel, smoothcurveto_abs,
                 smoothcurveto_rel, quadcurveto_abs, quadcurveto_rel,
                 smoothquadcurveto_abs, smoothquadcurveto_rel
             ):
                 repeated_command = cmd = last_cmd
         else:
-            raise ValueError('Unknown path command: %s' % cmd)
+            raise ValueError(f'Unknown path command: {cmd}')
     return path

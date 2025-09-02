@@ -1,32 +1,49 @@
-#!/usr/bin/env python2
-# vim:fileencoding=utf-8
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
+#!/usr/bin/env python
+
 
 __license__ = 'GPL v3'
 __copyright__ = '2014, Kovid Goyal <kovid at kovidgoyal.net>'
 
-import re, random, unicodedata
+import numbers
+import random
+import re
+import unicodedata
 from collections import namedtuple
 from contextlib import contextmanager
-from math import ceil, sqrt, cos, sin, atan2
-from polyglot.builtins import map, zip
 from itertools import chain
+from math import atan2, ceil, cos, sin, sqrt
 
-from PyQt5.Qt import (
-    QImage, Qt, QFont, QPainter, QPointF, QTextLayout, QTextOption,
-    QFontMetrics, QTextCharFormat, QColor, QRect, QBrush, QLinearGradient,
-    QPainterPath, QPen, QRectF, QTransform, QRadialGradient
+from qt.core import (
+    QBrush,
+    QColor,
+    QFont,
+    QFontMetrics,
+    QImage,
+    QLinearGradient,
+    QPainter,
+    QPainterPath,
+    QPen,
+    QPointF,
+    QRadialGradient,
+    QRect,
+    QRectF,
+    Qt,
+    QTextCharFormat,
+    QTextLayout,
+    QTextOption,
+    QTransform,
 )
 
-from calibre import force_unicode, fit_image
+from calibre import fit_image, force_unicode
 from calibre.constants import __appname__, __version__
 from calibre.ebooks.metadata import fmt_sidx
 from calibre.ebooks.metadata.book.base import Metadata
 from calibre.ebooks.metadata.book.formatter import SafeFormat
-from calibre.gui2 import ensure_app, config, load_builtin_fonts, pixmap_to_data
+from calibre.gui2 import config, ensure_app, load_builtin_fonts, pixmap_to_data
 from calibre.utils.cleantext import clean_ascii_chars, clean_xml_chars
 from calibre.utils.config import JSONConfig
+from calibre.utils.resources import get_image_path as I
+from polyglot.builtins import iteritems, itervalues, string_or_bytes
 
 # Default settings {{{
 cprefs = JSONConfig('cover_generation')
@@ -112,7 +129,7 @@ def parse_text_formatting(text):
     for tag, start, length in chain(ranges, open_ranges):
         fmt = QTextCharFormat()
         if tag in {'b', 'strong'}:
-            fmt.setFontWeight(QFont.Bold)
+            fmt.setFontWeight(QFont.Weight.Bold)
         elif tag in {'i', 'em'}:
             fmt.setFontItalic(True)
         else:
@@ -127,9 +144,9 @@ def parse_text_formatting(text):
     return text, formats
 
 
-class Block(object):
+class Block:
 
-    def __init__(self, text='', width=0, font=None, img=None, max_height=100, align=Qt.AlignCenter):
+    def __init__(self, text='', width=0, font=None, img=None, max_height=100, align=Qt.AlignmentFlag.AlignCenter):
         self.layouts = []
         self._position = Point(0, 0)
         self.leading = self.line_spacing = 0
@@ -140,9 +157,9 @@ class Block(object):
         for text in text.split('<br>') if text else ():
             text, formats = parse_text_formatting(sanitize(text))
             l = QTextLayout(unescape_formatting(text), font, img)
-            l.setAdditionalFormats(formats)
+            l.setFormats(formats)
             to = QTextOption(align)
-            to.setWrapMode(QTextOption.WrapAtWordBoundaryOrAnywhere)
+            to.setWrapMode(QTextOption.WrapMode.WrapAtWordBoundaryOrAnywhere)
             l.setTextOption(to)
 
             l.beginLayout()
@@ -167,33 +184,32 @@ class Block(object):
 
     @property
     def height(self):
-        return int(ceil(sum(l if isinstance(l, (int, float)) else l.boundingRect().height() for l in self.layouts)))
+        return ceil(sum(l if isinstance(l, numbers.Number) else l.boundingRect().height() for l in self.layouts))
 
-    @dynamic_property
+    @property
     def position(self):
-        def fget(self):
-            return self._position
+        return self._position
 
-        def fset(self, new_pos):
-            (x, y) = new_pos
-            self._position = Point(x, y)
-            if self.layouts:
-                self.layouts[0].setPosition(QPointF(x, y))
-                y += self.layouts[0].boundingRect().height()
-                for l in self.layouts[1:]:
-                    if isinstance(l, (int, float)):
-                        y += l
-                    else:
-                        l.setPosition(QPointF(x, y))
-                        y += l.boundingRect().height()
-        return property(fget=fget, fset=fset)
+    @position.setter
+    def position(self, new_pos):
+        x, y = new_pos
+        self._position = Point(x, y)
+        if self.layouts:
+            self.layouts[0].setPosition(QPointF(x, y))
+            y += self.layouts[0].boundingRect().height()
+            for l in self.layouts[1:]:
+                if isinstance(l, numbers.Number):
+                    y += l
+                else:
+                    l.setPosition(QPointF(x, y))
+                    y += l.boundingRect().height()
 
     def draw(self, painter):
         for l in self.layouts:
             if hasattr(l, 'draw'):
                 # Etch effect for the text
                 painter.save()
-                painter.setRenderHints(QPainter.TextAntialiasing | QPainter.Antialiasing)
+                painter.setRenderHints(QPainter.RenderHint.TextAntialiasing | QPainter.RenderHint.Antialiasing)
                 painter.save()
                 painter.setPen(QColor(255, 255, 255, 125))
                 l.draw(painter, QPointF(1, 1))
@@ -207,21 +223,21 @@ def layout_text(prefs, img, title, subtitle, footer, max_height, style):
     title, subtitle, footer = title, subtitle, footer
     title_font = QFont(prefs.title_font_family or 'Liberation Serif')
     title_font.setPixelSize(prefs.title_font_size)
-    title_font.setStyleStrategy(QFont.PreferAntialias)
+    title_font.setStyleStrategy(QFont.StyleStrategy.PreferAntialias)
     title_block = Block(title, width, title_font, img, max_height, style.TITLE_ALIGN)
     title_block.position = style.hmargin, style.vmargin
     subtitle_block = Block()
     if subtitle:
         subtitle_font = QFont(prefs.subtitle_font_family or 'Liberation Sans')
         subtitle_font.setPixelSize(prefs.subtitle_font_size)
-        subtitle_font.setStyleStrategy(QFont.PreferAntialias)
+        subtitle_font.setStyleStrategy(QFont.StyleStrategy.PreferAntialias)
         gap = 2 * title_block.leading
         mh = max_height - title_block.height - gap
         subtitle_block = Block(subtitle, width, subtitle_font, img, mh, style.SUBTITLE_ALIGN)
         subtitle_block.position = style.hmargin, title_block.position.y + title_block.height + gap
 
     footer_font = QFont(prefs.footer_font_family or 'Liberation Serif')
-    footer_font.setStyleStrategy(QFont.PreferAntialias)
+    footer_font.setStyleStrategy(QFont.StyleStrategy.PreferAntialias)
     footer_font.setPixelSize(prefs.footer_font_size)
     footer_block = Block(footer, width, footer_font, img, max_height, style.FOOTER_ALIGN)
     footer_block.position = style.hmargin, img.height() - style.vmargin - footer_block.height
@@ -230,8 +246,8 @@ def layout_text(prefs, img, title, subtitle, footer, max_height, style):
 
 # }}}
 
-# Format text using templates {{{
 
+# Format text using templates {{{
 
 def sanitize(s):
     return unicodedata.normalize('NFC', clean_xml_chars(clean_ascii_chars(force_unicode(s or ''))))
@@ -275,14 +291,14 @@ def format_fields(mi, prefs):
 
 @contextmanager
 def preserve_fields(obj, fields):
-    if isinstance(fields, basestring):
+    if isinstance(fields, string_or_bytes):
         fields = fields.split()
     null = object()
     mem = {f:getattr(obj, f, null) for f in fields}
     try:
         yield
     finally:
-        for f, val in mem.iteritems():
+        for f, val in iteritems(mem):
             if val is null:
                 delattr(obj, f)
             else:
@@ -302,7 +318,7 @@ ColorTheme = namedtuple('ColorTheme', 'color1 color2 contrast_color1 contrast_co
 
 
 def to_theme(x):
-    return {k:v for k, v in zip(ColorTheme._fields[:4], x.split())}
+    return dict(zip(ColorTheme._fields[:4], x.split()))
 
 
 fallback_colors = to_theme('ffffff 000000 000000 ffffff')
@@ -324,10 +340,10 @@ def load_color_themes(prefs):
     t = default_color_themes.copy()
     t.update(prefs.color_themes)
     disabled = frozenset(prefs.disabled_color_themes)
-    ans = [theme_to_colors(v) for k, v in t.iteritems() if k not in disabled]
+    ans = [theme_to_colors(v) for k, v in iteritems(t) if k not in disabled]
     if not ans:
         # Ignore disabled and return only the builtin color themes
-        ans = [theme_to_colors(v) for k, v in default_color_themes.iteritems()]
+        ans = [theme_to_colors(v) for k, v in iteritems(default_color_themes)]
     return ans
 
 
@@ -339,12 +355,12 @@ def color(color_theme, name):
 
 # }}}
 
+
 # Styles {{{
 
+class Style:
 
-class Style(object):
-
-    TITLE_ALIGN = SUBTITLE_ALIGN = FOOTER_ALIGN = Qt.AlignHCenter | Qt.AlignTop
+    TITLE_ALIGN = SUBTITLE_ALIGN = FOOTER_ALIGN = Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop
 
     def __init__(self, color_theme, prefs):
         self.load_colors(color_theme)
@@ -372,9 +388,9 @@ class Cross(Style):
                   title_block.height + subtitle_block.height + subtitle_block.line_spacing // 2 + title_block.leading)
         painter.save()
         p = QPainterPath()
-        p.addRoundedRect(QRectF(r), 10, 10 * r.width()/r.height(), Qt.RelativeSize)
+        p.addRoundedRect(QRectF(r), 10, 10 * r.width()/r.height(), Qt.SizeMode.RelativeSize)
         painter.setClipPath(p)
-        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.fillRect(r, self.color2)
         painter.restore()
         r = QRect(0, 0, int(title_block.position.x), rect.height())
@@ -460,10 +476,10 @@ class Banner(Style):
         right_fold, right_inner = draw_fold(right + width23, m=-1, corner=right_corner)
 
         painter.save()
-        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         pen = QPen(self.ccolor2)
         pen.setWidth(3)
-        pen.setJoinStyle(Qt.RoundJoin)
+        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
         painter.setPen(pen)
         for r in (left_fold, right_fold):
             painter.fillPath(r, QBrush(self.color2))
@@ -483,7 +499,7 @@ class Ornamental(Style):
     GUI_NAME = _('Ornamental')
 
     # SVG vectors {{{
-    CORNER_VECTOR = "m 67.791903,64.260958 c -4.308097,-2.07925 -4.086719,-8.29575 0.334943,-9.40552 4.119758,-1.03399 8.732363,5.05239 5.393055,7.1162 -0.55,0.33992 -1,1.04147 -1,1.55902 0,1.59332 2.597425,1.04548 5.365141,-1.1316 1.999416,-1.57274 2.634859,-2.96609 2.634859,-5.7775 0,-9.55787 -9.827495,-13.42961 -24.43221,-9.62556 -3.218823,0.83839 -5.905663,1.40089 -5.970755,1.25 -0.06509,-0.1509 -0.887601,-1.19493 -1.827799,-2.32007 -1.672708,-2.00174 -1.636693,-2.03722 1.675668,-1.65052 1.861815,0.21736 6.685863,-0.35719 10.720107,-1.27678 12.280767,-2.79934 20.195487,-0.0248 22.846932,8.0092 3.187273,9.65753 -6.423297,17.7497 -15.739941,13.25313 z m 49.881417,-20.53932 c -3.19204,-2.701 -3.72967,-6.67376 -1.24009,-9.16334 2.48236,-2.48236 5.35141,-2.67905 7.51523,-0.51523 1.85966,1.85966 2.07045,6.52954 0.37143,8.22857 -2.04025,2.04024 3.28436,1.44595 6.92316,-0.77272 9.66959,-5.89579 0.88581,-18.22422 -13.0777,-18.35516 -5.28594,-0.0496 -10.31098,1.88721 -14.26764,5.4991 -1.98835,1.81509 -2.16454,1.82692 -2.7936,0.18763 -0.40973,-1.06774 0.12141,-2.82197 1.3628,-4.50104 2.46349,-3.33205 1.67564,-4.01299 -2.891784,-2.49938 -2.85998,0.94777 -3.81038,2.05378 -5.59837,6.51495 -1.184469,2.95536 -3.346819,6.86882 -4.805219,8.69657 -1.4584,1.82776 -2.65164,4.02223 -2.65164,4.87662 0,3.24694 -4.442667,0.59094 -5.872557,-3.51085 -1.361274,-3.90495 0.408198,-8.63869 4.404043,-11.78183 5.155844,-4.05558 1.612374,-3.42079 -9.235926,1.65457 -12.882907,6.02725 -16.864953,7.18038 -24.795556,7.18038 -8.471637,0 -13.38802,-1.64157 -17.634617,-5.88816 -2.832233,-2.83224 -3.849773,-4.81378 -4.418121,-8.6038 -1.946289,-12.9787795 8.03227,-20.91713135 19.767685,-15.7259993 5.547225,2.4538018 6.993631,6.1265383 3.999564,10.1557393 -5.468513,7.35914 -15.917883,-0.19431 -10.657807,-7.7041155 1.486298,-2.1219878 1.441784,-2.2225068 -0.984223,-2.2225068 -1.397511,0 -4.010527,1.3130878 -5.806704,2.9179718 -2.773359,2.4779995 -3.265777,3.5977995 -3.265777,7.4266705 0,5.10943 2.254112,8.84197 7.492986,12.40748 8.921325,6.07175 19.286666,5.61396 37.12088,-1.63946 15.35037,-6.24321 21.294999,-7.42408 34.886123,-6.92999 11.77046,0.4279 19.35803,3.05537 24.34054,8.42878 4.97758,5.3681 2.53939,13.58271 -4.86733,16.39873 -4.17361,1.58681 -11.00702,1.19681 -13.31978,-0.76018 z m 26.50156,-0.0787 c -2.26347,-2.50111 -2.07852,-7.36311 0.39995,-10.51398 2.68134,-3.40877 10.49035,-5.69409 18.87656,-5.52426 l 6.5685,0.13301 -7.84029,0.82767 c -8.47925,0.89511 -12.76997,2.82233 -16.03465,7.20213 -1.92294,2.57976 -1.96722,3.00481 -0.57298,5.5 1.00296,1.79495 2.50427,2.81821 4.46514,3.04333 2.92852,0.33623 2.93789,0.32121 1.08045,-1.73124 -1.53602,-1.69728 -1.64654,-2.34411 -0.61324,-3.58916 2.84565,-3.4288 7.14497,-0.49759 5.03976,3.43603 -1.86726,3.48903 -8.65528,4.21532 -11.3692,1.21647 z m -4.17462,-14.20302 c -0.38836,-0.62838 -0.23556,-1.61305 0.33954,-2.18816 1.3439,-1.34389 4.47714,-0.17168 3.93038,1.47045 -0.5566,1.67168 -3.38637,2.14732 -4.26992,0.71771 z m -8.48037,-9.1829 c -12.462,-4.1101 -12.53952,-4.12156 -25.49998,-3.7694 -24.020921,0.65269 -32.338219,0.31756 -37.082166,-1.49417 -5.113999,-1.95305 -8.192504,-6.3647405 -6.485463,-9.2940713 0.566827,-0.972691 1.020091,-1.181447 1.037211,-0.477701 0.01685,0.692606 1.268676,1.2499998 2.807321,1.2499998 1.685814,0 4.868609,1.571672 8.10041,4.0000015 4.221481,3.171961 6.182506,3.999221 9.473089,3.996261 l 4.149585,-0.004 -3.249996,-1.98156 c -3.056252,-1.863441 -4.051566,-3.8760635 -2.623216,-5.3044145 0.794,-0.794 6.188222,1.901516 9.064482,4.5295635 1.858669,1.698271 3.461409,1.980521 10.559493,1.859621 11.30984,-0.19266 20.89052,1.29095 31.97905,4.95208 7.63881,2.52213 11.51931,3.16471 22.05074,3.65141 7.02931,0.32486 13.01836,0.97543 13.30902,1.44571 0.29065,0.47029 -5.2356,0.83436 -12.28056,0.80906 -12.25942,-0.044 -13.34537,-0.2229 -25.30902,-4.16865 z"  # noqa
+    CORNER_VECTOR = 'm 67.791903,64.260958 c -4.308097,-2.07925 -4.086719,-8.29575 0.334943,-9.40552 4.119758,-1.03399 8.732363,5.05239 5.393055,7.1162 -0.55,0.33992 -1,1.04147 -1,1.55902 0,1.59332 2.597425,1.04548 5.365141,-1.1316 1.999416,-1.57274 2.634859,-2.96609 2.634859,-5.7775 0,-9.55787 -9.827495,-13.42961 -24.43221,-9.62556 -3.218823,0.83839 -5.905663,1.40089 -5.970755,1.25 -0.06509,-0.1509 -0.887601,-1.19493 -1.827799,-2.32007 -1.672708,-2.00174 -1.636693,-2.03722 1.675668,-1.65052 1.861815,0.21736 6.685863,-0.35719 10.720107,-1.27678 12.280767,-2.79934 20.195487,-0.0248 22.846932,8.0092 3.187273,9.65753 -6.423297,17.7497 -15.739941,13.25313 z m 49.881417,-20.53932 c -3.19204,-2.701 -3.72967,-6.67376 -1.24009,-9.16334 2.48236,-2.48236 5.35141,-2.67905 7.51523,-0.51523 1.85966,1.85966 2.07045,6.52954 0.37143,8.22857 -2.04025,2.04024 3.28436,1.44595 6.92316,-0.77272 9.66959,-5.89579 0.88581,-18.22422 -13.0777,-18.35516 -5.28594,-0.0496 -10.31098,1.88721 -14.26764,5.4991 -1.98835,1.81509 -2.16454,1.82692 -2.7936,0.18763 -0.40973,-1.06774 0.12141,-2.82197 1.3628,-4.50104 2.46349,-3.33205 1.67564,-4.01299 -2.891784,-2.49938 -2.85998,0.94777 -3.81038,2.05378 -5.59837,6.51495 -1.184469,2.95536 -3.346819,6.86882 -4.805219,8.69657 -1.4584,1.82776 -2.65164,4.02223 -2.65164,4.87662 0,3.24694 -4.442667,0.59094 -5.872557,-3.51085 -1.361274,-3.90495 0.408198,-8.63869 4.404043,-11.78183 5.155844,-4.05558 1.612374,-3.42079 -9.235926,1.65457 -12.882907,6.02725 -16.864953,7.18038 -24.795556,7.18038 -8.471637,0 -13.38802,-1.64157 -17.634617,-5.88816 -2.832233,-2.83224 -3.849773,-4.81378 -4.418121,-8.6038 -1.946289,-12.9787795 8.03227,-20.91713135 19.767685,-15.7259993 5.547225,2.4538018 6.993631,6.1265383 3.999564,10.1557393 -5.468513,7.35914 -15.917883,-0.19431 -10.657807,-7.7041155 1.486298,-2.1219878 1.441784,-2.2225068 -0.984223,-2.2225068 -1.397511,0 -4.010527,1.3130878 -5.806704,2.9179718 -2.773359,2.4779995 -3.265777,3.5977995 -3.265777,7.4266705 0,5.10943 2.254112,8.84197 7.492986,12.40748 8.921325,6.07175 19.286666,5.61396 37.12088,-1.63946 15.35037,-6.24321 21.294999,-7.42408 34.886123,-6.92999 11.77046,0.4279 19.35803,3.05537 24.34054,8.42878 4.97758,5.3681 2.53939,13.58271 -4.86733,16.39873 -4.17361,1.58681 -11.00702,1.19681 -13.31978,-0.76018 z m 26.50156,-0.0787 c -2.26347,-2.50111 -2.07852,-7.36311 0.39995,-10.51398 2.68134,-3.40877 10.49035,-5.69409 18.87656,-5.52426 l 6.5685,0.13301 -7.84029,0.82767 c -8.47925,0.89511 -12.76997,2.82233 -16.03465,7.20213 -1.92294,2.57976 -1.96722,3.00481 -0.57298,5.5 1.00296,1.79495 2.50427,2.81821 4.46514,3.04333 2.92852,0.33623 2.93789,0.32121 1.08045,-1.73124 -1.53602,-1.69728 -1.64654,-2.34411 -0.61324,-3.58916 2.84565,-3.4288 7.14497,-0.49759 5.03976,3.43603 -1.86726,3.48903 -8.65528,4.21532 -11.3692,1.21647 z m -4.17462,-14.20302 c -0.38836,-0.62838 -0.23556,-1.61305 0.33954,-2.18816 1.3439,-1.34389 4.47714,-0.17168 3.93038,1.47045 -0.5566,1.67168 -3.38637,2.14732 -4.26992,0.71771 z m -8.48037,-9.1829 c -12.462,-4.1101 -12.53952,-4.12156 -25.49998,-3.7694 -24.020921,0.65269 -32.338219,0.31756 -37.082166,-1.49417 -5.113999,-1.95305 -8.192504,-6.3647405 -6.485463,-9.2940713 0.566827,-0.972691 1.020091,-1.181447 1.037211,-0.477701 0.01685,0.692606 1.268676,1.2499998 2.807321,1.2499998 1.685814,0 4.868609,1.571672 8.10041,4.0000015 4.221481,3.171961 6.182506,3.999221 9.473089,3.996261 l 4.149585,-0.004 -3.249996,-1.98156 c -3.056252,-1.863441 -4.051566,-3.8760635 -2.623216,-5.3044145 0.794,-0.794 6.188222,1.901516 9.064482,4.5295635 1.858669,1.698271 3.461409,1.980521 10.559493,1.859621 11.30984,-0.19266 20.89052,1.29095 31.97905,4.95208 7.63881,2.52213 11.51931,3.16471 22.05074,3.65141 7.02931,0.32486 13.01836,0.97543 13.30902,1.44571 0.29065,0.47029 -5.2356,0.83436 -12.28056,0.80906 -12.25942,-0.044 -13.34537,-0.2229 -25.30902,-4.16865 z'  # noqa: E501
     # }}}
     PATH_CACHE = {}
     VIEWPORT = (400, 500)
@@ -495,15 +511,22 @@ class Ornamental(Style):
     def __call__(self, painter, rect, color_theme, title_block, subtitle_block, footer_block):
         if not self.PATH_CACHE:
             from calibre.utils.speedups import svg_path_to_painter_path
-            self.__class__.PATH_CACHE['corner'] = svg_path_to_painter_path(self.CORNER_VECTOR)
+            try:
+                self.__class__.PATH_CACHE['corner'] = svg_path_to_painter_path(self.CORNER_VECTOR)
+            except Exception:
+                import traceback
+                traceback.print_exc()
         p = painter
-        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         g = QRadialGradient(QPointF(rect.center()), rect.width())
         g.setColorAt(0, self.color1), g.setColorAt(1, self.color2)
         painter.fillRect(rect, QBrush(g))
         painter.save()
         painter.setWindow(0, 0, *self.VIEWPORT)
-        path = self.PATH_CACHE['corner']
+        try:
+            path = self.PATH_CACHE['corner']
+        except KeyError:
+            path = QPainterPath()
         pen = p.pen()
         pen.setColor(self.ccolor1)
         p.setPen(pen)
@@ -541,7 +564,7 @@ class Blocks(Style):
 
     NAME = 'Blocks'
     GUI_NAME = _('Blocks')
-    FOOTER_ALIGN = Qt.AlignRight | Qt.AlignTop
+    FOOTER_ALIGN = Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop
 
     def __call__(self, painter, rect, color_theme, title_block, subtitle_block, footer_block):
         painter.fillRect(rect, self.color1)
@@ -556,15 +579,15 @@ class Blocks(Style):
 
 
 def all_styles():
-    return set(
-        x.NAME for x in globals().itervalues() if
+    return {
+        x.NAME for x in itervalues(globals()) if
         isinstance(x, type) and issubclass(x, Style) and x is not Style
-    )
+    }
 
 
 def load_styles(prefs, respect_disabled=True):
     disabled = frozenset(prefs.disabled_styles) if respect_disabled else ()
-    ans = tuple(x for x in globals().itervalues() if
+    ans = tuple(x for x in itervalues(globals()) if
             isinstance(x, type) and issubclass(x, Style) and x is not Style and x.NAME not in disabled)
     if not ans and disabled:
         # If all styles have been disabled, ignore the disabling and return all
@@ -588,7 +611,7 @@ def generate_cover(mi, prefs=None, as_qimage=False):
     color_theme = random.choice(load_color_themes(prefs))
     style = random.choice(load_styles(prefs))(color_theme, prefs)
     title, subtitle, footer = format_text(mi, prefs)
-    img = QImage(prefs.cover_width, prefs.cover_height, QImage.Format_ARGB32)
+    img = QImage(prefs.cover_width, prefs.cover_height, QImage.Format.Format_ARGB32)
     title_block, subtitle_block, footer_block = layout_text(
         prefs, img, title, subtitle, footer, img.height() // 3, style)
     p = QPainter(img)
@@ -598,7 +621,7 @@ def generate_cover(mi, prefs=None, as_qimage=False):
         p.setPen(color)
         block.draw(p)
     p.end()
-    img.setText('Generated cover', '%s %s' % (__appname__, __version__))
+    img.setText('Generated cover', f'{__appname__} {__version__}')
     if as_qimage:
         return img
     return pixmap_to_data(img)
@@ -642,8 +665,8 @@ def calibre_cover2(title, author_string='', series_string='', prefs=None, as_qim
     scale = 800. / prefs['cover_height']
     scale_cover(prefs, scale)
     prefs = Prefs(**prefs)
-    img = QImage(prefs.cover_width, prefs.cover_height, QImage.Format_ARGB32)
-    img.fill(Qt.white)
+    img = QImage(prefs.cover_width, prefs.cover_height, QImage.Format.Format_ARGB32)
+    img.fill(Qt.GlobalColor.white)
     # colors = to_theme('ffffff ffffff 000000 000000')
     color_theme = theme_to_colors(fallback_colors)
 
@@ -661,7 +684,7 @@ def calibre_cover2(title, author_string='', series_string='', prefs=None, as_qim
             scaled, width, height = fit_image(logo.width(), logo.height(), pwidth, pheight)
             x, y = (pwidth - width) // 2, (pheight - height) // 2
             rect = QRect(x, top + y, width, height)
-            painter.setRenderHint(QPainter.SmoothPixmapTransform)
+            painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
             painter.drawImage(rect, logo)
             return self.ccolor1, self.ccolor1, self.ccolor1
     style = CalibeLogoStyle(color_theme, prefs)
@@ -674,7 +697,7 @@ def calibre_cover2(title, author_string='', series_string='', prefs=None, as_qim
         p.setPen(color)
         block.draw(p)
     p.end()
-    img.setText('Generated cover', '%s %s' % (__appname__, __version__))
+    img.setText('Generated cover', f'{__appname__} {__version__}')
     if as_qimage:
         return img
     return pixmap_to_data(img)
@@ -682,14 +705,14 @@ def calibre_cover2(title, author_string='', series_string='', prefs=None, as_qim
 
 def message_image(text, width=500, height=400, font_size=20):
     init_environment()
-    img = QImage(width, height, QImage.Format_ARGB32)
-    img.fill(Qt.white)
+    img = QImage(width, height, QImage.Format.Format_ARGB32)
+    img.fill(Qt.GlobalColor.white)
     p = QPainter(img)
     f = QFont()
     f.setPixelSize(font_size)
     p.setFont(f)
     r = img.rect().adjusted(10, 10, -10, -10)
-    p.drawText(r, Qt.AlignJustify | Qt.AlignVCenter | Qt.TextWordWrap, text)
+    p.drawText(r, Qt.AlignmentFlag.AlignJustify | Qt.AlignmentFlag.AlignVCenter | Qt.TextFlag.TextWordWrap, text)
     p.end()
     return pixmap_to_data(img)
 
@@ -702,15 +725,15 @@ def scale_cover(prefs, scale):
 def generate_masthead(title, output_path=None, width=600, height=60, as_qimage=False, font_family=None):
     init_environment()
     font_family = font_family or cprefs['title_font_family'] or 'Liberation Serif'
-    img = QImage(width, height, QImage.Format_ARGB32)
-    img.fill(Qt.white)
+    img = QImage(width, height, QImage.Format.Format_ARGB32)
+    img.fill(Qt.GlobalColor.white)
     p = QPainter(img)
-    p.setRenderHints(QPainter.Antialiasing | QPainter.TextAntialiasing)
+    p.setRenderHints(QPainter.RenderHint.Antialiasing | QPainter.RenderHint.TextAntialiasing)
     f = QFont(font_family)
-    f.setStyleStrategy(QFont.PreferAntialias)
+    f.setStyleStrategy(QFont.StyleStrategy.PreferAntialias)
     f.setPixelSize((height * 3) // 4), f.setBold(True)
     p.setFont(f)
-    p.drawText(img.rect(), Qt.AlignLeft | Qt.AlignVCenter, sanitize(title))
+    p.drawText(img.rect(), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, sanitize(title))
     p.end()
     if as_qimage:
         return img
@@ -722,7 +745,8 @@ def generate_masthead(title, output_path=None, width=600, height=60, as_qimage=F
 
 
 def test(scale=0.25):
-    from PyQt5.Qt import QLabel, QPixmap, QMainWindow, QWidget, QScrollArea, QGridLayout
+    from qt.core import QGridLayout, QLabel, QMainWindow, QPixmap, QScrollArea, QWidget
+
     from calibre.gui2 import Application
     app = Application([])
     mi = Metadata('Unknown', ['Kovid Goyal', 'John & Doe', 'Author'])
@@ -738,7 +762,7 @@ def test(scale=0.25):
     for r, color in enumerate(sorted(default_color_themes)):
         for c, style in enumerate(sorted(all_styles())):
             mi.series_index = c + 1
-            mi.title = 'An algorithmic cover [%s]' % color
+            mi.title = f'An algorithmic cover [{color}]'
             prefs = override_prefs(cprefs, override_color_theme=color, override_style=style)
             scale_cover(prefs, scale)
             img = generate_cover(mi, prefs=prefs, as_qimage=True)
@@ -750,7 +774,7 @@ def test(scale=0.25):
     m.setCentralWidget(sa)
     w.resize(w.sizeHint())
     m.show()
-    app.exec_()
+    app.exec()
 
 
 if __name__ == '__main__':

@@ -1,79 +1,18 @@
-from __future__ import with_statement
 __license__   = 'GPL v3'
 __copyright__ = '2008, Kovid Goyal <kovid at kovidgoyal.net>'
-"""
+'''
 Provides platform independent temporary files that persist even after
 being closed.
-"""
-import tempfile, os, atexit
-from polyglot.builtins import map
+'''
+import os
+import tempfile
 
-from calibre.constants import (__version__, __appname__, filesystem_encoding,
-        get_unicode_windows_env_var, iswindows, get_windows_temp_path, isosx)
+from calibre.constants import __appname__, filesystem_encoding, get_windows_temp_path, ismacos, iswindows
+from calibre.utils.safe_atexit import remove_dir, remove_file_atexit, remove_folder_atexit, unlink
 
-
-def cleanup(path):
-    try:
-        import os as oss
-        if oss.path.exists(path):
-            oss.remove(path)
-    except:
-        pass
-
-
-_base_dir = None
-
-
-def remove_dir(x):
-    try:
-        import shutil
-        shutil.rmtree(x, ignore_errors=True)
-    except:
-        pass
-
-
-def determined_remove_dir(x):
-    for i in range(10):
-        try:
-            import shutil
-            shutil.rmtree(x)
-            return
-        except:
-            import os  # noqa
-            if os.path.exists(x):
-                # In case some other program has one of the temp files open.
-                import time
-                time.sleep(0.1)
-            else:
-                return
-    try:
-        import shutil
-        shutil.rmtree(x, ignore_errors=True)
-    except:
-        pass
-
-
-def app_prefix(prefix):
-    if iswindows:
-        return '%s_'%__appname__
-    return '%s_%s_%s'%(__appname__, __version__, prefix)
-
-
-def reset_temp_folder_permissions():
-    # There are some broken windows installs where the permissions for the temp
-    # folder are set to not be executable, which means chdir() into temp
-    # folders fails. Try to fix that by resetting the permissions on the temp
-    # folder.
-    global _base_dir
-    if iswindows and _base_dir:
-        import subprocess
-        from calibre import prints
-        parent = os.path.dirname(_base_dir)
-        retcode = subprocess.Popen(['icacls.exe', parent, '/reset', '/Q', '/T']).wait()
-        prints('Trying to reset permissions of temp folder', parent, 'return code:', retcode)
-
-
-_osx_cache_dir = None
+_base_dir = _osx_cache_dir = None
+_prevent_recursion = False
+cleanup = unlink  # some plugins import this function
 
 
 def osx_cache_dir():
@@ -88,7 +27,7 @@ def osx_cache_dir():
         l = libc.confstr(65538, ctypes.byref(buf), len(buf))  # _CS_DARWIN_USER_CACHE_DIR = 65538
         if 0 < l < len(buf):
             try:
-                q = buf.value.decode('utf-8').rstrip(u'\0')
+                q = buf.value.decode('utf-8').rstrip('\0')
             except ValueError:
                 pass
             if q and os.path.isdir(q) and os.access(q, os.R_OK | os.W_OK | os.X_OK):
@@ -96,27 +35,34 @@ def osx_cache_dir():
                 return q
 
 
+get_default_tempdir = tempfile.gettempdir
+
+
 def base_dir():
-    global _base_dir
+    global _base_dir, _prevent_recursion
     if _base_dir is not None and not os.path.exists(_base_dir):
         # Some people seem to think that running temp file cleaners that
         # delete the temp dirs of running programs is a good idea!
-        _base_dir = None
+        if _prevent_recursion:
+            _base_dir = get_default_tempdir()
+        else:
+            _base_dir = None
     if _base_dir is None:
         td = os.environ.get('CALIBRE_WORKER_TEMP_DIR', None)
         if td is not None:
-            import cPickle, binascii
+            from calibre.utils.serialize import msgpack_loads
+            from polyglot.binary import from_hex_bytes
             try:
-                td = cPickle.loads(binascii.unhexlify(td))
-            except:
+                td = msgpack_loads(from_hex_bytes(td))
+            except Exception:
                 td = None
         if td and os.path.exists(td):
             _base_dir = td
         else:
             base = os.environ.get('CALIBRE_TEMP_DIR', None)
             if base is not None and iswindows:
-                base = get_unicode_windows_env_var('CALIBRE_TEMP_DIR')
-            prefix = app_prefix(u'tmp_')
+                base = os.getenv('CALIBRE_TEMP_DIR')
+            prefix = f'{__appname__}-'
             if base is None:
                 if iswindows:
                     # On windows, if the TMP env var points to a path that
@@ -126,30 +72,37 @@ def base_dir():
                     # unicode temp path instead. See
                     # https://bugs.launchpad.net/bugs/937389
                     base = get_windows_temp_path()
-                elif isosx:
+                elif ismacos:
                     # Use the cache dir rather than the temp dir for temp files as Apple
                     # thinks deleting unused temp files is a good idea. See note under
                     # _CS_DARWIN_USER_TEMP_DIR here
                     # https://developer.apple.com/library/mac/documentation/Darwin/Reference/ManPages/man3/confstr.3.html
                     base = osx_cache_dir()
 
-            _base_dir = tempfile.mkdtemp(prefix=prefix, dir=base)
-            atexit.register(determined_remove_dir if iswindows else remove_dir, _base_dir)
-
-        try:
-            tempfile.gettempdir()
-        except:
-            # Widows temp vars set to a path not encodable in mbcs
-            # Use our temp dir
-            tempfile.tempdir = _base_dir
+            _base_dir = tempfile.mkdtemp(prefix=prefix, dir=base or get_default_tempdir())
+            orig = _prevent_recursion
+            _prevent_recursion = True
+            try:
+                remove_folder_atexit(_base_dir)
+            finally:
+                _prevent_recursion = orig
 
     return _base_dir
+
+
+def fix_tempfile_module():
+    # We want the tempfile module to use base_dir() as its tempdir, but we dont
+    # want to call base_dir() now as it will possibly create a tempdir, do that
+    # only on demand.
+    global get_default_tempdir
+    if tempfile._gettempdir is not base_dir:
+        get_default_tempdir = tempfile._gettempdir
+        tempfile._gettempdir = base_dir
 
 
 def reset_base_dir():
     global _base_dir
     _base_dir = None
-    base_dir()
 
 
 def force_unicode(x):
@@ -161,26 +114,25 @@ def force_unicode(x):
 
 
 def _make_file(suffix, prefix, base):
-    suffix, prefix = map(force_unicode, (suffix, prefix))
+    suffix, prefix = map(force_unicode, (suffix, prefix))  # no2to3
     return tempfile.mkstemp(suffix, prefix, dir=base)
 
 
 def _make_dir(suffix, prefix, base):
-    suffix, prefix = map(force_unicode, (suffix, prefix))
+    suffix, prefix = map(force_unicode, (suffix, prefix))  # no2to3
     return tempfile.mkdtemp(suffix, prefix, base)
 
 
-class PersistentTemporaryFile(object):
-
-    """
+class PersistentTemporaryFile:
+    '''
     A file-like object that is a temporary file that is available even after being closed on
     all platforms. It is automatically deleted on normal program termination.
-    """
+    '''
     _file = None
 
-    def __init__(self, suffix="", prefix="", dir=None, mode='w+b'):
+    def __init__(self, suffix='', prefix='', dir=None, mode='w+b'):
         if prefix is None:
-            prefix = ""
+            prefix = ''
         if dir is None:
             dir = base_dir()
         fd, name = _make_file(suffix, prefix, dir)
@@ -188,7 +140,7 @@ class PersistentTemporaryFile(object):
         self._file = os.fdopen(fd, mode)
         self._name = name
         self._fd = fd
-        atexit.register(cleanup, name)
+        remove_file_atexit(name)
 
     def __getattr__(self, name):
         if name == 'name':
@@ -204,7 +156,7 @@ class PersistentTemporaryFile(object):
     def __del__(self):
         try:
             self.close()
-        except:
+        except Exception:
             pass
 
 
@@ -216,13 +168,11 @@ def PersistentTemporaryDirectory(suffix='', prefix='', dir=None):
     if dir is None:
         dir = base_dir()
     tdir = _make_dir(suffix, prefix, dir)
-
-    atexit.register(remove_dir, tdir)
+    remove_folder_atexit(tdir)
     return tdir
 
 
-class TemporaryDirectory(object):
-
+class TemporaryDirectory:
     '''
     A temporary directory to be used in a with statement.
     '''
@@ -245,9 +195,9 @@ class TemporaryDirectory(object):
             remove_dir(self.tdir)
 
 
-class TemporaryFile(object):
+class TemporaryFile:
 
-    def __init__(self, suffix="", prefix="", dir=None, mode='w+b'):
+    def __init__(self, suffix='', prefix='', dir=None, mode='w+b'):
         if prefix is None:
             prefix = ''
         if suffix is None:
@@ -265,12 +215,12 @@ class TemporaryFile(object):
         return name
 
     def __exit__(self, *args):
-        cleanup(self._name)
+        unlink(self._name)
 
 
 class SpooledTemporaryFile(tempfile.SpooledTemporaryFile):
 
-    def __init__(self, max_size=0, suffix="", prefix="", dir=None, mode='w+b',
+    def __init__(self, max_size=0, suffix='', prefix='', dir=None, mode='w+b',
             bufsize=-1):
         if prefix is None:
             prefix = ''
@@ -278,14 +228,27 @@ class SpooledTemporaryFile(tempfile.SpooledTemporaryFile):
             suffix = ''
         if dir is None:
             dir = base_dir()
+        self._name = None
         tempfile.SpooledTemporaryFile.__init__(self, max_size=max_size,
-                suffix=suffix, prefix=prefix, dir=dir, mode=mode,
-                bufsize=bufsize)
+                suffix=suffix, prefix=prefix, dir=dir, mode=mode)
 
-    def truncate(self, *args):
-        # The stdlib SpooledTemporaryFile implementation of truncate() doesn't
-        # allow specifying a size.
-        self._file.truncate(*args)
+    @property
+    def name(self):
+        return self._name
+
+    @name.setter
+    def name(self, val):
+        self._name = val
+
+    # See https://bugs.python.org/issue26175
+    def readable(self):
+        return self._file.readable()
+
+    def seekable(self):
+        return self._file.seekable()
+
+    def writable(self):
+        return self._file.writable()
 
 
 def better_mktemp(*args, **kwargs):

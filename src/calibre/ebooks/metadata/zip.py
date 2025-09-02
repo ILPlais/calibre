@@ -1,17 +1,16 @@
-from __future__ import with_statement
 __license__   = 'GPL v3'
 __copyright__ = '2008, Kovid Goyal <kovid at kovidgoyal.net>'
 
 import os
 
-from calibre.utils.zipfile import ZipFile
-from calibre.ptempfile import TemporaryDirectory
 from calibre import CurrentDir
+from calibre.ptempfile import TemporaryDirectory
+from calibre.utils.zipfile import ZipFile
 
 
 def get_metadata(stream):
-    from calibre.ebooks.metadata.meta import get_metadata
     from calibre.ebooks.metadata.archive import is_comic
+    from calibre.ebooks.metadata.meta import get_metadata
     stream_type = None
     zf = ZipFile(stream, 'r')
     names = zf.namelist()
@@ -36,18 +35,18 @@ def get_metadata(stream):
                                 nmi = zip_opf_metadata(path, zf)
                                 nmi.timestamp = None
                                 return nmi
-                            except:
+                            except Exception:
                                 pass
                         mi.timestamp = None
                         return mi
-    raise ValueError('No ebook found in ZIP archive (%s)' % os.path.basename(getattr(stream, 'name', '') or '<stream>'))
+    raise ValueError('No ebook found in ZIP archive ({})'.format(os.path.basename(getattr(stream, 'name', '') or '<stream>')))
 
 
 def zip_opf_metadata(opfpath, zf):
     from calibre.ebooks.metadata.opf2 import OPF
     if hasattr(opfpath, 'read'):
         f = opfpath
-        opfpath = getattr(f, 'name', os.getcwdu())
+        opfpath = getattr(f, 'name', os.getcwd())
     else:
         f = open(opfpath, 'rb')
     opf = OPF(f, os.path.dirname(opfpath))
@@ -65,4 +64,3 @@ def zip_opf_metadata(opfpath, zf):
             data = zf.read(covername)
             mi.cover_data = (fmt, data)
     return mi
-

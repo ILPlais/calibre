@@ -1,38 +1,38 @@
-#!/usr/bin/env python2
-# vim:fileencoding=utf-8
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
+#!/usr/bin/env python
+
 
 __license__ = 'GPL v3'
 __copyright__ = '2015, Kovid Goyal <kovid at kovidgoyal.net>'
 
-import errno, socket, select, os, time
-from Cookie import SimpleCookie
-from contextlib import closing
-from urlparse import parse_qs
-import repr as reprlib
+import errno
+import os
+import socket
 from email.utils import formatdate
 from operator import itemgetter
-from polyglot.builtins import map
-from urllib import quote as urlquote
-from binascii import hexlify, unhexlify
 
 from calibre import prints
 from calibre.constants import iswindows
 from calibre.srv.errors import HTTPNotFound
-from calibre.utils.config_base import tweaks
 from calibre.utils.localization import get_translator
-from calibre.utils.socket_inheritance import set_socket_inherit
 from calibre.utils.logging import ThreadSafeLog
-from calibre.utils.shared_file import share_open, raise_winerror
+from calibre.utils.shared_file import share_open
+from calibre.utils.socket_inheritance import set_socket_inherit
+from polyglot import reprlib
+from polyglot.binary import as_hex_unicode as encode_name
+from polyglot.binary import from_hex_unicode as decode_name
+from polyglot.builtins import as_unicode, iteritems
+from polyglot.http_cookie import SimpleCookie
+from polyglot.urllib import parse_qs
+from polyglot.urllib import quote as urlquote
 
 HTTP1  = 'HTTP/1.0'
 HTTP11 = 'HTTP/1.1'
 DESIRED_SEND_BUFFER_SIZE = 16 * 1024  # windows 7 uses an 8KB sndbuf
+encode_name, decode_name
 
 
 def http_date(timeval=None):
-    return type('')(formatdate(timeval=timeval, usegmt=True))
+    return str(formatdate(timeval=timeval, usegmt=True))
 
 
 class MultiDict(dict):  # {{{
@@ -48,17 +48,19 @@ class MultiDict(dict):  # {{{
     @staticmethod
     def create_from_query_string(qs):
         ans = MultiDict()
-        for k, v in parse_qs(qs, keep_blank_values=True).iteritems():
-            dict.__setitem__(ans, k.decode('utf-8'), [x.decode('utf-8') for x in v])
+        qs = as_unicode(qs)
+        for k, v in iteritems(parse_qs(qs, keep_blank_values=True)):
+            dict.__setitem__(ans, as_unicode(k), [as_unicode(x) for x in v])
         return ans
 
     def update_from_listdict(self, ld):
-        for key, values in ld.iteritems():
+        for key, values in iteritems(ld):
             for val in values:
                 self[key] = val
 
     def items(self, duplicates=True):
-        for k, v in dict.iteritems(self):
+        f = dict.items
+        for k, v in f(self):
             if duplicates:
                 for x in v:
                     yield k, x
@@ -67,10 +69,10 @@ class MultiDict(dict):  # {{{
     iteritems = items
 
     def values(self, duplicates=True):
-        for v in dict.itervalues(self):
+        f = dict.values
+        for v in f(self):
             if duplicates:
-                for x in v:
-                    yield x
+                yield from v
             else:
                 yield v[-1]
     itervalues = values
@@ -99,12 +101,12 @@ class MultiDict(dict):  # {{{
         return ans if all else ans[-1]
 
     def __repr__(self):
-        return '{' + ', '.join('%s: %s' % (reprlib.repr(k), reprlib.repr(v)) for k, v in self.iteritems()) + '}'
+        return '{' + ', '.join(f'{reprlib.repr(k)}: {reprlib.repr(v)}' for k, v in iteritems(self)) + '}'
     __str__ = __unicode__ = __repr__
 
     def pretty(self, leading_whitespace=''):
         return leading_whitespace + ('\n' + leading_whitespace).join(
-            '%s: %s' % (k, (repr(v) if isinstance(v, bytes) else v)) for k, v in sorted(self.items(), key=itemgetter(0)))
+            f'{k}: {(repr(v) if isinstance(v, bytes) else v)}' for k, v in sorted(self.items(), key=itemgetter(0)))
 # }}}
 
 
@@ -115,20 +117,20 @@ def error_codes(*errnames):
     return ans
 
 
-socket_errors_eintr = error_codes("EINTR", "WSAEINTR")
+socket_errors_eintr = error_codes('EINTR', 'WSAEINTR')
 
 socket_errors_socket_closed = error_codes(  # errors indicating a disconnected connection
-    "EPIPE",
-    "EBADF", "WSAEBADF",
-    "ENOTSOCK", "WSAENOTSOCK",
-    "ENOTCONN", "WSAENOTCONN",
-    "ESHUTDOWN", "WSAESHUTDOWN",
-    "ETIMEDOUT", "WSAETIMEDOUT",
-    "ECONNREFUSED", "WSAECONNREFUSED",
-    "ECONNRESET", "WSAECONNRESET",
-    "ECONNABORTED", "WSAECONNABORTED",
-    "ENETRESET", "WSAENETRESET",
-    "EHOSTDOWN", "EHOSTUNREACH",
+    'EPIPE',
+    'EBADF', 'WSAEBADF',
+    'ENOTSOCK', 'WSAENOTSOCK',
+    'ENOTCONN', 'WSAENOTCONN',
+    'ESHUTDOWN', 'WSAESHUTDOWN',
+    'ETIMEDOUT', 'WSAETIMEDOUT',
+    'ECONNREFUSED', 'WSAECONNREFUSED',
+    'ECONNRESET', 'WSAECONNRESET',
+    'ECONNABORTED', 'WSAECONNABORTED',
+    'ENETRESET', 'WSAENETRESET',
+    'EHOSTDOWN', 'EHOSTUNREACH',
 )
 socket_errors_nonblocking = error_codes(
     'EAGAIN', 'EWOULDBLOCK', 'WSAEWOULDBLOCK')
@@ -144,53 +146,22 @@ def stop_cork(sock):
         sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_CORK, 0)
 
 
-def create_sock_pair(port=0):
-    '''Create socket pair. Works also on windows by using an ephemeral TCP port.'''
-    if hasattr(socket, 'socketpair'):
-        client_sock, srv_sock = socket.socketpair()
-        set_socket_inherit(client_sock, False), set_socket_inherit(srv_sock, False)
-        return client_sock, srv_sock
-
-    # Create a non-blocking temporary server socket
-    temp_srv_sock = socket.socket()
-    set_socket_inherit(temp_srv_sock, False)
-    temp_srv_sock.setblocking(False)
-    temp_srv_sock.bind(('127.0.0.1', port))
-    port = temp_srv_sock.getsockname()[1]
-    temp_srv_sock.listen(1)
-    with closing(temp_srv_sock):
-        # Create non-blocking client socket
-        client_sock = socket.socket()
-        client_sock.setblocking(False)
-        set_socket_inherit(client_sock, False)
-        try:
-            client_sock.connect(('127.0.0.1', port))
-        except socket.error as err:
-            # EWOULDBLOCK is not an error, as the socket is non-blocking
-            if err.errno not in socket_errors_nonblocking:
-                raise
-
-        # Use select to wait for connect() to succeed.
-        timeout = 1
-        readable = select.select([temp_srv_sock], [], [], timeout)[0]
-        if temp_srv_sock not in readable:
-            raise Exception('Client socket not connected in {} second(s)'.format(timeout))
-        srv_sock = temp_srv_sock.accept()[0]
-        set_socket_inherit(srv_sock, False)
-        client_sock.setblocking(True)
-
+def create_sock_pair():
+    '''Create socket pair. '''
+    client_sock, srv_sock = socket.socketpair()
+    set_socket_inherit(client_sock, False), set_socket_inherit(srv_sock, False)
     return client_sock, srv_sock
 
 
 def parse_http_list(header_val):
-    """Parse lists as described by RFC 2068 Section 2.
+    '''Parse lists as described by RFC 2068 Section 2.
 
     In particular, parse comma-separated lists where the elements of
     the list may include quoted-strings.  A quoted-string could
     contain a comma.  A non-quoted string could have quotes in the
     middle.  Neither commas nor quotes count if they are escaped.
     Only double-quotes count, not single-quotes.
-    """
+    '''
     if isinstance(header_val, bytes):
         slash, dquote, comma = b'\\",'
         empty = b''
@@ -265,7 +236,7 @@ def eintr_retry_call(func, *args, **kwargs):
     while True:
         try:
             return func(*args, **kwargs)
-        except EnvironmentError as e:
+        except OSError as e:
             if getattr(e, 'errno', None) in socket_errors_eintr:
                 continue
             raise
@@ -282,46 +253,26 @@ def get_translator_for_lang(cache, bcp_47_code):
 
 def encode_path(*components):
     'Encode the path specified as a list of path components using URL encoding'
-    return '/' + '/'.join(urlquote(x.encode('utf-8'), '').decode('ascii') for x in components)
-
-
-def encode_name(name):
-    'Encode a name (arbitrary string) as URL safe characters. See decode_name() also.'
-    if isinstance(name, unicode):
-        name = name.encode('utf-8')
-    return hexlify(name)
-
-
-def decode_name(name):
-    return unhexlify(name).decode('utf-8')
+    return '/' + '/'.join(urlquote(x.encode('utf-8'), '') for x in components)
 
 
 class Cookie(SimpleCookie):
 
     def _BaseCookie__set(self, key, real_value, coded_value):
-        if not isinstance(key, bytes):
-            key = key.encode('ascii')  # Python 2.x cannot handle unicode keys
         return SimpleCookie._BaseCookie__set(self, key, real_value, coded_value)
 
 
 def custom_fields_to_display(db):
-    ckeys = set(db.field_metadata.ignorable_field_keys())
-    yes_fields = set(tweaks['content_server_will_display'])
-    no_fields = set(tweaks['content_server_wont_display'])
-    if '*' in yes_fields:
-        yes_fields = ckeys
-    if '*' in no_fields:
-        no_fields = ckeys
-    return frozenset(ckeys & (yes_fields - no_fields))
+    return frozenset(db.field_metadata.ignorable_field_keys())
+
 
 # Logging {{{
-
 
 class ServerLog(ThreadSafeLog):
     exception_traceback_level = ThreadSafeLog.WARN
 
 
-class RotatingStream(object):
+class RotatingStream:
 
     def __init__(self, filename, max_size=None, history=5):
         self.filename, self.history, self.max_size = filename, history, max_size
@@ -330,50 +281,44 @@ class RotatingStream(object):
         self.set_output()
 
     def set_output(self):
-        self.stream = share_open(self.filename, 'ab', -1 if iswindows else 1)  # line buffered
+        if iswindows:
+            self.stream = share_open(self.filename, 'a', newline='')
+        else:
+            # see https://bugs.python.org/issue27805
+            self.stream = open(os.open(self.filename, os.O_WRONLY|os.O_APPEND|os.O_CREAT|os.O_CLOEXEC, mode=0o666), 'w')
         try:
-            self.current_pos = self.stream.tell()
-        except EnvironmentError:
+            self.stream.tell()
+        except OSError:
             # Happens if filename is /dev/stdout for example
-            self.current_pos = 0
             self.max_size = None
 
     def flush(self):
         self.stream.flush()
 
     def prints(self, level, *args, **kwargs):
-        kwargs['safe_encode'] = True
         kwargs['file'] = self.stream
-        self.current_pos += prints(*args, **kwargs)
-        if iswindows:
-            # For some reason line buffering does not work on windows
-            end = kwargs.get('end', b'\n')
-            if b'\n' in end:
-                self.flush()
+        prints(*args, **kwargs)
         self.rollover()
 
     def rename(self, src, dest):
         try:
             if iswindows:
-                import win32file, pywintypes
-                try:
-                    win32file.MoveFileEx(src, dest, win32file.MOVEFILE_REPLACE_EXISTING|win32file.MOVEFILE_WRITE_THROUGH)
-                except pywintypes.error as e:
-                    raise_winerror(e)
+                from calibre_extensions import winutil
+                winutil.move_file(src, dest)
             else:
                 os.rename(src, dest)
-        except EnvironmentError as e:
+        except OSError as e:
             if e.errno != errno.ENOENT:  # the source of the rename does not exist
                 raise
 
     def rollover(self):
-        if not self.max_size or self.current_pos <= self.max_size or self.filename in ('/dev/stdout', '/dev/stderr'):
+        if not self.max_size or self.stream.tell() <= self.max_size:
             return
         self.stream.close()
-        for i in xrange(self.history - 1, 0, -1):
-            src, dest = '%s.%d' % (self.filename, i), '%s.%d' % (self.filename, i+1)
+        for i in range(self.history - 1, 0, -1):
+            src, dest = f'{self.filename}.{i}', f'{self.filename}.{i + 1}'
             self.rename(src, dest)
-        self.rename(self.filename, '%s.%d' % (self.filename, 1))
+        self.rename(self.filename, f'{self.filename}.1')
         self.set_output()
 
     def clear(self):
@@ -383,13 +328,13 @@ class RotatingStream(object):
         failed = {}
         try:
             os.remove(self.filename)
-        except EnvironmentError as e:
+        except OSError as e:
             failed[self.filename] = e
         import glob
         for f in glob.glob(self.filename + '.*'):
             try:
                 os.remove(f)
-            except EnvironmentError as e:
+            except OSError as e:
                 failed[f] = e
         self.set_output()
         return failed
@@ -407,12 +352,12 @@ class RotatingLog(ServerLog):
 # }}}
 
 
-class HandleInterrupt(object):  # {{{
+class HandleInterrupt:  # {{{
 
     # On windows socket functions like accept(), recv(), send() are not
     # interrupted by a Ctrl-C in the console. So to make Ctrl-C work we have to
     # use this special context manager. See the echo server example at the
-    # bottom of this file for how to use it.
+    # bottom of srv/loop.py for how to use it.
 
     def __init__(self, action):
         if not iswindows:
@@ -435,28 +380,25 @@ class HandleInterrupt(object):  # {{{
                 if self.action is not None:
                     self.action()
                     self.action = None
-                # Typical C implementations would return 1 to indicate that
-                # the event was processed and other control handlers in the
-                # stack should not be executed.  However, that would
-                # prevent the Python interpreter's handler from translating
-                # CTRL-C to a `KeyboardInterrupt` exception, so we pretend
-                # that we didn't handle it.
+                    return 1
             return 0
         self.handle = handle
 
     def __enter__(self):
         if iswindows:
             if self.SetConsoleCtrlHandler(self.handle, 1) == 0:
-                raise WindowsError()
+                import ctypes
+                raise ctypes.WinError()
 
     def __exit__(self, *args):
         if iswindows:
             if self.SetConsoleCtrlHandler(self.handle, 0) == 0:
-                raise WindowsError()
+                import ctypes
+                raise ctypes.WinError()
 # }}}
 
 
-class Accumulator(object):  # {{{
+class Accumulator:  # {{{
 
     'Optimized replacement for BytesIO when the usage pattern is many writes followed by a single getvalue()'
 
@@ -479,7 +421,7 @@ class Accumulator(object):  # {{{
 def get_db(ctx, rd, library_id):
     db = ctx.get_library(rd, library_id)
     if db is None:
-        raise HTTPNotFound('Library %r not found' % library_id)
+        raise HTTPNotFound(f'Library {library_id!r} not found')
     return db
 
 
@@ -488,20 +430,20 @@ def get_library_data(ctx, rd, strict_library_id=False):
     library_map, default_library = ctx.library_info(rd)
     if library_id not in library_map:
         if strict_library_id and library_id:
-            raise HTTPNotFound('No library with id: {}'.format(library_id))
+            raise HTTPNotFound(f'No library with id: {library_id}')
         library_id = default_library
     db = get_db(ctx, rd, library_id)
     return db, library_id, library_map, default_library
 
 
-class Offsets(object):
+class Offsets:
     'Calculate offsets for a paginated view'
 
     def __init__(self, offset, delta, total):
         if offset < 0:
             offset = 0
         if offset >= total:
-            raise HTTPNotFound('Invalid offset: %r'%offset)
+            raise HTTPNotFound(f'Invalid offset: {offset!r}')
         last_allowed_index = total - 1
         last_current_index = offset + delta - 1
         self.slice_upper_bound = offset+delta
@@ -526,12 +468,3 @@ def get_use_roman():
         from calibre.gui2 import config
         _use_roman = config['use_roman_numerals_for_series_number']
     return _use_roman
-
-
-if iswindows:
-    def fast_now_strftime(fmt):
-        fmt = fmt.encode('mbcs')
-        return time.strftime(fmt).decode('mbcs', 'replace')
-else:
-    def fast_now_strftime(fmt):
-        return time.strftime(fmt).decode('utf-8', 'replace')

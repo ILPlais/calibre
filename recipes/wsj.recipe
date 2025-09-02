@@ -1,291 +1,278 @@
-#!/usr/bin/env python2
+#!/usr/bin/env python
 # vim:fileencoding=utf-8
-# License: GPLv3 Copyright: 2016, Kovid Goyal <kovid at kovidgoyal.net>
-
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
 import json
-from mechanize import Request
-from urllib import quote
+import time
+from itertools import zip_longest
+from urllib.parse import quote, urlencode
 
-import html5lib
-from lxml import html
-
-from calibre.web.feeds.news import BasicNewsRecipe
-
-
-def CSSSelect(expr):
-    expr = {
-        'div.whatsNews-simple': '''descendant-or-self::div[@class and contains(concat(' ', normalize-space(@class), ' '), ' whatsNews-simple ')]''',
-        'a.mjLinkItem[href]': '''descendant-or-self::a[@class and contains(concat(' ', normalize-space(@class), ' '), ' mjLinkItem ') and (@href)]''',
-        '.meta_sectionName': '''descendant-or-self::*[@class and contains(concat(' ', normalize-space(@class), ' '), ' meta_sectionName ')]''',
-        'p': 'descendant-or-self::p',
-        'div.whatsNews-simple.whatsNews-itp': '''descendant-or-self::div[@class and contains(concat(' ', normalize-space(@class), ' '), ' whatsNews-simple ') and (@class and contains(concat(' ', normalize-space(@class), ' '), ' whatsNews-itp '))]''',  # noqa
-        'a[href]': 'descendant-or-self::a[@href]',
-        'span.date-date': "descendant-or-self::span[@class and contains(concat(' ', normalize-space(@class), ' '), ' date-date ')]",
-        'div.itpSectionHeaderPdf a[href]': "descendant-or-self::div[@class and contains(concat(' ', normalize-space(@class), ' '), ' itpSectionHeaderPdf ')]/descendant-or-self::*/a[@href]",  # noqa
-        'div.itpHeader ul.tab a[href]': "descendant-or-self::div[@class and contains(concat(' ', normalize-space(@class), ' '), ' itpHeader ')]/descendant-or-self::*/ul[@class and contains(concat(' ', normalize-space(@class), ' '), ' tab ')]/descendant-or-self::*/a[@href]",  # noqa
-
-    }[expr]
-    from lxml.etree import XPath
-    return XPath(expr)
+from calibre import browser
+from calibre.ebooks.BeautifulSoup import BeautifulSoup
+from calibre.ptempfile import PersistentTemporaryFile
+from calibre.web.feeds.news import BasicNewsRecipe, classes
 
 
-def classes(classes):
-    q = frozenset(classes.split(' '))
-    return dict(attrs={
-        'class': lambda x: x and frozenset(x.split()).intersection(q)})
-
-
-USER_AGENT = 'Mozilla/5.0 (X11; Linux x86_64; rv:52.0) Gecko/20100101 Firefox/52.0'
+def get_article(article_id):
+    from mechanize import Request
+    mat_url = 'https://mats.mobile.dowjones.io/translate/' + article_id + '/jpml'
+    headers = {
+        'User-Agent': 'okhttp/4.10.0',
+        'Accept-Encoding': 'gzip',
+        'Cache-Control': 'no-cache',
+        'x-api-key': ('e''0''5''9''9''5''f''f''4''4''2''1''4''3''2''5''5''e''b''8''3''8''1''f''7''2''d''4''9''1''3''b''f''7''5''0''3''d''6''c'),  # noqa: ISC001
+    }
+    br = browser()
+    req = Request(
+        mat_url,
+        headers=headers,
+    )
+    res = br.open(req)
+    return res.read()
 
 
 class WSJ(BasicNewsRecipe):
-
     title = 'The Wall Street Journal'
-    __author__ = 'Kovid Goyal'
-    description = 'News and current affairs'
-    language = 'en'
-
-    compress_news_images = True
-    compress_news_images_auto_size = 7
-
-    timefmt = ' [%a, %b %d, %Y]'
+    __author__ = 'unkn0wn'
+    description = (
+        'The Print Edition of WSJ. The Wall Street Journal is your source '
+        'for breaking news, analysis and insights from the U.S. and '
+        "around the world, the world's leading business and finance publication."
+    )
+    language = 'en_US'
+    masthead_url = 'https://s.wsj.net/media/wsj_amp_masthead_lg.png'
+    encoding = 'utf-8'
+    no_javascript = True
     no_stylesheets = True
-    ignore_duplicate_articles = {'url'}
-    remove_attributes = ['style', 'data-scrim']
-    needs_subscription = True
-    WSJ_ITP = 'http://online.wsj.com/itp/today'
+    remove_attributes = ['style', 'height', 'width']
+    resolve_internal_links = True
+    simultaneous_downloads = 20
 
-    keep_only_tags = [
-        dict(classes('wsj-article-headline-wrap article_header')),
-        dict(name='span', itemprop='author', rel='author'),
-        dict(name='article', id='article-contents articleBody'.split()),
-        dict(name='div', id='article_story_body ncTitleArea snipper-ad-login'.split()),
-        dict(classes('nc-exp-artbody errorNotFound')),
-        dict(attrs={'data-module-zone': 'article_snippet'}),
-    ]
+    recipe_specific_options = {
+        'date': {
+            'short': 'The date of the edition to download (YYYY-MM-DD format)\nOnly the past 6 editions will be available ',
+            'long': 'For example, 2024-05-13',
+        },
+        'res': {
+            'short': 'For hi-res images, select a resolution from the\nfollowing options: 800, 1000, 1200 or 1500',
+            'long': 'This is useful for non e-ink devices, and for a lower file size\nthan the default, use 400 or 300.',
+            'default': '600',
+        },
+    }
+
+    extra_css = '''
+        #subhed, em { font-style:italic; color:#202020; }
+        #byline, #time-to-read, #orig-pubdate-string, .article-byline, time, #flashline { font-size:small; }
+        .figc { font-size:small; text-align:center; }
+        img {display:block; margin:0 auto;}
+    '''
 
     remove_tags = [
-        dict(id='right-rail'),
-        dict(id='narrator-nav'),
-        dict(name='div', id='ad_and_popular'),
-        classes('strap-container right-rail comments-count-container insetButton insettipBox author-info'
-            ' media-object-video article_tools nc-exp-artmeta category type-InsetArticlesRelatedByType media-object-rich-text'),
-        dict(name='span', attrs={
-             'data-country-code': True, 'data-ticker-code': True}),
-        dict(name='meta link'.split()),
+        dict(name='panel', attrs={'id': 'summary-image'}),
+        dict(name='panel', attrs={'layout': 'inline'}),
+        dict(name='panel', attrs={'embed': 'inner-article-ad'}),
+        dict(name='span', attrs={'embed': 'ticker'}),
+        classes('lamrelated-articles-inset-panel'),
+        dict(
+            name='p',
+            attrs={
+                'id': [
+                    'keywords',
+                    'orig-pubdate-number',
+                    'type',
+                    'is-custom-flashline',
+                    'grouphed',
+                    'author-ids',
+                    'article-manifest',
+                    'body-extract',
+                    'category',
+                    'sub-category',
+                    'socialhed',
+                    'summary',
+                    'deckline',
+                    'article-flashline',
+                ]
+            },
+        ),
     ]
 
-    def preprocess_raw_html(self, raw_html, url):
-        root = html5lib.parse(raw_html, treebuilder='lxml',
-                              namespaceHTMLElements=False)
-        raw_html = html.tostring(root)
-        # open('/t/art.html', 'w').write(raw_html)
-        return raw_html
+    remove_tags_before = [dict(name='p', attrs={'id': 'orig-pubdate-string'})]
 
-    def preprocess_soup(self, soup):
-        # Slideshow and expandable images need to be processed here to
-        # set the src attribute correctly
-        found = 0
-        for img in soup.findAll('img', attrs={'data-in-base-data-lazy': True}):
-            img['src'] = img['data-in-base-data-lazy']
-            found += 1
-        for img in soup.findAll('img', attrs={'data-enlarge': True}):
-            img['src'] = img['data-enlarge']
-            found += 1
-        if found:
-            self.log.debug('Found %d dynamic images in:' % found)
+    def media_bucket(self, x):
+        res = '?width=600'
+        w = self.recipe_specific_options.get('res')
+        if w and isinstance(w, str):
+            res = '?width=' + w
+        if x.get('type', '') == 'image':
+            if (
+                x.get('subtype', '') == 'graphic'
+                or 'images.wsj.net' not in x['manifest-url']
+            ):
+                return '<br><img src="{}"><div class="figc">{}</div>\n'.format(
+                    x['manifest-url'], x['caption'] + '<i> ' + x['credit'] + '</i>'
+                )
+            return '<br><img src="{}"><div class="figc">{}</div>\n'.format(
+                x['manifest-url'].split('?')[0] + res,
+                x['caption'] + '<i> ' + x['credit'] + '</i>',
+            )
+        if x.get('type', '') == 'video':
+            return (
+                '<br><a href="{}"><img src="{}"></a><div class="figc">{}</div>\n'.format(
+                    x['share_link'],
+                    x['thumbnail_url'].split('?')[0] + res,
+                    x['caption'] + '<i> ' + x['credit'] + '</i>',
+                )
+            )
+        return
+
+    def preprocess_html(self, soup):
+        jpml = soup.find('jpml')
+        if jpml:
+            jpml.name = 'article'
+        h1 = soup.find('p', attrs={'id': 'headline'})
+        if h1:
+            h1.name = 'h1'
+        for h2 in soup.findAll('h2'):
+            h2.name = 'h4'
+        dt = soup.find('p', attrs={'id': 'orig-pubdate-string'})
+        read = soup.find('p', attrs={'id': 'time-to-read'})
+        byl = soup.find('p', attrs={'id': 'byline'})
+        fl = soup.find('p', attrs={'id': 'flashline'})
+        if dt and byl and read and fl:
+            dt.name = read.name = byl.name = fl.name = 'div'
+            byl.insert(0, dt)
+            byl.insert(0, read)
+        url = soup.find('p', attrs={'id': 'share-link'})
+        if url:
+            url.name = 'div'
+            url['title'] = self.tag_to_string(url).strip()
+            url.string = ''
+        panel = soup.find('panel', attrs={'id': 'metadata'})
+        if panel:
+            buck = panel.find('p', attrs={'id': 'media-bucket'})
+            if buck:
+                data = json.loads(buck.string)
+                buck.extract()
+                i_lst = [self.media_bucket(x) for x in data['items']]
+                m_itm = soup.findAll('panel', attrs={'class': 'media-item'})
+                if i_lst and m_itm:
+                    for x, y in list(zip_longest(m_itm, i_lst)):
+                        x.insert_after(BeautifulSoup(y, 'html.parser'))
         return soup
 
-    def get_cover_url(self):
-        index = 'http://en.kiosko.net/us/np/wsj.html'
-        soup = self.index_to_soup(index)
-        for image in soup.findAll('img', src=True):
-            if image['src'].endswith('750.jpg'):
-                return image['src']
-        self.log("\nCover unavailable")
+    def postprocess_html(self, soup, first_fetch):
+        for pan in soup.findAll('panel'):
+            pan.name = 'div'
+        return soup
 
-    def get_browser(self):
-        # To understand the signin logic read signin.js from
-        # https://id.wsj.com/access/pages/wsj/us/signin.html
-        # This is the same login servie as used by Barrons
-        br = BasicNewsRecipe.get_browser(self, user_agent=USER_AGENT)
-        # self.wsj_itp_page = open('/t/raw.html').read()
-        # return br
-        url = 'https://id.wsj.com/access/pages/wsj/us/signin.html?mg=com-wsj&mg=id-wsj'
-        # br.set_debug_http(True)
-        br.open(url).read()
-        rurl = 'https://id.wsj.com/auth/submitlogin.json'
-        rq = Request(rurl, headers={
-            'Accept': 'application/json, text/javascript, */*; q=0.01',
-            'Accept-Language': 'en-US,en;q=0.8',
-            'Content-Type': 'application/json',
-            'Referer': url,
-            'X-HTTP-Method-Override': 'POST',
-            'X-Requested-With': 'XMLHttpRequest',
-        }, data=json.dumps({
-            'username': self.username,
-            'password': self.password,
-            'realm': 'default',
-            'savelogin': 'true',
-            'template': 'default',
-            'url': quote(self.WSJ_ITP),
-        }))
-        r = br.open(rq)
-        if r.code != 200:
-            raise ValueError('Failed to login, check username and password')
-        data = json.loads(r.read())
-        # print(data)
-        if data.get('result') != 'success':
-            raise ValueError(
-                'Failed to login (XHR failed), check username and password')
-        br.set_cookie('m', data['username'], '.wsj.com')
-        try:
-            r = br.open(data['url'])
-        except Exception:
-            self.log.error('Failed to open login url: {}'.format(data['url']))
-            raise
-        self.wsj_itp_page = raw = r.read()
-        if b'>Sign Out<' not in raw:
-            raise ValueError(
-                'Failed to login (auth URL failed), check username and password')
-        # open('/t/raw.html', 'w').write(raw)
+    def _download_cover(self):
+        import os
+        from contextlib import closing
+
+        from calibre.utils.img import save_cover_data_to
+
+        br = browser()
+        dt = self.recipe_specific_options.get('date')
+        if (dt and isinstance(dt, str)):
+            d, m, y = dt.split('-')
+            cu = f'https://www.wsj.com/public/resources/documents/WSJNewsPaper-{int(m)}-{int(d)}-{y}.jpg'
+        else:
+            raw = br.open('https://frontpages.freedomforum.org/newspapers/wsj-The_Wall_Street_Journal')
+            soup = BeautifulSoup(raw.read())
+            cu = soup.find(
+                    'img',
+                    attrs={
+                        'alt': 'Front Page Image',
+                        'src': lambda x: x and x.endswith('front-page-large.jpg'),
+                    },
+                )['src'].replace('-large', '-medium')
+        self.report_progress(1, _('Downloading cover from %s') % cu)
+        with closing(br.open(cu, timeout=self.timeout)) as r:
+            cdata = r.read()
+        cpath = os.path.join(self.output_dir, 'cover.jpg')
+        save_cover_data_to(cdata, cpath)
+        self.cover_path = cpath
+
+    def get_browser(self, *args, **kw):
+        br = BasicNewsRecipe.get_browser(self, *args, **kw)
+        br.addheaders += [
+            ('apollographql-client-name', 'wsj-mobile-android-release'),
+        ]
         return br
 
-    def abs_wsj_url(self, href):
-        if not href.startswith('http'):
-            href = 'http://online.wsj.com' + href
-        return href
-
-    def wsj_find_articles(self, url, ahed=False):
-        root = self.index_to_soup(url, as_tree=True)
-
-        for x in CSSSelect('div.whatsNews-simple')(root):
-            x.getparent().remove(x)
-
-        articles = []
-
-        for container in root.xpath('//li[contains(@class, "mjItemMain")]'):
-            meta = container.xpath('descendant::span[@class="meta_sectionName"]')
-            if not meta:
-                continue
-            meta = meta[0]
-            a = meta.xpath('ancestor::a')[0]
-            meta.getparent().remove(meta)
-            meta = self.tag_to_string(meta)
-            title = self.tag_to_string(a)
-            if meta:
-                title += ' [%s]' % meta
-            url = self.abs_wsj_url(a.get('href'))
-            desc = ''
-            if container:
-                for p in container.xpath('descendant::p'):
-                    q = self.tag_to_string(p)
-                    if 'Subscriber Content' in q:
-                        continue
-                    desc += q
-                    break
-
-            articles.append({'title': title, 'url': url,
-                             'description': desc, 'date': ''})
-
-            self.log('\tFound article:', title)
-            self.log('\t\t', desc)
-
-        if ahed:
-            for h2 in root.xpath('//li[@class="ahed_listitem"]/h2'):
-                a = h2.xpath('descendant::a')[0]
-                title = self.tag_to_string(a)
-                url = self.abs_wsj_url(a.get('href'))
-                desc = ''
-                p = h2.xpath('following-sibling::p')
-                if p:
-                    desc = self.tag_to_string(p[0])
-                articles.append({'title': title, 'url': url,
-                                 'description': desc, 'date': ''})
-                self.log('Found article:', title)
-                self.log('\t\t', desc)
-
-        return articles
-
-    def wsj_find_wn_articles(self, url):
-        root = self.index_to_soup(url, as_tree=True)
-        articles = []
-
-        whats_news = CSSSelect('div.whatsNews-simple.whatsNews-itp')(root)
-        if whats_news:
-            for a in CSSSelect('a[href]')(whats_news[-1]):
-                if '/articles/' not in a.get('href', ''):
-                    continue
-                container = a.xpath('ancestor::p')
-                for meta in CSSSelect('.meta_sectionName')(a):
-                    meta.getparent().remove(meta)
-                title = self.tag_to_string(a).strip()
-                url = self.abs_wsj_url(a.get('href'))
-                desc = ''
-                if container:
-                    desc = self.tag_to_string(container[0])
-
-                articles.append({'title': title, 'url': url,
-                                 'description': desc, 'date': ''})
-
-                self.log('\tFound WN article:', title)
-                self.log('\t\t', desc)
-
-        return articles
-
-    def wsj_add_feed(self, feeds, title, url):
-        self.log('Found section:', title, '[' + url + ']')
-        try:
-            if url.endswith('whatsnews'):
-                articles = self.wsj_find_wn_articles(url)
-            else:
-                articles = self.wsj_find_articles(
-                    url, ahed=title == 'Front Section')
-        except Exception:
-            self.log.exception('Failed to parse section:', title)
-            articles = []
-        if articles:
-            feeds.append((title, articles))
-
     def parse_index(self):
-        # return self.test_wsj_index()
-        root = self.index_to_soup(self.wsj_itp_page, as_tree=True)
-        for span in CSSSelect('span.date-date')(root):
-            if span.text and span.text.strip():
-                self.timefmt = ' [%s]' % span.text.strip()
-                break
-        for a in CSSSelect('div.itpSectionHeaderPdf a[href]')(root):
-            self.cover_url = a.get('href')
+        query = {
+            'operationName': 'IssueQuery',
+            'variables': '{"publication":"WSJ","region":"US","masthead":"ITPNEXTGEN"}',
+            'extensions': '{"persistedQuery":{"version":1,"sha256Hash":"d938226e7d1c1fff050e7d084c72179e2713dcf4736d3a442c618c55b896f847"}}',
+        }
+        url = 'https://shared-data.dowjones.io/gateway/graphql?' + urlencode(
+            query, safe='()!', quote_via=quote
+        )
+        raw = self.index_to_soup(url, raw=True)
+
+        cat_data = json.loads(raw)['data']['mobileIssuesByMasthead']
+        edit = [x['datedLabel'] for x in cat_data][1:]
+        self.log('**Past Editions available : ' + ' | '.join(edit))
+
+        past_edition = self.recipe_specific_options.get('date')
+
+        for itm in cat_data:
+            if past_edition and isinstance(past_edition, str):
+                if past_edition in itm['publishedDateUtc']:
+                    self.timefmt = ' [' + itm['datedLabel']
+                    sections_ = itm['sections']
+                    break
+            self.timefmt = f' [{itm["datedLabel"]}]'
+            sections_ = itm['sections']
             break
 
+        self.log('Downloading ', self.timefmt)
+
         feeds = []
-        for a in CSSSelect('div.itpHeader ul.tab a[href]')(root):
-            if '/itp/' not in a.get('href', ''):
-                continue
-            pageone = a.get('href').endswith('pageone')
-            if pageone:
-                title = 'Front Section'
-                url = self.abs_wsj_url(a.get('href'))
-                self.wsj_add_feed(feeds, title, url)
-                title = "What's News"
-                url = url.replace('pageone', 'whatsnews')
-                self.wsj_add_feed(feeds, title, url)
-            else:
-                title = self.tag_to_string(a)
-                url = self.abs_wsj_url(a.get('href'))
-                self.wsj_add_feed(feeds, title, url)
+
+        for sec in sections_[:-1]:
+            time.sleep(3)
+            section = sec['label']
+            self.log(section)
+            cont_id = sec['key']
+
+            query = {
+                'operationName': 'SectionQuery',
+                'variables': '{{"id":"{}"}}'.format(cont_id),
+                'extensions': '{"persistedQuery":{"version":1,"sha256Hash":"207fe93376f379bf223ed2734cf9313a28291293366a803db923666fa6b45026"}}',
+            }
+            sec_url = 'https://shared-data.dowjones.io/gateway/graphql?' + urlencode(
+                query, safe='()!', quote_via=quote
+            )
+            sec_raw = self.index_to_soup(sec_url, raw=True)
+
+            sec_data = json.loads(sec_raw)['data']['summaryCollectionContent'][
+                'collectionItems'
+            ]
+
+            articles = []
+
+            for art in sec_data:
+                for arts in art['collectionItems']:
+                    mobi = arts['content']['mobileSummary']
+                    title = mobi['headline']['text']
+                    try:
+                        desc = mobi['description']['content']['text']
+                    except TypeError:
+                        desc = ''
+                    url = arts['id']
+                    self.log('          ', title, '\n\t', desc)
+                    articles.append({'title': title, 'description': desc, 'url': url})
+            feeds.append((section, articles))
         return feeds
 
-    def test_wsj_index(self):
-        return [
-            ('Testing', [
-                {'title': 'Article One',
-                 'url': 'http://online.wsj.com/articles/the-end-of-the-impulse-shopper-1416872108'},  # noqa
-                {'title': 'Article Two',
-                 'url': 'http://online.wsj.com/articles/ferguson-police-officer-not-charged-in-black-teens-shooting-1416882438'},  # noqa
-                {'title': 'Article Three',
-                 'url': 'http://online.wsj.com/article/SB10634695869867284248804580297251334393676.html'},  # noqa
-            ]),
-        ]
+    def populate_article_metadata(self, article, soup, first):
+        lnk = soup.find('div', attrs={'id': 'share-link'})
+        if lnk:
+            article.url = lnk['title']
+
+    def print_version(self, url):
+        art_cont = get_article(url)
+        pt = PersistentTemporaryFile('.html')
+        pt.write(art_cont)
+        pt.close()
+        return 'file:///' + pt.name

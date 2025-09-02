@@ -1,16 +1,17 @@
-#!/usr/bin/env python2
+#!/usr/bin/env python
+
+
 __copyright__ = '2008, Kovid Goyal kovid@kovidgoyal.net'
 __docformat__ = 'restructuredtext en'
 __license__   = 'GPL v3'
 
 
-from PyQt5.Qt import (
-    QDialog, QGridLayout, QLabel, QDialogButtonBox,  QApplication, QSpinBox,
-    QToolButton, QIcon, QLineEdit, QComboBox, QCheckBox)
+from qt.core import QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QGridLayout, QIcon, QLabel, QLineEdit, QSpinBox, QToolButton
+
 from calibre.ebooks.metadata import string_to_authors
+from calibre.gui2 import gprefs
 from calibre.gui2.complete2 import EditWithComplete
 from calibre.utils.config import tweaks
-from calibre.gui2 import gprefs
 
 
 class AddEmptyBookDialog(QDialog):
@@ -37,13 +38,13 @@ class AddEmptyBookDialog(QDialog):
 
         self.authors_combo = EditWithComplete(self)
         self.authors_combo.setSizeAdjustPolicy(
-                self.authors_combo.AdjustToMinimumContentsLengthWithIcon)
+                QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         self.authors_combo.setEditable(True)
         self._layout.addWidget(self.authors_combo, 3, 0, 1, 1)
         self.initialize_authors(db, author)
 
         self.clear_button = QToolButton(self)
-        self.clear_button.setIcon(QIcon(I('trash.png')))
+        self.clear_button.setIcon(QIcon.ic('trash.png'))
         self.clear_button.setToolTip(_('Reset author to Unknown'))
         self.clear_button.clicked.connect(self.reset_author)
         self._layout.addWidget(self.clear_button, 3, 1, 1, 1)
@@ -53,13 +54,13 @@ class AddEmptyBookDialog(QDialog):
 
         self.series_combo = EditWithComplete(self)
         self.series_combo.setSizeAdjustPolicy(
-                self.authors_combo.AdjustToMinimumContentsLengthWithIcon)
+                QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         self.series_combo.setEditable(True)
         self._layout.addWidget(self.series_combo, 5, 0, 1, 1)
         self.initialize_series(db, series)
 
         self.sclear_button = QToolButton(self)
-        self.sclear_button.setIcon(QIcon(I('trash.png')))
+        self.sclear_button.setIcon(QIcon.ic('trash.png'))
         self.sclear_button.setToolTip(_('Reset series'))
         self.sclear_button.clicked.connect(self.reset_series)
         self._layout.addWidget(self.sclear_button, 5, 1, 1, 1)
@@ -72,7 +73,7 @@ class AddEmptyBookDialog(QDialog):
         self._layout.addWidget(self.title_edit, 7, 0, 1, 1)
 
         self.tclear_button = QToolButton(self)
-        self.tclear_button.setIcon(QIcon(I('trash.png')))
+        self.tclear_button.setIcon(QIcon.ic('trash.png'))
         self.tclear_button.setToolTip(_('Reset title'))
         self.tclear_button.clicked.connect(self.title_edit.clear)
         self._layout.addWidget(self.tclear_button, 7, 1, 1, 1)
@@ -102,14 +103,14 @@ class AddEmptyBookDialog(QDialog):
         cf.setChecked(gprefs.get('create_empty_copy_dup_formats', False))
         self._layout.addWidget(cf, 10, 0, 1, -1)
 
-        button_box = self.bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        button_box = self.bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         button_box.accepted.connect(self.accept)
         button_box.rejected.connect(self.reject)
         self._layout.addWidget(button_box, 11, 0, 1, -1)
         if dup_title:
-            self.dup_button = b = button_box.addButton(_('&Duplicate current book'), button_box.ActionRole)
+            self.dup_button = b = button_box.addButton(_('&Duplicate current book'), QDialogButtonBox.ButtonRole.ActionRole)
             b.clicked.connect(self.do_duplicate_book)
-            b.setIcon(QIcon(I('edit-copy.png')))
+            b.setIcon(QIcon.ic('edit-copy.png'))
             b.setToolTip(_(
                 'Make the new empty book records exact duplicates\n'
                 'of the current book "%s", with all metadata identical'
@@ -161,11 +162,11 @@ class AddEmptyBookDialog(QDialog):
 
     @property
     def selected_authors(self):
-        return string_to_authors(unicode(self.authors_combo.text()))
+        return string_to_authors(str(self.authors_combo.text()))
 
     @property
     def selected_series(self):
-        return unicode(self.series_combo.text())
+        return str(self.series_combo.text())
 
     @property
     def selected_title(self):
@@ -177,4 +178,4 @@ if __name__ == '__main__':
     db = db()
     app = QApplication([])
     d = AddEmptyBookDialog(None, db, 'Test Author')
-    d.exec_()
+    d.exec()

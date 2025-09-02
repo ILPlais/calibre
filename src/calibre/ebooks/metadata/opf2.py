@@ -1,5 +1,5 @@
-#!/usr/bin/env  python2
-from __future__ import print_function
+#!/usr/bin/env python
+
 __license__   = 'GPL v3'
 __copyright__ = '2008, Kovid Goyal kovid@kovidgoyal.net'
 __docformat__ = 'restructuredtext en'
@@ -8,28 +8,41 @@ __docformat__ = 'restructuredtext en'
 lxml based OPF parser.
 '''
 
-import re, sys, unittest, functools, os, uuid, glob, cStringIO, json, copy
-from urllib import unquote
-from urlparse import urlparse
+import copy
+import functools
+import glob
+import io
+import json
+import os
+import re
+import sys
+import uuid
+from contextlib import suppress
 
 from lxml import etree
 
-from calibre.ebooks import escape_xpath_attr
+from calibre import guess_type, prints
 from calibre.constants import __appname__, __version__, filesystem_encoding
-from calibre.ebooks.metadata.toc import TOC
-from calibre.ebooks.metadata.utils import parse_opf, pretty_print_opf as _pretty_print
-from calibre.ebooks.metadata import string_to_authors, MetaInformation, check_isbn
+from calibre.ebooks import escape_xpath_attr
+from calibre.ebooks.metadata import MetaInformation, check_isbn, string_to_authors
 from calibre.ebooks.metadata.book.base import Metadata
-from calibre.utils.date import parse_date, isoformat
-from calibre.utils.localization import get_lang, canonicalize_lang
-from calibre import prints, guess_type
+from calibre.ebooks.metadata.toc import TOC
+from calibre.ebooks.metadata.utils import parse_opf
+from calibre.ebooks.metadata.utils import pretty_print_opf as _pretty_print
 from calibre.utils.cleantext import clean_ascii_chars, clean_xml_chars
 from calibre.utils.config import tweaks
+from calibre.utils.date import isoformat, parse_date
+from calibre.utils.icu import lower as icu_lower
+from calibre.utils.icu import upper as icu_upper
+from calibre.utils.localization import canonicalize_lang, get_lang
+from calibre.utils.xml_parse import safe_xml_fromstring
+from polyglot.builtins import iteritems
+from polyglot.urllib import unquote, urlparse
 
 pretty_print_opf = False
 
 
-class PrettyPrint(object):
+class PrettyPrint:
 
     def __enter__(self):
         global pretty_print_opf
@@ -43,7 +56,7 @@ class PrettyPrint(object):
 pretty_print = PrettyPrint()
 
 
-class Resource(object):  # {{{
+class Resource:  # {{{
 
     '''
     Represents a resource (usually a file on the filesystem or a URL pointing
@@ -56,7 +69,7 @@ class Resource(object):  # {{{
     :method:`href`
     '''
 
-    def __init__(self, href_or_path, basedir=os.getcwdu(), is_path=True):
+    def __init__(self, href_or_path, basedir=os.getcwd(), is_path=True):
         self.orig = href_or_path
         self._href = None
         self._basedir = basedir
@@ -64,7 +77,7 @@ class Resource(object):  # {{{
         self.fragment = ''
         try:
             self.mime_type = guess_type(href_or_path)[0]
-        except:
+        except Exception:
             self.mime_type = None
         if self.mime_type is None:
             self.mime_type = 'application/octet-stream'
@@ -72,8 +85,8 @@ class Resource(object):  # {{{
             path = href_or_path
             if not os.path.isabs(path):
                 path = os.path.abspath(os.path.join(basedir, path))
-            if isinstance(path, str):
-                path = path.decode(sys.getfilesystemencoding())
+            if isinstance(path, bytes):
+                path = path.decode(filesystem_encoding)
             self.path = path
         else:
             href_or_path = href_or_path
@@ -82,7 +95,7 @@ class Resource(object):  # {{{
                 self._href = href_or_path
             else:
                 pc = url[2]
-                if isinstance(pc, unicode):
+                if isinstance(pc, str):
                     pc = pc.encode('utf-8')
                 pc = pc.decode('utf-8')
                 self.path = os.path.abspath(os.path.join(basedir, pc.replace('/', os.sep)))
@@ -100,19 +113,18 @@ class Resource(object):  # {{{
             if self._basedir:
                 basedir = self._basedir
             else:
-                basedir = os.getcwdu()
+                basedir = os.getcwd()
         if self.path is None:
             return self._href
-        f = self.fragment.encode('utf-8') if isinstance(self.fragment, unicode) else self.fragment
-        frag = '#'+f if self.fragment else ''
+        frag = ('#' + self.fragment) if self.fragment else ''
         if self.path == basedir:
-            return ''+frag
+            return frag
         try:
             rpath = os.path.relpath(self.path, basedir)
         except ValueError:  # On windows path and basedir could be on different drives
             rpath = self.path
-        if isinstance(rpath, unicode):
-            rpath = rpath.encode('utf-8')
+        if isinstance(rpath, bytes):
+            rpath = rpath.decode(filesystem_encoding)
         return rpath.replace(os.sep, '/')+frag
 
     def set_basedir(self, path):
@@ -122,19 +134,18 @@ class Resource(object):  # {{{
         return self._basedir
 
     def __repr__(self):
-        return 'Resource(%s, %s)'%(repr(self.path), repr(self.href()))
+        return f'Resource({self.path!r}, {self.href()!r})'
 
 # }}}
 
 
-class ResourceCollection(object):  # {{{
+class ResourceCollection:  # {{{
 
     def __init__(self):
         self._resources = []
 
     def __iter__(self):
-        for r in self._resources:
-            yield r
+        yield from self._resources
 
     def __len__(self):
         return len(self._resources)
@@ -147,7 +158,8 @@ class ResourceCollection(object):  # {{{
 
     def __str__(self):
         resources = map(repr, self)
-        return '[%s]'%', '.join(resources)
+        return '[{}]'.format(', '.join(resources))
+    __unicode__ = __str__
 
     def __repr__(self):
         return str(self)
@@ -193,30 +205,28 @@ class ManifestItem(Resource):  # {{{
                 res.mime_type = mt
             return res
 
-    @dynamic_property
+    @property
     def media_type(self):
-        def fget(self):
-            return self.mime_type
+        return self.mime_type
 
-        def fset(self, val):
-            self.mime_type = val
-        return property(fget=fget, fset=fset)
+    @media_type.setter
+    def media_type(self, val):
+        self.mime_type = val
 
-    def __unicode__(self):
-        return u'<item id="%s" href="%s" media-type="%s" />'%(self.id, self.href(), self.media_type)
+    def __unicode__representation__(self):
+        return f'<item id="{self.id}" href="{self.href()}" media-type="{self.media_type}" />'
 
-    def __str__(self):
-        return unicode(self).encode('utf-8')
+    __str__ = __unicode__representation__
 
     def __repr__(self):
-        return unicode(self)
+        return str(self)
 
     def __getitem__(self, index):
         if index == 0:
             return self.href()
         if index == 1:
             return self.media_type
-        raise IndexError('%d out of bounds.'%index)
+        raise IndexError(f'{index} out of bounds.')
 
 # }}}
 
@@ -227,7 +237,7 @@ class Manifest(ResourceCollection):  # {{{
         self.append(ManifestItem.from_opf_manifest_item(item, dir))
         id = item.get('id', '')
         if not id:
-            id = 'id%d'%self.next_id
+            id = f'id{self.next_id}'
         self[-1].id = id
         self.next_id += 1
 
@@ -251,7 +261,7 @@ class Manifest(ResourceCollection):  # {{{
             mi = ManifestItem(path, is_path=True)
             if mt:
                 mi.mime_type = mt
-            mi.id = 'id%d'%m.next_id
+            mi.id = f'id{m.next_id}'
             m.next_id += 1
             m.append(mi)
         return m
@@ -260,7 +270,7 @@ class Manifest(ResourceCollection):  # {{{
         mi = ManifestItem(path, is_path=True)
         if mime_type:
             mi.mime_type = mime_type
-        mi.id = 'id%d'%self.next_id
+        mi.id = f'id{self.next_id}'
         self.next_id += 1
         self.append(mi)
         return mi.id
@@ -304,8 +314,7 @@ class Spine(ResourceCollection):  # {{{
             self.idref = None
 
         def __repr__(self):
-            return 'Spine.Item(path=%r, id=%s, is_linear=%s)' % \
-                    (self.path, self.id, self.is_linear)
+            return f'Spine.Item(path={self.path!r}, id={self.id}, is_linear={self.is_linear})'
 
     @staticmethod
     def from_opf_spine_element(itemrefs, manifest):
@@ -330,7 +339,7 @@ class Spine(ResourceCollection):  # {{{
         for path in paths:
             try:
                 s.append(Spine.Item(s.manifest.id_for_path, path, is_path=True))
-            except:
+            except Exception:
                 continue
         return s
 
@@ -381,36 +390,38 @@ class Guide(ResourceCollection):  # {{{
             return res
 
         def __repr__(self):
-            ans = '<reference type="%s" href="%s" '%(self.type, self.href())
+            ans = f'<reference type="{self.type}" href="{self.href()}" '
             if self.title:
-                ans += 'title="%s" '%self.title
+                ans += f'title="{self.title}" '
             return ans + '/>'
 
     @staticmethod
-    def from_opf_guide(references, base_dir=os.getcwdu()):
+    def from_opf_guide(references, base_dir=os.getcwd()):
         coll = Guide()
         for ref in references:
             try:
                 ref = Guide.Reference.from_opf_resource_item(ref, base_dir)
                 coll.append(ref)
-            except:
+            except Exception:
                 continue
         return coll
 
     def set_cover(self, path):
-        map(self.remove, [i for i in self if 'cover' in i.type.lower()])
-        for type in ('cover', 'other.ms-coverimage-standard', 'other.ms-coverimage'):
+        for i in tuple(self):
+            if 'cover' in i.type.lower():
+                self.remove(i)
+        for typ in ('cover', 'other.ms-coverimage-standard', 'other.ms-coverimage'):
             self.append(Guide.Reference(path, is_path=True))
-            self[-1].type = type
+            self[-1].type = typ
             self[-1].title = ''
 
 # }}}
 
 
-class MetadataField(object):
+class MetadataField:
 
     def __init__(self, name, is_dc=True, formatter=None, none_is=None,
-            renderer=lambda x: unicode(x)):
+            renderer=lambda x: str(x)):
         self.name      = name
         self.is_dc     = is_dc
         self.formatter = formatter
@@ -427,7 +438,7 @@ class MetadataField(object):
         if self.formatter is not None:
             try:
                 ans = self.formatter(ans)
-            except:
+            except Exception:
                 return None
         if hasattr(ans, 'strip'):
             ans = ans.strip()
@@ -450,6 +461,37 @@ class MetadataField(object):
         obj.set_text(elem, self.renderer(val))
 
 
+class LinkMapsField:
+
+    def __get__(self, obj, type=None):
+        ans = obj.get_metadata_element('link_maps')
+        if ans is not None:
+            ans = obj.get_text(ans)
+            if ans:
+                with suppress(Exception):
+                    return json.loads(ans)
+        ans = obj.get_metadata_element('author_link_map')
+        if ans is not None:
+            ans = obj.get_text(ans)
+            if ans:
+                with suppress(Exception):
+                    return {'authors': json.loads(ans)}
+        return {}
+
+    def __set__(self, obj, val):
+        elem = obj.get_metadata_element('author_link_map')
+        if elem is not None:
+            elem.getparent().remove(elem)
+        elem = obj.get_metadata_element('link_maps')
+        if not val:
+            if elem is not None:
+                elem.getparent().remove(elem)
+            return
+        if elem is None:
+            elem = obj.create_metadata_element('link_maps', is_dc=False)
+        obj.set_text(elem, dump_dict(val))
+
+
 class TitleSortField(MetadataField):
 
     def __get__(self, obj, type=None):
@@ -458,7 +500,7 @@ class TitleSortField(MetadataField):
             matches = obj.title_path(obj.metadata)
             if matches:
                 for match in matches:
-                    ans = match.get('{%s}file-as'%obj.NAMESPACES['opf'], None)
+                    ans = match.get('{{{}}}file-as'.format(obj.NAMESPACES['opf']), None)
                     if not ans:
                         ans = match.get('file-as', None)
                     if ans:
@@ -480,17 +522,19 @@ class TitleSortField(MetadataField):
 
 
 def serialize_user_metadata(metadata_elem, all_user_metadata, tail='\n'+(' '*8)):
+    from calibre.ebooks.metadata.book.json_codec import encode_is_multiple, object_to_unicode
     from calibre.utils.config import to_json
-    from calibre.ebooks.metadata.book.json_codec import (object_to_unicode,
-                                                         encode_is_multiple)
 
     for name, fm in all_user_metadata.items():
         try:
             fm = copy.copy(fm)
+            if (fm.get('datatype', 'text') == 'composite'
+              and not fm.get('display', {}).get('composite_store_template_value_in_opf', True)):
+                fm['#value#'] = ''
             encode_is_multiple(fm)
             fm = object_to_unicode(fm)
             fm = json.dumps(fm, default=to_json, ensure_ascii=False)
-        except:
+        except Exception:
             prints('Failed to write user metadata:', name)
             import traceback
             traceback.print_exc()
@@ -498,6 +542,18 @@ def serialize_user_metadata(metadata_elem, all_user_metadata, tail='\n'+(' '*8))
         meta = metadata_elem.makeelement('meta')
         meta.set('name', 'calibre:user_metadata:'+name)
         meta.set('content', fm)
+        meta.tail = tail
+        metadata_elem.append(meta)
+
+
+def serialize_annotations(metadata_elem, annotations, tail='\n'+(' '*8)):
+    for item in annotations:
+        data = json.dumps(item, ensure_ascii=False)
+        if isinstance(data, bytes):
+            data = data.decode('utf-8')
+        meta = metadata_elem.makeelement('meta')
+        meta.set('name', 'calibre:annotation')
+        meta.set('content', data)
         meta.tail = tail
         metadata_elem.append(meta)
 
@@ -510,19 +566,23 @@ def dump_dict(cats):
             skipkeys=True)
 
 
-class OPF(object):  # {{{
+XPATH_NS = {
+    'dc' : 'http://purl.org/dc/elements/1.1/',
+    'opf': 'http://www.idpf.org/2007/opf',
+    're' : 'http://exslt.org/regular-expressions'
+}
+XPath = functools.partial(etree.XPath, namespaces=XPATH_NS)
+
+
+class OPF:  # {{{
 
     MIMETYPE         = 'application/oebps-package+xml'
     NAMESPACES       = {
-                        None: "http://www.idpf.org/2007/opf",
-                        'dc': "http://purl.org/dc/elements/1.1/",
-                        'opf': "http://www.idpf.org/2007/opf",
+                        None: 'http://www.idpf.org/2007/opf',
+                        'dc': 'http://purl.org/dc/elements/1.1/',
+                        'opf': 'http://www.idpf.org/2007/opf',
                        }
-    META             = '{%s}meta' % NAMESPACES['opf']
-    xpn = NAMESPACES.copy()
-    xpn.pop(None)
-    xpn['re'] = 'http://exslt.org/regular-expressions'
-    XPath = functools.partial(etree.XPath, namespaces=xpn)
+    META             = '{{{}}}meta'.format(NAMESPACES['opf'])
     CONTENT          = XPath('self::*[re:match(name(), "meta$", "i")]/@content')
     TEXT             = XPath('string()')
 
@@ -532,6 +592,7 @@ class OPF(object):  # {{{
         'and re:match(@name, concat("^calibre:", $name, "$"), "i"))]')
     title_path      = XPath('descendant::*[re:match(name(), "title", "i")]')
     authors_path    = XPath('descendant::*[re:match(name(), "creator", "i") and (@role="aut" or @opf:role="aut" or (not(@role) and not(@opf:role)))]')
+    editors_path    = XPath('descendant::*[re:match(name(), "creator", "i") and (@role="edt" or @opf:role="edt")]')
     bkp_path        = XPath('descendant::*[re:match(name(), "contributor", "i") and (@role="bkp" or @opf:role="bkp")]')
     tags_path       = XPath('descendant::*[re:match(name(), "subject", "i")]')
     isbn_path       = XPath('descendant::*[re:match(name(), "identifier", "i") and '
@@ -571,11 +632,10 @@ class OPF(object):  # {{{
     user_categories = MetadataField('user_categories', is_dc=False,
                                     formatter=json.loads,
                                     renderer=dump_dict)
-    author_link_map = MetadataField('author_link_map', is_dc=False,
-                                formatter=json.loads, renderer=dump_dict)
+    link_maps = LinkMapsField()
 
-    def __init__(self, stream, basedir=os.getcwdu(), unquote_urls=True,
-            populate_spine=True, try_to_guess_cover=True, preparsed_opf=None, read_toc=True):
+    def __init__(self, stream, basedir=os.getcwd(), unquote_urls=True,
+            populate_spine=True, try_to_guess_cover=False, preparsed_opf=None, read_toc=True):
         self.try_to_guess_cover = try_to_guess_cover
         self.basedir  = self.base_dir = basedir
         self.path_to_html_toc = self.html_toc_fragment = None
@@ -613,8 +673,8 @@ class OPF(object):  # {{{
     def read_user_metadata(self):
         self._user_metadata_ = {}
         temp = Metadata('x', ['x'])
-        from calibre.utils.config import from_json
         from calibre.ebooks.metadata.book.json_codec import decode_is_multiple
+        from calibre.utils.config import from_json
         elems = self.root.xpath('//*[name() = "meta" and starts-with(@name,'
                 '"calibre:user_metadata:") and @content]')
         for elem in elems:
@@ -627,7 +687,7 @@ class OPF(object):  # {{{
                 fm = json.loads(fm, object_hook=from_json)
                 decode_is_multiple(fm)
                 temp.set_user_metadata(name, fm)
-            except:
+            except Exception:
                 prints('Failed to read user metadata:', name)
                 import traceback
                 traceback.print_exc()
@@ -638,13 +698,28 @@ class OPF(object):  # {{{
         if self.package_version >= 3.0:
             from calibre.ebooks.metadata.opf3 import read_metadata
             return read_metadata(self.root)
-        ans = MetaInformation(self)
+        # avoid deepcopy of non-metadata items
+        manifest, spine, guide, toc = self.manifest, self.spine, self.guide, self.toc
+        self.manifest = self.spine = self.guide = self.toc = None
+        try:
+            ans = MetaInformation(self)
+        finally:
+            self.manifest, self.spine, self.guide, self.toc = manifest, spine, guide, toc
         for n, v in self._user_metadata_.items():
             ans.set_user_metadata(n, v)
 
         ans.set_identifiers(self.get_identifiers())
+        ans.link_maps = self.link_maps
+        ans.cover = self.cover  # needed because we nuke the guide while creating ans
 
         return ans
+
+    def read_annotations(self):
+        for elem in self.root.xpath('//*[name() = "meta" and @name = "calibre:annotation" and @content]'):
+            try:
+                yield json.loads(elem.get('content'))
+            except Exception:
+                pass
 
     def write_user_metadata(self):
         elems = self.root.xpath('//*[name() = "meta" and starts-with(@name,'
@@ -657,7 +732,7 @@ class OPF(object):  # {{{
     def find_toc(self):
         self.toc = None
         try:
-            spine = self.XPath('descendant::*[re:match(name(), "spine", "i")]')(self.root)
+            spine = XPath('descendant::*[re:match(name(), "spine", "i")]')(self.root)
             toc = None
             if spine:
                 spine = spine[0]
@@ -691,11 +766,11 @@ class OPF(object):  # {{{
                         not os.path.isfile(self.path_to_html_toc):
                     self.path_to_html_toc = None
                 self.toc.read_html_toc(toc)
-        except:
+        except Exception:
             pass
 
     def get_text(self, elem):
-        return u''.join(self.CONTENT(elem) or self.TEXT(elem))
+        return ''.join(self.CONTENT(elem) or self.TEXT(elem))
 
     def set_text(self, elem, content):
         if elem.tag == self.META:
@@ -707,16 +782,16 @@ class OPF(object):  # {{{
         return self.manifest_path(self.root)
 
     def create_manifest_item(self, href, media_type, append=False):
-        ids = [i.get('id', None) for i in self.itermanifest()]
-        id = None
-        for c in xrange(1, sys.maxint):
-            id = 'id%d'%c
-            if id not in ids:
-                break
+        ids = {i.get('id', None) for i in self.itermanifest()}
+        manifest_id = 'id1'
+        c = 1
+        while manifest_id in ids:
+            c += 1
+            manifest_id = f'id{c}'
         if not media_type:
             media_type = 'application/xhtml+xml'
-        ans = etree.Element('{%s}item'%self.NAMESPACES['opf'],
-                             attrib={'id':id, 'href':href, 'media-type':media_type})
+        ans = etree.Element('{{{}}}item'.format(self.NAMESPACES['opf']),
+                             attrib={'id':manifest_id, 'href':href, 'media-type':media_type})
         ans.tail = '\n\t\t'
         if append:
             manifest = self.manifest_ppath(self.root)[0]
@@ -726,7 +801,7 @@ class OPF(object):  # {{{
     def replace_manifest_item(self, item, items):
         items = [self.create_manifest_item(*i) for i in items]
         for i, item2 in enumerate(items):
-            item2.set('id', item.get('id')+'.%d'%(i+1))
+            item2.set('id', item.get('id')+f'.{i + 1}')
         manifest = item.getparent()
         index = manifest.index(item)
         manifest[index:index+1] = items
@@ -752,22 +827,22 @@ class OPF(object):  # {{{
                 return x.get('href', None)
 
     def create_spine_item(self, idref):
-        ans = etree.Element('{%s}itemref'%self.NAMESPACES['opf'], idref=idref)
+        ans = etree.Element('{{{}}}itemref'.format(self.NAMESPACES['opf']), idref=idref)
         ans.tail = '\n\t\t'
         return ans
 
     def replace_spine_items_by_idref(self, idref, new_idrefs):
         items = list(map(self.create_spine_item, new_idrefs))
-        spine = self.XPath('/opf:package/*[re:match(name(), "spine", "i")]')(self.root)[0]
+        spine = XPath('/opf:package/*[re:match(name(), "spine", "i")]')(self.root)[0]
         old = [i for i in self.iterspine() if i.get('idref', None) == idref]
         for x in old:
             i = spine.index(x)
             spine[i:i+1] = items
 
     def create_guide_element(self):
-        e = etree.SubElement(self.root, '{%s}guide'%self.NAMESPACES['opf'])
+        e = etree.SubElement(self.root, '{{{}}}guide'.format(self.NAMESPACES['opf']))
         e.text = '\n        '
-        e.tail =  '\n'
+        e.tail = '\n'
         return e
 
     def remove_guide(self):
@@ -776,7 +851,7 @@ class OPF(object):  # {{{
             self.root.remove(g)
 
     def create_guide_item(self, type, title, href):
-        e = etree.Element('{%s}reference'%self.NAMESPACES['opf'],
+        e = etree.Element('{{{}}}reference'.format(self.NAMESPACES['opf']),
                              type=type, title=title, href=href)
         e.tail='\n'
         return e
@@ -791,7 +866,7 @@ class OPF(object):  # {{{
     def unquote_urls(self):
         def get_href(item):
             raw = unquote(item.get('href', ''))
-            if not isinstance(raw, unicode):
+            if not isinstance(raw, str):
                 raw = raw.decode('utf-8')
             return raw
         for item in self.itermanifest():
@@ -799,183 +874,167 @@ class OPF(object):  # {{{
         for item in self.iterguide():
             item.set('href', get_href(item))
 
-    @dynamic_property
+    @property
     def title(self):
         # TODO: Add support for EPUB 3 refinements
 
-        def fget(self):
-            for elem in self.title_path(self.metadata):
-                title = self.get_text(elem)
-                if title and title.strip():
-                    return re.sub(r'\s+', ' ', title.strip())
+        for elem in self.title_path(self.metadata):
+            title = self.get_text(elem)
+            if title and title.strip():
+                return re.sub(r'\s+', ' ', title.strip())
 
-        def fset(self, val):
-            val = (val or '').strip()
-            titles = self.title_path(self.metadata)
-            if self.package_version < 3:
-                # EPUB 3 allows multiple title elements containing sub-titles,
-                # series and other things. We all loooove EPUB 3.
-                for title in titles:
-                    title.getparent().remove(title)
-                titles = ()
-            if val:
-                title = titles[0] if titles else self.create_metadata_element('title')
-                title.text = re.sub(r'\s+', ' ', unicode(val))
+    @title.setter
+    def title(self, val):
+        val = (val or '').strip()
+        titles = self.title_path(self.metadata)
+        if self.package_version < 3:
+            # EPUB 3 allows multiple title elements containing sub-titles,
+            # series and other things. We all loooove EPUB 3.
+            for title in titles:
+                title.getparent().remove(title)
+            titles = ()
+        if val:
+            title = titles[0] if titles else self.create_metadata_element('title')
+            title.text = re.sub(r'\s+', ' ', str(val))
 
-        return property(fget=fget, fset=fset)
-
-    @dynamic_property
+    @property
     def authors(self):
-
-        def fget(self):
-            ans = []
-            for elem in self.authors_path(self.metadata):
+        ans = []
+        for elem in self.authors_path(self.metadata):
+            ans.extend(string_to_authors(self.get_text(elem)))
+        if not ans:
+            for elem in self.editors_path(self.metadata):
                 ans.extend(string_to_authors(self.get_text(elem)))
-            return ans
+        return ans
 
-        def fset(self, val):
-            remove = list(self.authors_path(self.metadata))
-            for elem in remove:
-                elem.getparent().remove(elem)
-            # Ensure new author element is at the top of the list
-            # for broken implementations that always use the first
-            # <dc:creator> element with no attention to the role
-            for author in reversed(val):
-                elem = self.metadata.makeelement('{%s}creator'%
-                        self.NAMESPACES['dc'], nsmap=self.NAMESPACES)
-                elem.tail = '\n'
-                self.metadata.insert(0, elem)
-                elem.set('{%s}role'%self.NAMESPACES['opf'], 'aut')
-                self.set_text(elem, author.strip())
+    @authors.setter
+    def authors(self, val):
+        remove = list(self.authors_path(self.metadata)) or list(self.editors_path(self.metadata))
+        for elem in remove:
+            elem.getparent().remove(elem)
+        # Ensure new author element is at the top of the list
+        # for broken implementations that always use the first
+        # <dc:creator> element with no attention to the role
+        for author in reversed(val):
+            elem = self.metadata.makeelement('{{{}}}creator'.format(self.NAMESPACES['dc']), nsmap=self.NAMESPACES)
+            elem.tail = '\n'
+            self.metadata.insert(0, elem)
+            elem.set('{{{}}}role'.format(self.NAMESPACES['opf']), 'aut')
+            self.set_text(elem, author.strip())
 
-        return property(fget=fget, fset=fset)
-
-    @dynamic_property
+    @property
     def author_sort(self):
+        matches = self.authors_path(self.metadata) or self.editors_path(self.metadata)
+        if matches:
+            for match in matches:
+                ans = match.get('{{{}}}file-as'.format(self.NAMESPACES['opf'])) or match.get('file-as')
+                if ans:
+                    return ans
 
-        def fget(self):
-            matches = self.authors_path(self.metadata)
-            if matches:
-                for match in matches:
-                    ans = match.get('{%s}file-as'%self.NAMESPACES['opf'], None)
-                    if not ans:
-                        ans = match.get('file-as', None)
-                    if ans:
-                        return ans
+    @author_sort.setter
+    def author_sort(self, val):
+        matches = self.authors_path(self.metadata) or self.editors_path(self.metadata)
+        if matches:
+            for key in matches[0].attrib:
+                if key.endswith('file-as'):
+                    matches[0].attrib.pop(key)
+            matches[0].set('{{{}}}file-as'.format(self.NAMESPACES['opf']), str(val))
 
-        def fset(self, val):
-            matches = self.authors_path(self.metadata)
-            if matches:
-                for key in matches[0].attrib:
-                    if key.endswith('file-as'):
-                        matches[0].attrib.pop(key)
-                matches[0].set('{%s}file-as'%self.NAMESPACES['opf'], unicode(val))
-
-        return property(fget=fget, fset=fset)
-
-    @dynamic_property
+    @property
     def tags(self):
+        ans = []
+        for tag in self.tags_path(self.metadata):
+            text = self.get_text(tag)
+            if text and text.strip():
+                ans.extend([x.strip() for x in text.split(',')])
+        return ans
 
-        def fget(self):
-            ans = []
-            for tag in self.tags_path(self.metadata):
-                text = self.get_text(tag)
-                if text and text.strip():
-                    ans.extend([x.strip() for x in text.split(',')])
-            return ans
+    @tags.setter
+    def tags(self, val):
+        for tag in list(self.tags_path(self.metadata)):
+            tag.getparent().remove(tag)
+        for tag in val:
+            elem = self.create_metadata_element('subject')
+            self.set_text(elem, str(tag))
 
-        def fset(self, val):
-            for tag in list(self.tags_path(self.metadata)):
-                tag.getparent().remove(tag)
-            for tag in val:
-                elem = self.create_metadata_element('subject')
-                self.set_text(elem, unicode(tag))
-
-        return property(fget=fget, fset=fset)
-
-    @dynamic_property
+    @property
     def pubdate(self):
+        ans = None
+        for match in self.pubdate_path(self.metadata):
+            try:
+                val = parse_date(etree.tostring(match, encoding='unicode',
+                    method='text', with_tail=False).strip())
+            except Exception:
+                continue
+            if ans is None or val < ans:
+                ans = val
+        return ans
 
-        def fget(self):
-            ans = None
-            for match in self.pubdate_path(self.metadata):
-                try:
-                    val = parse_date(etree.tostring(match, encoding=unicode,
-                        method='text', with_tail=False).strip())
-                except:
-                    continue
-                if ans is None or val < ans:
-                    ans = val
-            return ans
-
-        def fset(self, val):
-            least_val = least_elem = None
-            for match in self.pubdate_path(self.metadata):
-                try:
-                    cval = parse_date(etree.tostring(match, encoding=unicode,
-                        method='text', with_tail=False).strip())
-                except:
+    @pubdate.setter
+    def pubdate(self, val):
+        least_val = least_elem = None
+        for match in self.pubdate_path(self.metadata):
+            try:
+                cval = parse_date(etree.tostring(match, encoding='unicode',
+                    method='text', with_tail=False).strip())
+            except Exception:
+                match.getparent().remove(match)
+            else:
+                if not val:
                     match.getparent().remove(match)
-                else:
-                    if not val:
-                        match.getparent().remove(match)
-                    if least_val is None or cval < least_val:
-                        least_val, least_elem = cval, match
+                if least_val is None or cval < least_val:
+                    least_val, least_elem = cval, match
 
-            if val:
-                if least_val is None:
-                    least_elem = self.create_metadata_element('date')
+        if val:
+            if least_val is None:
+                least_elem = self.create_metadata_element('date')
 
-                least_elem.attrib.clear()
-                least_elem.text = isoformat(val)
+            least_elem.attrib.clear()
+            least_elem.text = isoformat(val)
 
-        return property(fget=fget, fset=fset)
-
-    @dynamic_property
+    @property
     def isbn(self):
+        for match in self.isbn_path(self.metadata):
+            return self.get_text(match) or None
 
-        def fget(self):
-            for match in self.isbn_path(self.metadata):
-                return self.get_text(match) or None
+    @isbn.setter
+    def isbn(self, val):
+        uuid_id = None
+        for attr in self.root.attrib:
+            if attr.endswith('unique-identifier'):
+                uuid_id = self.root.attrib[attr]
+                break
 
-        def fset(self, val):
-            uuid_id = None
-            for attr in self.root.attrib:
-                if attr.endswith('unique-identifier'):
-                    uuid_id = self.root.attrib[attr]
-                    break
-
-            matches = self.isbn_path(self.metadata)
-            if not val:
-                for x in matches:
-                    xid = x.get('id', None)
-                    is_package_identifier = uuid_id is not None and uuid_id == xid
-                    if is_package_identifier:
-                        self.set_text(x, str(uuid.uuid4()))
-                        for attr in x.attrib:
-                            if attr.endswith('scheme'):
-                                x.attrib[attr] = 'uuid'
-                    else:
-                        x.getparent().remove(x)
-                return
-            if not matches:
-                attrib = {'{%s}scheme'%self.NAMESPACES['opf']: 'ISBN'}
-                matches = [self.create_metadata_element('identifier',
-                                                        attrib=attrib)]
-            self.set_text(matches[0], unicode(val))
-
-        return property(fget=fget, fset=fset)
+        matches = self.isbn_path(self.metadata)
+        if not val:
+            for x in matches:
+                xid = x.get('id', None)
+                is_package_identifier = uuid_id is not None and uuid_id == xid
+                if is_package_identifier:
+                    self.set_text(x, str(uuid.uuid4()))
+                    for attr in x.attrib:
+                        if attr.endswith('scheme'):
+                            x.attrib[attr] = 'uuid'
+                else:
+                    x.getparent().remove(x)
+            return
+        if not matches:
+            attrib = {'{{{}}}scheme'.format(self.NAMESPACES['opf']): 'ISBN'}
+            matches = [self.create_metadata_element('identifier',
+                                                    attrib=attrib)]
+        self.set_text(matches[0], str(val))
 
     def get_identifiers(self):
         identifiers = {}
-        for x in self.XPath(
+        schemeless = []
+        for x in XPath(
             'descendant::*[local-name() = "identifier" and text()]')(
                     self.metadata):
             found_scheme = False
-            for attr, val in x.attrib.iteritems():
+            for attr, val in iteritems(x.attrib):
                 if attr.endswith('scheme'):
                     typ = icu_lower(val)
-                    val = etree.tostring(x, with_tail=False, encoding=unicode,
+                    val = etree.tostring(x, with_tail=False, encoding='unicode',
                             method='text').strip()
                     if val and typ not in ('calibre', 'uuid'):
                         if typ == 'isbn' and val.lower().startswith('urn:isbn:'):
@@ -984,12 +1043,21 @@ class OPF(object):  # {{{
                     found_scheme = True
                     break
             if not found_scheme:
-                val = etree.tostring(x, with_tail=False, encoding=unicode,
+                val = etree.tostring(x, with_tail=False, encoding='unicode',
                             method='text').strip()
                 if val.lower().startswith('urn:isbn:'):
                     val = check_isbn(val.split(':')[-1])
                     if val is not None:
                         identifiers['isbn'] = val
+                else:
+                    schemeless.append(val)
+
+        if schemeless and 'isbn' not in identifiers:
+            for val in schemeless:
+                if check_isbn(val, simple_sanitize=True) is not None:
+                    identifiers['isbn'] = check_isbn(val)
+                    break
+
         return identifiers
 
     def set_identifiers(self, identifiers):
@@ -1000,104 +1068,97 @@ class OPF(object):  # {{{
                 uuid_id = self.root.attrib[attr]
                 break
 
-        for x in self.XPath(
+        for x in XPath(
             'descendant::*[local-name() = "identifier"]')(
                     self.metadata):
             xid = x.get('id', None)
             is_package_identifier = uuid_id is not None and uuid_id == xid
-            typ = {val for attr, val in x.attrib.iteritems() if attr.endswith('scheme')}
+            typ = {val.lower() for attr, val in iteritems(x.attrib) if attr.endswith('scheme')}
             if is_package_identifier:
                 typ = tuple(typ)
-                if typ and typ[0].lower() in identifiers:
-                    self.set_text(x, identifiers.pop(typ[0].lower()))
+                if typ and typ[0] in identifiers:
+                    self.set_text(x, identifiers.pop(typ[0]))
                 continue
             if typ and not (typ & {'calibre', 'uuid'}):
                 x.getparent().remove(x)
 
-        for typ, val in identifiers.iteritems():
-            attrib = {'{%s}scheme'%self.NAMESPACES['opf']: typ.upper()}
+        for typ, val in iteritems(identifiers):
+            attrib = {'{{{}}}scheme'.format(self.NAMESPACES['opf']): typ.upper()}
             self.set_text(self.create_metadata_element(
-                'identifier', attrib=attrib), unicode(val))
+                'identifier', attrib=attrib), str(val))
 
-    @dynamic_property
+    @property
     def application_id(self):
+        for match in self.application_id_path(self.metadata):
+            return self.get_text(match) or None
 
-        def fget(self):
-            for match in self.application_id_path(self.metadata):
-                return self.get_text(match) or None
+    @application_id.setter
+    def application_id(self, val):
+        removed_ids = set()
+        for x in tuple(self.application_id_path(self.metadata)):
+            removed_ids.add(x.get('id', None))
+            x.getparent().remove(x)
 
-        def fset(self, val):
-            removed_ids = set()
-            for x in tuple(self.application_id_path(self.metadata)):
-                removed_ids.add(x.get('id', None))
-                x.getparent().remove(x)
+        uuid_id = None
+        for attr in self.root.attrib:
+            if attr.endswith('unique-identifier'):
+                uuid_id = self.root.attrib[attr]
+                break
+        attrib = {'{{{}}}scheme'.format(self.NAMESPACES['opf']): 'calibre'}
+        if uuid_id and uuid_id in removed_ids:
+            attrib['id'] = uuid_id
+        self.set_text(self.create_metadata_element(
+            'identifier', attrib=attrib), str(val))
 
-            uuid_id = None
-            for attr in self.root.attrib:
-                if attr.endswith('unique-identifier'):
-                    uuid_id = self.root.attrib[attr]
-                    break
-            attrib = {'{%s}scheme'%self.NAMESPACES['opf']: 'calibre'}
-            if uuid_id and uuid_id in removed_ids:
-                attrib['id'] = uuid_id
-            self.set_text(self.create_metadata_element(
-                'identifier', attrib=attrib), unicode(val))
-
-        return property(fget=fget, fset=fset)
-
-    @dynamic_property
+    @property
     def uuid(self):
+        for match in self.uuid_id_path(self.metadata):
+            return self.get_text(match) or None
 
-        def fget(self):
-            for match in self.uuid_id_path(self.metadata):
-                return self.get_text(match) or None
+    @uuid.setter
+    def uuid(self, val):
+        matches = self.uuid_id_path(self.metadata)
+        if not matches:
+            attrib = {'{{{}}}scheme'.format(self.NAMESPACES['opf']): 'uuid'}
+            matches = [self.create_metadata_element('identifier',
+                                                    attrib=attrib)]
+        self.set_text(matches[0], str(val))
 
-        def fset(self, val):
-            matches = self.uuid_id_path(self.metadata)
-            if not matches:
-                attrib = {'{%s}scheme'%self.NAMESPACES['opf']: 'uuid'}
-                matches = [self.create_metadata_element('identifier',
-                                                        attrib=attrib)]
-            self.set_text(matches[0], unicode(val))
-
-        return property(fget=fget, fset=fset)
-
-    @dynamic_property
+    @property
     def language(self):
+        ans = self.languages
+        if ans:
+            return ans[0]
 
-        def fget(self):
-            ans = self.languages
-            if ans:
-                return ans[0]
+    @language.setter
+    def language(self, val):
+        self.languages = [val]
 
-        def fset(self, val):
-            self.languages = [val]
-
-        return property(fget=fget, fset=fset)
-
-    @dynamic_property
+    @property
     def languages(self):
+        ans = []
+        for match in self.languages_path(self.metadata):
+            t = self.get_text(match)
+            if t and t.strip():
+                l = canonicalize_lang(t.strip())
+                if l:
+                    ans.append(l)
+        return ans
 
-        def fget(self):
-            ans = []
-            for match in self.languages_path(self.metadata):
-                t = self.get_text(match)
-                if t and t.strip():
-                    l = canonicalize_lang(t.strip())
-                    if l:
-                        ans.append(l)
-            return ans
+    @languages.setter
+    def languages(self, val):
+        matches = self.languages_path(self.metadata)
+        for x in matches:
+            x.getparent().remove(x)
 
-        def fset(self, val):
-            matches = self.languages_path(self.metadata)
-            for x in matches:
-                x.getparent().remove(x)
-
-            for lang in val:
-                l = self.create_metadata_element('language')
-                self.set_text(l, unicode(lang))
-
-        return property(fget=fget, fset=fset)
+        num_done = 0
+        for lang in val:
+            l = self.create_metadata_element('language')
+            self.set_text(l, str(lang))
+            num_done += 1
+        if num_done == 0:
+            l = self.create_metadata_element('language')
+            self.set_text(l, 'und')
 
     @property
     def raw_languages(self):
@@ -1106,24 +1167,21 @@ class OPF(object):  # {{{
             if t and t.strip():
                 yield t.strip()
 
-    @dynamic_property
+    @property
     def book_producer(self):
+        for match in self.bkp_path(self.metadata):
+            return self.get_text(match) or None
 
-        def fget(self):
-            for match in self.bkp_path(self.metadata):
-                return self.get_text(match) or None
-
-        def fset(self, val):
-            matches = self.bkp_path(self.metadata)
-            if not matches:
-                matches = [self.create_metadata_element('contributor')]
-                matches[0].set('{%s}role'%self.NAMESPACES['opf'], 'bkp')
-            self.set_text(matches[0], unicode(val))
-        return property(fget=fget, fset=fset)
+    @book_producer.setter
+    def book_producer(self, val):
+        matches = self.bkp_path(self.metadata)
+        if not matches:
+            matches = [self.create_metadata_element('contributor')]
+            matches[0].set('{{{}}}role'.format(self.NAMESPACES['opf']), 'bkp')
+        self.set_text(matches[0], str(val))
 
     def identifier_iter(self):
-        for item in self.identifier_path(self.metadata):
-            yield item
+        yield from self.identifier_path(self.metadata)
 
     @property
     def raw_unique_identifier(self):
@@ -1133,7 +1191,7 @@ class OPF(object):  # {{{
                 uuid_elem = self.root.attrib[attr]
                 break
         if uuid_elem:
-            matches = self.root.xpath('//*[@id=%s]'%escape_xpath_attr(uuid_elem))
+            matches = self.root.xpath(f'//*[@id={escape_xpath_attr(uuid_elem)}]')
             if matches:
                 for m in matches:
                     raw = m.text
@@ -1148,36 +1206,16 @@ class OPF(object):  # {{{
 
     @property
     def page_progression_direction(self):
-        spine = self.XPath('descendant::*[re:match(name(), "spine", "i")][1]')(self.root)
+        spine = XPath('descendant::*[re:match(name(), "spine", "i")][1]')(self.root)
         if spine:
-            for k, v in spine[0].attrib.iteritems():
+            for k, v in iteritems(spine[0].attrib):
                 if k == 'page-progression-direction' or k.endswith('}page-progression-direction'):
                     return v
 
     @property
     def primary_writing_mode(self):
-        for m in self.XPath('//*[local-name()="meta" and @name="primary-writing-mode" and @content]')(self.root):
+        for m in XPath('//*[local-name()="meta" and @name="primary-writing-mode" and @content]')(self.root):
             return m.get('content')
-
-    def guess_cover(self):
-        '''
-        Try to guess a cover. Needed for some old/badly formed OPF files.
-        '''
-        if self.base_dir and os.path.exists(self.base_dir):
-            for item in self.identifier_path(self.metadata):
-                scheme = None
-                for key in item.attrib.keys():
-                    if key.endswith('scheme'):
-                        scheme = item.get(key)
-                        break
-                if scheme is None:
-                    continue
-                if item.text:
-                    prefix = item.text.replace('-', '')
-                    for suffix in ['.jpg', '.jpeg', '.gif', '.png', '.bmp']:
-                        cpath = os.access(os.path.join(self.base_dir, prefix+suffix), os.R_OK)
-                        if os.access(os.path.join(self.base_dir, prefix+suffix), os.R_OK):
-                            return cpath
 
     @property
     def epub3_raster_cover(self):
@@ -1233,42 +1271,34 @@ class OPF(object):  # {{{
                             if path and os.path.exists(path):
                                 return path
 
-    @dynamic_property
+    @property
     def cover(self):
+        if self.guide is not None:
+            for t in ('cover', 'other.ms-coverimage-standard', 'other.ms-coverimage'):
+                for item in self.guide:
+                    if item.type and item.type.lower() == t:
+                        return item.path
 
-        def fget(self):
-            if self.guide is not None:
-                for t in ('cover', 'other.ms-coverimage-standard', 'other.ms-coverimage'):
-                    for item in self.guide:
-                        if item.type and item.type.lower() == t:
-                            return item.path
-            try:
-                if self.try_to_guess_cover:
-                    return self.guess_cover()
-            except:
-                pass
+    @cover.setter
+    def cover(self, path):
+        if self.guide is not None:
+            self.guide.set_cover(path)
+            for item in list(self.iterguide()):
+                if 'cover' in item.get('type', ''):
+                    item.getparent().remove(item)
 
-        def fset(self, path):
-            if self.guide is not None:
-                self.guide.set_cover(path)
-                for item in list(self.iterguide()):
-                    if 'cover' in item.get('type', ''):
-                        item.getparent().remove(item)
-
-            else:
-                g = self.create_guide_element()
-                self.guide = Guide()
-                self.guide.set_cover(path)
-                etree.SubElement(g, 'opf:reference', nsmap=self.NAMESPACES,
-                                 attrib={'type':'cover', 'href':self.guide[-1].href()})
-            id = self.manifest.id_for_path(self.cover)
-            if id is None:
-                for t in ('cover', 'other.ms-coverimage-standard', 'other.ms-coverimage'):
-                    for item in self.guide:
-                        if item.type.lower() == t:
-                            self.create_manifest_item(item.href(), guess_type(path)[0])
-
-        return property(fget=fget, fset=fset)
+        else:
+            g = self.create_guide_element()
+            self.guide = Guide()
+            self.guide.set_cover(path)
+            etree.SubElement(g, 'opf:reference', nsmap=self.NAMESPACES,
+                                attrib={'type':'cover', 'href':self.guide[-1].href()})
+        id = self.manifest.id_for_path(self.cover)
+        if id is None:
+            for t in ('cover', 'other.ms-coverimage-standard', 'other.ms-coverimage'):
+                for item in self.guide:
+                    if item.type.lower() == t:
+                        self.create_manifest_item(item.href(), guess_type(path)[0])
 
     def get_metadata_element(self, name):
         matches = self.metadata_elem_path(self.metadata, name=name)
@@ -1277,11 +1307,11 @@ class OPF(object):  # {{{
 
     def create_metadata_element(self, name, attrib=None, is_dc=True):
         if is_dc:
-            name = '{%s}%s' % (self.NAMESPACES['dc'], name)
+            name = '{{{}}}{}'.format(self.NAMESPACES['dc'], name)
         else:
             attrib = attrib or {}
             attrib['name'] = 'calibre:' + name
-            name = '{%s}%s' % (self.NAMESPACES['opf'], 'meta')
+            name = '{{{}}}{}'.format(self.NAMESPACES['opf'], 'meta')
         nsmap = dict(self.NAMESPACES)
         del nsmap['opf']
         elem = etree.SubElement(self.metadata, name, attrib=attrib,
@@ -1317,17 +1347,19 @@ class OPF(object):  # {{{
         if pretty_print_opf:
             _pretty_print(self.root)
         raw = etree.tostring(self.root, encoding=encoding, pretty_print=True)
-        if not raw.lstrip().startswith('<?xml '):
-            raw = '<?xml version="1.0"  encoding="%s"?>\n'%encoding.upper()+raw
+        if not raw.lstrip().startswith(b'<?xml '):
+            raw = (f'<?xml version="1.0"  encoding="{encoding.upper()}"?>\n').encode('ascii') + raw
         return raw
 
     def smart_update(self, mi, replace_metadata=False, apply_null=False):
         for attr in ('title', 'authors', 'author_sort', 'title_sort',
                      'publisher', 'series', 'series_index', 'rating',
                      'isbn', 'tags', 'category', 'comments', 'book_producer',
-                     'pubdate', 'user_categories', 'author_link_map'):
+                     'pubdate', 'user_categories', 'link_maps'):
             val = getattr(mi, attr, None)
-            is_null = val is None or val in ((), [], (None, None), {}) or (attr == 'rating' and val < 0.1)
+            if attr == 'rating' and val:
+                val = float(val)
+            is_null = val is None or val in ((), [], (None, None), {}) or (attr == 'rating' and (not val or val < 0.1))
             if is_null:
                 if apply_null and attr in {'series', 'tags', 'isbn', 'comments', 'publisher', 'rating'}:
                     setattr(self, attr, ([] if attr == 'tags' else None))
@@ -1339,6 +1371,7 @@ class OPF(object):  # {{{
         if apply_null or langs:
             self.languages = langs or []
         temp = self.to_book_metadata()
+        temp.remove_stale_user_metadata(mi)
         temp.smart_update(mi, replace_metadata=replace_metadata)
         if not replace_metadata and callable(getattr(temp, 'custom_field_keys', None)):
             # We have to replace non-null fields regardless of the value of
@@ -1373,7 +1406,7 @@ class OPFCreator(Metadata):
     def __init__(self, base_path, other):
         '''
         Initialize.
-        @param base_path: An absolute path to the directory in which this OPF file
+        @param base_path: An absolute path to the folder in which this OPF file
         will eventually be. This is used by the L{create_manifest} method
         to convert paths to files into relative paths.
         '''
@@ -1398,9 +1431,8 @@ class OPFCreator(Metadata):
 
         `entries`: List of (path, mime-type) If mime-type is None it is autodetected
         '''
-        entries = map(lambda x: x if os.path.isabs(x[0]) else
-                      (os.path.abspath(os.path.join(self.base_path, x[0])), x[1]),
-                      entries)
+        entries = [x if os.path.isabs(x[0]) else
+                      (os.path.abspath(os.path.join(self.base_path, x[0])), x[1]) for x in entries]
         self.manifest = Manifest.from_paths(entries)
         self.manifest.set_basedir(self.base_path)
 
@@ -1430,8 +1462,8 @@ class OPFCreator(Metadata):
 
         `entries`: List of paths
         '''
-        entries = map(lambda x: x if os.path.isabs(x) else
-                      os.path.abspath(os.path.join(self.base_path, x)), entries)
+        entries = [x if os.path.isabs(x) else
+                      os.path.abspath(os.path.join(self.base_path, x)) for x in entries]
         self.spine = Spine.from_paths(entries, self.manifest)
 
     def set_toc(self, toc):
@@ -1474,7 +1506,8 @@ class OPFCreator(Metadata):
 
         # Actual rendering
         from lxml.builder import ElementMaker
-        from calibre.ebooks.oeb.base import OPF2_NS, DC11_NS, CALIBRE_NS
+
+        from calibre.ebooks.oeb.base import CALIBRE_NS, DC11_NS, OPF2_NS
         DNS = OPF2_NS+'___xx___'
         E = ElementMaker(namespace=DNS, nsmap={None:DNS})
         M = ElementMaker(namespace=DNS,
@@ -1487,7 +1520,7 @@ class OPFCreator(Metadata):
             else:
                 elem = getattr(DC, tag)(**dc_attrs)
             for k, v in opf_attrs.items():
-                elem.set('{%s}%s'%(OPF2_NS, k), v)
+                elem.set(f'{{{OPF2_NS}}}{k}', v)
             return elem
 
         def CAL_ELEM(name, content):
@@ -1503,7 +1536,7 @@ class OPFCreator(Metadata):
             if i == 0 and self.author_sort:
                 fa['file-as'] = self.author_sort
             a(DC_ELEM('creator', author, opf_attrs=fa))
-        a(DC_ELEM('contributor', '%s (%s) [%s]'%(__appname__, __version__,
+        a(DC_ELEM('contributor', '{} ({}) [{}]'.format(__appname__, __version__,
             'https://calibre-ebook.com'), opf_attrs={'role':'bkp',
                 'file-as':__appname__}))
         a(DC_ELEM('identifier', str(self.application_id),
@@ -1520,7 +1553,7 @@ class OPFCreator(Metadata):
             a(DC_ELEM('description', self.comments))
         if self.publisher:
             a(DC_ELEM('publisher', self.publisher))
-        for key, val in self.get_identifiers().iteritems():
+        for key, val in iteritems(self.get_identifiers()):
             a(DC_ELEM('identifier', val, opf_attrs={'scheme':icu_upper(key)}))
         if self.rights:
             a(DC_ELEM('rights', self.rights))
@@ -1588,7 +1621,7 @@ class OPFCreator(Metadata):
         root.set('version', '2.0')
         raw = etree.tostring(root, pretty_print=True, xml_declaration=True,
                 encoding=encoding)
-        raw = raw.replace(DNS, OPF2_NS)
+        raw = raw.replace(DNS.encode('utf-8'), OPF2_NS.encode('utf-8'))
         opf_stream.write(raw)
         opf_stream.flush()
         if toc is not None and ncx_stream is not None:
@@ -1597,9 +1630,11 @@ class OPFCreator(Metadata):
 
 
 def metadata_to_opf(mi, as_string=True, default_lang=None):
-    from lxml import etree
     import textwrap
-    from calibre.ebooks.oeb.base import OPF, DC
+
+    from lxml import etree
+
+    from calibre.ebooks.oeb.base import DC, OPF
 
     if not mi.application_id:
         mi.application_id = str(uuid.uuid4())
@@ -1608,24 +1643,23 @@ def metadata_to_opf(mi, as_string=True, default_lang=None):
         mi.uuid = str(uuid.uuid4())
 
     if not mi.book_producer:
-        mi.book_producer = __appname__ + ' (%s) '%__version__ + \
-            '[https://calibre-ebook.com]'
+        mi.book_producer = __appname__ + f' ({__version__}) ' + '[https://calibre-ebook.com]'
 
     if not mi.languages:
         lang = (get_lang().replace('_', '-').partition('-')[0] if default_lang
                 is None else default_lang)
         mi.languages = [lang]
 
-    root = etree.fromstring(textwrap.dedent(
+    root = safe_xml_fromstring(textwrap.dedent(
     '''
     <package xmlns="http://www.idpf.org/2007/opf" unique-identifier="uuid_id" version="2.0">
         <metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf">
-            <dc:identifier opf:scheme="%(a)s" id="%(a)s_id">%(id)s</dc:identifier>
-            <dc:identifier opf:scheme="uuid" id="uuid_id">%(uuid)s</dc:identifier>
+            <dc:identifier opf:scheme="{a}" id="{a}_id">{id}</dc:identifier>
+            <dc:identifier opf:scheme="uuid" id="uuid_id">{uuid}</dc:identifier>
             </metadata>
         <guide/>
     </package>
-    '''%dict(a=__appname__, id=mi.application_id, uuid=mi.uuid)))
+    '''.format(**dict(a=__appname__, id=mi.application_id, uuid=mi.uuid))))
     metadata = root[0]
     guide = root[1]
     metadata[0].tail = '\n'+(' '*8)
@@ -1646,7 +1680,7 @@ def metadata_to_opf(mi, as_string=True, default_lang=None):
         try:
             elem = metadata.makeelement(tag, attrib=attrib)
         except ValueError:
-            elem = metadata.makeelement(tag, attrib={k:clean_xml_chars(v) for k, v in attrib.iteritems()})
+            elem = metadata.makeelement(tag, attrib={k:clean_xml_chars(v) for k, v in iteritems(attrib)})
         elem.tail = '\n'+(' '*8)
         if text:
             try:
@@ -1667,7 +1701,7 @@ def metadata_to_opf(mi, as_string=True, default_lang=None):
         factory(DC('description'), clean_ascii_chars(mi.comments))
     if mi.publisher:
         factory(DC('publisher'), mi.publisher)
-    for key, val in mi.get_identifiers().iteritems():
+    for key, val in iteritems(mi.get_identifiers()):
         factory(DC('identifier'), val, scheme=icu_upper(key))
     if mi.rights:
         factory(DC('rights'), mi.rights)
@@ -1678,9 +1712,11 @@ def metadata_to_opf(mi, as_string=True, default_lang=None):
     if mi.tags:
         for tag in mi.tags:
             factory(DC('subject'), tag)
-    meta = lambda n, c: factory('meta', name='calibre:'+n, content=c)
-    if getattr(mi, 'author_link_map', None) is not None:
-        meta('author_link_map', dump_dict(mi.author_link_map))
+
+    def meta(n, c):
+        return factory('meta', name='calibre:' + n, content=c)
+    if not mi.is_null('link_maps'):
+        meta('link_maps', dump_dict(mi.link_maps))
     if mi.series:
         meta('series', mi.series)
     if mi.series_index is not None:
@@ -1697,11 +1733,14 @@ def metadata_to_opf(mi, as_string=True, default_lang=None):
         meta('user_categories', dump_dict(mi.user_categories))
 
     serialize_user_metadata(metadata, mi.get_all_user_metadata(False))
+    all_annotations = getattr(mi, 'all_annotations', None)
+    if all_annotations:
+        serialize_annotations(metadata, all_annotations)
 
     metadata[-1].tail = '\n' +(' '*4)
 
     if mi.cover:
-        if not isinstance(mi.cover, unicode):
+        if not isinstance(mi.cover, str):
             mi.cover = mi.cover.decode(filesystem_encoding)
         guide.text = '\n'+(' '*8)
         r = guide.makeelement(OPF('reference'),
@@ -1717,7 +1756,6 @@ def metadata_to_opf(mi, as_string=True, default_lang=None):
 
 def test_m2o():
     from calibre.utils.date import now as nowf
-    from cStringIO import StringIO
     mi = MetaInformation('test & title', ['a"1', "a'2"])
     mi.title_sort = 'a\'"b'
     mi.author_sort = 'author sort'
@@ -1736,7 +1774,7 @@ def test_m2o():
     mi.cover = os.path.abspath('asd.jpg')
     opf = metadata_to_opf(mi)
     print(opf)
-    newmi = MetaInformation(OPF(StringIO(opf)))
+    newmi = MetaInformation(OPF(io.BytesIO(opf)))
     for attr in ('author_sort', 'title_sort', 'comments',
                     'publisher', 'series', 'series_index', 'rating',
                     'isbn', 'tags', 'cover_data', 'application_id',
@@ -1751,101 +1789,102 @@ def test_m2o():
         print('!=', newmi.get_identifiers())
 
 
-class OPFTest(unittest.TestCase):
-
-    def setUp(self):
-        self.stream = cStringIO.StringIO(
-'''\
-<?xml version="1.0"  encoding="UTF-8"?>
-<package version="2.0" xmlns="http://www.idpf.org/2007/opf" >
-<metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf">
-    <dc:title opf:file-as="Wow">A Cool &amp; &copy; &#223; Title</dc:title>
-    <creator opf:role="aut" file-as="Monkey">Monkey Kitchen</creator>
-    <creator opf:role="aut">Next</creator>
-    <dc:subject>One</dc:subject><dc:subject>Two</dc:subject>
-    <dc:identifier scheme="ISBN">123456789</dc:identifier>
-    <dc:identifier scheme="dummy">dummy</dc:identifier>
-    <meta name="calibre:series" content="A one book series" />
-    <meta name="calibre:rating" content="4"/>
-    <meta name="calibre:publication_type" content="test"/>
-    <meta name="calibre:series_index" content="2.5" />
-</metadata>
-<manifest>
-    <item id="1" href="a%20%7E%20b" media-type="text/txt" />
-</manifest>
-</package>
-'''
-        )
-        self.opf = OPF(self.stream, os.getcwdu())
-
-    def testReading(self, opf=None):
-        if opf is None:
-            opf = self.opf
-        self.assertEqual(opf.title, u'A Cool & \xa9 \xdf Title')
-        self.assertEqual(opf.authors, u'Monkey Kitchen,Next'.split(','))
-        self.assertEqual(opf.author_sort, 'Monkey')
-        self.assertEqual(opf.title_sort, 'Wow')
-        self.assertEqual(opf.tags, ['One', 'Two'])
-        self.assertEqual(opf.isbn, '123456789')
-        self.assertEqual(opf.series, 'A one book series')
-        self.assertEqual(opf.series_index, 2.5)
-        self.assertEqual(opf.rating, 4)
-        self.assertEqual(opf.publication_type, 'test')
-        self.assertEqual(list(opf.itermanifest())[0].get('href'), 'a ~ b')
-        self.assertEqual(opf.get_identifiers(), {'isbn':'123456789',
-            'dummy':'dummy'})
-
-    def testWriting(self):
-        for test in [('title', 'New & Title'), ('authors', ['One', 'Two']),
-                     ('author_sort', "Kitchen"), ('tags', ['Three']),
-                     ('isbn', 'a'), ('rating', 3), ('series_index', 1),
-                     ('title_sort', 'ts')]:
-            setattr(self.opf, *test)
-            attr, val = test
-            self.assertEqual(getattr(self.opf, attr), val)
-
-        self.opf.render()
-
-    def testCreator(self):
-        opf = OPFCreator(os.getcwdu(), self.opf)
-        buf = cStringIO.StringIO()
-        opf.render(buf)
-        raw = buf.getvalue()
-        self.testReading(opf=OPF(cStringIO.StringIO(raw), os.getcwdu()))
-
-    def testSmartUpdate(self):
-        self.opf.smart_update(MetaInformation(self.opf))
-        self.testReading()
-
-
 def suite():
+    import unittest
+
+    class OPFTest(unittest.TestCase):
+
+        def setUp(self):
+            self.stream = io.BytesIO(
+    b'''\
+    <?xml version="1.0"  encoding="UTF-8"?>
+    <package version="2.0" xmlns="http://www.idpf.org/2007/opf" >
+    <metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf">
+        <dc:title opf:file-as="Wow">A Cool &amp; &copy; &#223; Title</dc:title>
+        <creator opf:role="aut" file-as="Monkey">Monkey Kitchen</creator>
+        <creator opf:role="aut">Next</creator>
+        <dc:subject>One</dc:subject><dc:subject>Two</dc:subject>
+        <dc:identifier scheme="ISBN">123456789</dc:identifier>
+        <dc:identifier scheme="dummy">dummy</dc:identifier>
+        <meta name="calibre:series" content="A one book series" />
+        <meta name="calibre:rating" content="4"/>
+        <meta name="calibre:publication_type" content="test"/>
+        <meta name="calibre:series_index" content="2.5" />
+    </metadata>
+    <manifest>
+        <item id="1" href="a%20%7E%20b" media-type="text/txt" />
+    </manifest>
+    </package>
+    '''
+            )
+            self.opf = OPF(self.stream, os.getcwd())
+
+        def testReading(self, opf=None):
+            if opf is None:
+                opf = self.opf
+            self.assertEqual(opf.title, 'A Cool & \xa9 \xdf Title')
+            self.assertEqual(opf.authors, 'Monkey Kitchen,Next'.split(','))
+            self.assertEqual(opf.author_sort, 'Monkey')
+            self.assertEqual(opf.title_sort, 'Wow')
+            self.assertEqual(opf.tags, ['One', 'Two'])
+            self.assertEqual(opf.isbn, '123456789')
+            self.assertEqual(opf.series, 'A one book series')
+            self.assertEqual(opf.series_index, 2.5)
+            self.assertEqual(opf.rating, 4)
+            self.assertEqual(opf.publication_type, 'test')
+            self.assertEqual(list(opf.itermanifest())[0].get('href'), 'a ~ b')
+            self.assertEqual(opf.get_identifiers(), {'isbn':'123456789',
+                'dummy':'dummy'})
+
+        def testWriting(self):
+            for test in [('title', 'New & Title'), ('authors', ['One', 'Two']),
+                        ('author_sort', 'Kitchen'), ('tags', ['Three']),
+                        ('isbn', 'a'), ('rating', 3), ('series_index', 1),
+                        ('title_sort', 'ts')]:
+                setattr(self.opf, *test)
+                attr, val = test
+                self.assertEqual(getattr(self.opf, attr), val)
+
+            self.opf.render()
+
+        def testCreator(self):
+            opf = OPFCreator(os.getcwd(), self.opf)
+            buf = io.BytesIO()
+            opf.render(buf)
+            raw = buf.getvalue()
+            self.testReading(opf=OPF(io.BytesIO(raw), os.getcwd()))
+
+        def testSmartUpdate(self):
+            self.opf.smart_update(MetaInformation(self.opf))
+            self.testReading()
+
     return unittest.TestLoader().loadTestsFromTestCase(OPFTest)
 
 
 def test():
+    import unittest
     unittest.TextTestRunner(verbosity=2).run(suite())
 
 
 def test_user_metadata():
-    from cStringIO import StringIO
     mi = Metadata('Test title', ['test author1', 'test author2'])
     um = {
-        '#myseries': {'#value#': u'test series\xe4', 'datatype':'text',
-            'is_multiple': None, 'name': u'My Series'},
+        '#myseries': {'#value#': 'test series\xe4', 'datatype':'text',
+            'is_multiple': None, 'name': 'My Series'},
         '#myseries_index': {'#value#': 2.45, 'datatype': 'float',
             'is_multiple': None},
         '#mytags': {'#value#':['t1','t2','t3'], 'datatype':'text',
-            'is_multiple': '|', 'name': u'My Tags'}
+            'is_multiple': '|', 'name': 'My Tags'}
         }
     mi.set_all_user_metadata(um)
     raw = metadata_to_opf(mi)
-    opfc = OPFCreator(os.getcwdu(), other=mi)
-    out = StringIO()
+    opfc = OPFCreator(os.getcwd(), other=mi)
+    out = io.BytesIO()
     opfc.render(out)
     raw2 = out.getvalue()
-    f = StringIO(raw)
+    f = io.BytesIO(raw)
     opf = OPF(f)
-    f2 = StringIO(raw2)
+    f2 = io.BytesIO(raw2)
     opf2 = OPF(f2)
     assert um == opf._user_metadata_
     assert um == opf2._user_metadata_

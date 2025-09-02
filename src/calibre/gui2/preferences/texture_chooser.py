@@ -1,20 +1,34 @@
-#!/usr/bin/env python2
-# vim:fileencoding=utf-8
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
+#!/usr/bin/env python
+
 
 __license__ = 'GPL v3'
 __copyright__ = '2013, Kovid Goyal <kovid at kovidgoyal.net>'
 
-import glob, os, string, shutil
+import glob
+import os
+import shutil
 from functools import partial
-from PyQt5.Qt import (
-    QDialog, QVBoxLayout, QListWidget, QListWidgetItem, Qt, QIcon,
-    QApplication, QSize, QDialogButtonBox, QTimer, QLabel)
+
+from qt.core import (
+    QAbstractItemView,
+    QApplication,
+    QDialog,
+    QDialogButtonBox,
+    QIcon,
+    QLabel,
+    QListView,
+    QListWidget,
+    QListWidgetItem,
+    QSize,
+    Qt,
+    QTimer,
+    QVBoxLayout,
+)
 
 from calibre.constants import config_dir
 from calibre.gui2 import choose_files, error_dialog
 from calibre.utils.icu import sort_key
+from calibre.utils.resources import get_image_path as I
 
 
 def texture_dir():
@@ -28,7 +42,7 @@ def texture_path(fname):
     if not fname:
         return
     if fname.startswith(':'):
-        return I('textures/%s' % fname[1:])
+        return I(f'textures/{fname[1:]}')
     return os.path.join(texture_dir(), fname)
 
 
@@ -44,47 +58,49 @@ class TextureChooser(QDialog):
         self.tdir = texture_dir()
 
         self.images = il = QListWidget(self)
-        il.itemDoubleClicked.connect(self.accept, type=Qt.QueuedConnection)
+        il.itemDoubleClicked.connect(self.accept, type=Qt.ConnectionType.QueuedConnection)
         il.setIconSize(QSize(256, 256))
-        il.setViewMode(il.IconMode)
-        il.setFlow(il.LeftToRight)
+        il.setViewMode(QListView.ViewMode.IconMode)
+        il.setFlow(QListView.Flow.LeftToRight)
         il.setSpacing(20)
-        il.setSelectionMode(il.SingleSelection)
+        il.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         il.itemSelectionChanged.connect(self.update_remove_state)
         l.addWidget(il)
 
-        self.ad = ad = QLabel(_('The builtin textures come from <a href="https://subtlepatterns.com">subtlepatterns.com</a>.'))
+        self.ad = ad = QLabel(_('The builtin textures come from <a href="{}">subtlepatterns.com</a>.').format(
+            'https://www.toptal.com/designers/subtlepatterns/'))
         ad.setOpenExternalLinks(True)
         ad.setWordWrap(True)
         l.addWidget(ad)
-        self.bb = bb = QDialogButtonBox(QDialogButtonBox.Ok|QDialogButtonBox.Cancel)
+        self.bb = bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok|QDialogButtonBox.StandardButton.Cancel)
         bb.accepted.connect(self.accept)
         bb.rejected.connect(self.reject)
-        b = self.add_button = bb.addButton(_('Add texture'), bb.ActionRole)
-        b.setIcon(QIcon(I('plus.png')))
+        b = self.add_button = bb.addButton(_('Add texture'), QDialogButtonBox.ButtonRole.ActionRole)
+        b.setIcon(QIcon.ic('plus.png'))
         b.clicked.connect(self.add_texture)
-        b = self.remove_button = bb.addButton(_('Remove texture'), bb.ActionRole)
-        b.setIcon(QIcon(I('minus.png')))
+        b = self.remove_button = bb.addButton(_('Remove texture'), QDialogButtonBox.ButtonRole.ActionRole)
+        b.setIcon(QIcon.ic('minus.png'))
         b.clicked.connect(self.remove_texture)
         l.addWidget(bb)
 
         images = [{
             'fname': ':'+os.path.basename(x),
             'path': x,
-            'name': ' '.join(map(string.capitalize, os.path.splitext(os.path.basename(x))[0].split('_')))
+            'name': ' '.join(s.capitalize() for s in os.path.splitext(os.path.basename(x))[0].split('_'))
         } for x in glob.glob(I('textures/*.png'))] + [{
             'fname': os.path.basename(x),
             'path': x,
             'name': os.path.splitext(os.path.basename(x))[0],
         } for x in glob.glob(os.path.join(self.tdir, '*')) if x.rpartition('.')[-1].lower() in {'jpeg', 'png', 'jpg'}]
 
-        images.sort(key=lambda x:sort_key(x['name']))
+        images.sort(key=lambda x: sort_key(x['name']))
 
-        map(self.create_item, images)
+        for i in images:
+            self.create_item(i)
         self.update_remove_state()
 
         if initial:
-            existing = {unicode(i.data(Qt.UserRole) or ''):i for i in (self.images.item(c) for c in xrange(self.images.count()))}
+            existing = {str(i.data(Qt.ItemDataRole.UserRole) or ''):i for i in (self.images.item(c) for c in range(self.images.count()))}
             item = existing.get(initial, None)
             if item is not None:
                 item.setSelected(True)
@@ -95,13 +111,13 @@ class TextureChooser(QDialog):
     def create_item(self, data):
         x = data
         i = QListWidgetItem(QIcon(x['path']), x['name'], self.images)
-        i.setData(Qt.UserRole, x['fname'])
-        i.setData(Qt.UserRole+1, x['path'])
+        i.setData(Qt.ItemDataRole.UserRole, x['fname'])
+        i.setData(Qt.ItemDataRole.UserRole+1, x['path'])
         return i
 
     def update_remove_state(self):
-        removeable = bool(self.selected_fname and not self.selected_fname.startswith(':'))
-        self.remove_button.setEnabled(removeable)
+        removable = bool(self.selected_fname and not self.selected_fname.startswith(':'))
+        self.remove_button.setEnabled(removable)
 
     @property
     def texture(self):
@@ -115,7 +131,7 @@ class TextureChooser(QDialog):
         path = path[0]
         fname = os.path.basename(path)
         name = fname.rpartition('.')[0]
-        existing = {unicode(i.data(Qt.UserRole) or ''):i for i in (self.images.item(c) for c in xrange(self.images.count()))}
+        existing = {str(i.data(Qt.ItemDataRole.UserRole) or ''):i for i in (self.images.item(c) for c in range(self.images.count()))}
         dest = os.path.join(self.tdir, fname)
         with open(path, 'rb') as s, open(dest, 'wb') as f:
             shutil.copyfileobj(s, f)
@@ -134,7 +150,7 @@ class TextureChooser(QDialog):
     @property
     def selected_fname(self):
         try:
-            return unicode(self.selected_item.data(Qt.UserRole) or '')
+            return str(self.selected_item.data(Qt.ItemDataRole.UserRole) or '')
         except (AttributeError, TypeError):
             pass
 
@@ -144,12 +160,12 @@ class TextureChooser(QDialog):
         if self.selected_fname.startswith(':'):
             return error_dialog(self, _('Cannot remove'),
                                 _('Cannot remove builtin textures'), show=True)
-        os.remove(unicode(self.selected_item.data(Qt.UserRole+1) or ''))
+        os.remove(str(self.selected_item.data(Qt.ItemDataRole.UserRole+1) or ''))
         self.images.takeItem(self.images.row(self.selected_item))
 
 
 if __name__ == '__main__':
-    app = QApplication([])  # noqa
+    app = QApplication([])  # noqa: F841
     d = TextureChooser()
-    d.exec_()
-    print (d.texture)
+    d.exec()
+    print(d.texture)

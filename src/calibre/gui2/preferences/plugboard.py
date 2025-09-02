@@ -1,6 +1,5 @@
-#!/usr/bin/env python2
-# vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
-from __future__ import print_function
+#!/usr/bin/env python
+
 
 __license__   = 'GPL v3'
 __copyright__ = '2010, Kovid Goyal <kovid@kovidgoyal.net>'
@@ -9,20 +8,17 @@ __docformat__ = 'restructuredtext en'
 import copy
 from collections import defaultdict
 
-from PyQt5.Qt import Qt, QComboBox, QListWidgetItem
+from qt.core import QComboBox, QListWidgetItem, Qt
 
-from calibre.customize.ui import is_disabled
+from calibre.customize.ui import device_plugins, disabled_device_plugins, is_disabled, metadata_writers
 from calibre.gui2 import error_dialog, question_dialog, warning_dialog
 from calibre.gui2.device import device_name_for_plugboards
 from calibre.gui2.dialogs.template_line_editor import TemplateLineEditor
+from calibre.gui2.email import plugboard_email_formats, plugboard_email_value
 from calibre.gui2.preferences import ConfigWidgetBase, test_widget
 from calibre.gui2.preferences.plugboard_ui import Ui_Form
-from calibre.customize.ui import metadata_writers, device_plugins, disabled_device_plugins
-from calibre.library.save_to_disk import plugboard_any_format_value, \
-                    plugboard_any_device_value, plugboard_save_to_disk_value, \
-                    find_plugboard
-from calibre.srv.content import plugboard_content_server_value, plugboard_content_server_formats
-from calibre.gui2.email import plugboard_email_value, plugboard_email_formats
+from calibre.library.save_to_disk import find_plugboard, plugboard_any_device_value, plugboard_any_format_value, plugboard_save_to_disk_value
+from calibre.srv.content import plugboard_content_server_formats, plugboard_content_server_value
 from calibre.utils.formatter import validation_formatter
 
 
@@ -33,17 +29,6 @@ class ConfigWidget(ConfigWidgetBase, Ui_Form):
         self.db = gui.library_view.model().db
 
     def initialize(self):
-        def field_cmp(x, y):
-            if x.startswith('#'):
-                if y.startswith('#'):
-                    return cmp(x.lower(), y.lower())
-                else:
-                    return 1
-            elif y.startswith('#'):
-                return -1
-            else:
-                return cmp(x.lower(), y.lower())
-
         ConfigWidgetBase.initialize(self)
 
         self.current_plugboards = copy.deepcopy(self.db.prefs.get('plugboards',{}))
@@ -72,7 +57,7 @@ class ConfigWidget(ConfigWidgetBase, Ui_Form):
             if n not in self.disabled_devices:
                 self.disabled_devices.append(n)
 
-        self.devices.sort(cmp=lambda x, y: cmp(x.lower(), y.lower()))
+        self.devices.sort(key=lambda x: x.lower())
         self.devices.insert(1, plugboard_save_to_disk_value)
         self.devices.insert(1, plugboard_content_server_value)
         self.device_to_formats_map[plugboard_content_server_value] = \
@@ -97,11 +82,12 @@ class ConfigWidget(ConfigWidgetBase, Ui_Form):
 
         self.dest_fields = ['',
                             'authors', 'author_sort', 'language', 'publisher',
-                            'tags', 'title', 'title_sort', 'comments']
+                            'series', 'series_index', 'tags', 'title', 'title_sort',
+                            'comments']
 
         self.source_widgets = []
         self.dest_widgets = []
-        for i in range(0, len(self.dest_fields)-1):
+        for i in range(len(self.dest_fields)-1):
             w = TemplateLineEditor(self)
             self.source_widgets.append(w)
             self.fields_layout.addWidget(w, 5+i, 0, 1, 1)
@@ -109,10 +95,10 @@ class ConfigWidget(ConfigWidgetBase, Ui_Form):
             self.dest_widgets.append(w)
             self.fields_layout.addWidget(w, 5+i, 1, 1, 1)
 
-        self.edit_device.currentIndexChanged[str].connect(self.edit_device_changed)
-        self.edit_format.currentIndexChanged[str].connect(self.edit_format_changed)
-        self.new_device.currentIndexChanged[str].connect(self.new_device_changed)
-        self.new_format.currentIndexChanged[str].connect(self.new_format_changed)
+        self.edit_device.currentIndexChanged.connect(self.edit_device_changed)
+        self.edit_format.currentIndexChanged.connect(self.edit_format_changed)
+        self.new_device.currentIndexChanged.connect(self.new_device_changed)
+        self.new_format.currentIndexChanged.connect(self.new_format_changed)
         self.existing_plugboards.itemClicked.connect(self.existing_pb_clicked)
         self.ok_button.clicked.connect(self.ok_clicked)
         self.del_button.clicked.connect(self.del_clicked)
@@ -147,13 +133,14 @@ class ConfigWidget(ConfigWidgetBase, Ui_Form):
         idx = self.dest_fields.index(dst)
         self.dest_widgets[i].setCurrentIndex(idx)
 
-    def edit_device_changed(self, txt):
+    def edit_device_changed(self, idx):
+        txt = self.edit_device.currentText()
         self.current_device = None
         if txt == '':
             self.clear_fields(new_boxes=False)
             return
         self.clear_fields(new_boxes=True)
-        self.current_device = unicode(txt)
+        self.current_device = str(txt)
         fpb = self.current_plugboards.get(self.current_format, None)
         if fpb is None:
             print('edit_device_changed: none format!')
@@ -168,7 +155,8 @@ class ConfigWidget(ConfigWidgetBase, Ui_Form):
         self.ok_button.setEnabled(True)
         self.del_button.setEnabled(True)
 
-    def edit_format_changed(self, txt):
+    def edit_format_changed(self, idx):
+        txt = self.edit_format.currentText()
         self.edit_device.setCurrentIndex(0)
         self.current_device = None
         self.current_format = None
@@ -176,7 +164,7 @@ class ConfigWidget(ConfigWidgetBase, Ui_Form):
             self.clear_fields(new_boxes=False)
             return
         self.clear_fields(new_boxes=True)
-        txt = unicode(txt)
+        txt = str(txt)
         fpb = self.current_plugboards.get(txt, None)
         if fpb is None:
             print('edit_format_changed: none editable format!')
@@ -202,13 +190,14 @@ class ConfigWidget(ConfigWidgetBase, Ui_Form):
                        'will probably have no effect.'),
                      show=True)
 
-    def new_device_changed(self, txt):
+    def new_device_changed(self, idx):
+        txt = self.new_device.currentText()
         self.current_device = None
         if txt == '':
             self.clear_fields(edit_boxes=False)
             return
         self.clear_fields(edit_boxes=True)
-        self.current_device = unicode(txt)
+        self.current_device = str(txt)
 
         if self.current_format in self.current_plugboards and \
                 self.current_device in self.current_plugboards[self.current_format]:
@@ -286,13 +275,14 @@ class ConfigWidget(ConfigWidgetBase, Ui_Form):
 
         self.set_fields()
 
-    def new_format_changed(self, txt):
+    def new_format_changed(self, idx):
+        txt = self.new_format.currentText()
         self.current_format = None
         self.current_device = None
         self.new_device.setCurrentIndex(0)
         if txt:
             self.clear_fields(edit_boxes=True)
-            self.current_format = unicode(txt)
+            self.current_format = str(txt)
             self.check_if_writer_disabled(self.current_format)
         else:
             self.clear_fields(edit_boxes=False)
@@ -300,8 +290,8 @@ class ConfigWidget(ConfigWidgetBase, Ui_Form):
     def ok_clicked(self):
         pb = []
         comments_in_dests = False
-        for i in range(0, len(self.source_widgets)):
-            s = unicode(self.source_widgets[i].text())
+        for i in range(len(self.source_widgets)):
+            s = str(self.source_widgets[i].text())
             if s:
                 d = self.dest_widgets[i].currentIndex()
                 if d != 0:
@@ -327,9 +317,9 @@ class ConfigWidget(ConfigWidgetBase, Ui_Form):
                 if len(fpb) == 0:
                     del self.current_plugboards[self.current_format]
         else:
-            if comments_in_dests and not question_dialog(self.gui, _('Plugboard modifies Comments'),
-                     _('This plugboard modifies the Comments metadata. '
-                       'If the Comments are set to invalid HTML, it could cause problems on the device. '
+            if comments_in_dests and not question_dialog(self.gui, _('Plugboard modifies comments'),
+                     _('This plugboard modifies the comments metadata. '
+                       'If the comments are set to invalid HTML, it could cause problems on the device. '
                        'Are you sure you wish to save this plugboard?'
                        ),
                         skip_dialog_name='plugboard_comments_in_dests'
@@ -353,8 +343,8 @@ class ConfigWidget(ConfigWidgetBase, Ui_Form):
         self.refill_all_boxes()
 
     def existing_pb_clicked(self, qitem):
-        item = qitem.data(Qt.UserRole)
-        if (qitem.flags() & Qt.ItemIsEnabled):
+        item = qitem.data(Qt.ItemDataRole.UserRole)
+        if (qitem.flags() & Qt.ItemFlag.ItemIsEnabled):
             self.edit_format.setCurrentIndex(self.edit_format.findText(item[0]))
             self.edit_device.setCurrentIndex(self.edit_device.findText(item[1]))
         else:
@@ -387,11 +377,11 @@ class ConfigWidget(ConfigWidgetBase, Ui_Form):
                 ops = []
                 for op in self.current_plugboards[f][d]:
                     ops.append('([' + op[0] + '] -> ' + op[1] + ')')
-                txt = '%s:%s = %s\n'%(f, d, ', '.join(ops))
+                txt = '{}:{} = {}\n'.format(f, d, ', '.join(ops))
                 item = QListWidgetItem(txt)
-                item.setData(Qt.UserRole, (f, d))
+                item.setData(Qt.ItemDataRole.UserRole, (f, d))
                 if d in self.disabled_devices:
-                    item.setFlags(item.flags() & ~Qt.ItemIsEnabled)
+                    item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEnabled)
                 self.existing_plugboards.addItem(item)
         self.refilling = False
 
@@ -410,6 +400,6 @@ class ConfigWidget(ConfigWidgetBase, Ui_Form):
 
 
 if __name__ == '__main__':
-    from PyQt5.Qt import QApplication
+    from qt.core import QApplication
     app = QApplication([])
     test_widget('Import/Export', 'Plugboard')

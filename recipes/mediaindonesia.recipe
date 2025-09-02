@@ -1,4 +1,4 @@
-#!/usr/bin/env  python2
+#!/usr/bin/env python
 __license__ = 'GPL v3'
 __copyright__ = '2011, bakthariq AT gmail.com'
 '''
@@ -24,7 +24,7 @@ class Media(BasicNewsRecipe):
     no_javascript = True
 
     remove_tags = [dict(id=['atas', 'merah', 'putih']), dict(name='a')]
-    remove_tags_after = [dict(id="putih")]
+    remove_tags_after = [dict(id='putih')]
 
     extra_css             = '''
                             .judul {font-size: x-large;}

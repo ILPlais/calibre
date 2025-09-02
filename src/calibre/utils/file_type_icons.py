@@ -1,9 +1,6 @@
-#!/usr/bin/env python2
-# vim:fileencoding=utf-8
+#!/usr/bin/env python
 # License: GPLv3 Copyright: 2015, Kovid Goyal <kovid at kovidgoyal.net>
 
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
 
 EXT_MAP = {
     'default' : 'unknown',
@@ -40,6 +37,8 @@ EXT_MAP = {
     'azw1'    : 'tpz',
     'azw2'    : 'azw2',
     'azw3'    : 'azw3',
+    'kfx'     : 'kfx',
+    'kfx-zip' : 'kfx',
     'azw4'    : 'pdf',
     'tpz'     : 'tpz',
     'tan'     : 'zero',
@@ -55,6 +54,3 @@ EXT_MAP = {
     'docx'    : 'docx',
     'opml'    : 'opml',
 }
-
-
-

@@ -21,7 +21,7 @@ The commonly-provided requirements for subgroups such as genres are:
     * A book can be in multiple subgroups (genres). This distinguishes subgroups from physical file folders.
     * Subgroups (genres) must form a hierarchy; subgroups can contain subgroups.
 
-Tags give you the first two. If you tag a book with the genre then you can use the Tag browser (or search) for find the books with that genre, giving you the first. Many books can have the same tag(s), giving you the second. The problem is that tags don't satisfy the third requirement. They don't provide a hierarchy.
+Tags give you the first two. If you tag a book with the genre then you can use the Tag browser (or search) to find the books with that genre, giving you the first. Many books can have the same tag(s), giving you the second. The problem is that tags don't satisfy the third requirement. They don't provide a hierarchy.
 
 |sgtree| The calibre hierarchy feature gives you the third -- the ability to see the genres in a 'tree' and the ability to easily search for books in genre or sub-genre. For example, assume that your genre structure is similar to the following::
 
@@ -55,15 +55,14 @@ Setup
 
 By now, your question might be "How was all of this setup?" There are three steps: 1) create the custom column, 2) tell calibre that the new column is to be treated as a hierarchy, and 3) add genres.
 
-You create the custom column in the usual way, using Preferences -> Add your own columns. This example uses "#genre" as the lookup name and "Genre" as the column heading. The column type is "Comma-separated text, like tags, shown in the Tag browser." 
+You create the custom column in the usual way, using Preferences -> Add your own columns. This example uses "#genre" as the lookup name and "Genre" as the column heading. It is important that the column type is set to :guilabel:`Comma-separated text, like tags, shown in the Tag browser`.
 
 .. image:: images/sg_cc.jpg
     :align: center
 
-Then after restarting calibre, you must tell calibre that the column is to be treated as a hierarchy. Go to :guilabel:`Preferences -> Look & feel -> Tag browser` and enter the lookup name "#genre" into the "Categories with hierarchical items" box. Press :guilabel:`Apply`, and you are done with setting up.
-
-.. image:: images/sg_pref.png
-    :align: center
+Then after restarting calibre, you must tell calibre that the column is to be treated as a hierarchy.
+Go to :guilabel:`Preferences -> Look & feel -> Tag browser -> Hierarchy and searching`
+and choose the new Genre column as having hierarchical items.
 
 At the point there are no genres in the column. We are left with the last step: how to apply a genre to a book. A genre does not exist in calibre until it appears on at least one book. To learn how to apply a genre for the first time, we must go into some detail about what a genre looks like in the metadata for a book.
 
@@ -98,7 +97,7 @@ The Tag browser search mechanism knows if an item has children. If it does, clic
 Restrictions
 ---------------
 
-If you search for a genre then create a saved search for it, you can use the 'restrict to' box to create a virtual library of books with that genre. This is useful if you want to do other searches within the genre or to manage/update metadata for books in the genre. Continuing our example, you can create a saved search named 'History.Japanese' by first clicking on the genre Japanese in the Tag browser to get a search into the search box, entering History.Japanese into the saved search box, then pushing the "save search" button (the green box with the white plus, on the right-hand side).
+If you search for a genre then create a saved search for it, you can use the 'restrict to' box to create a Virtual library of books with that genre. This is useful if you want to do other searches within the genre or to manage/update metadata for books in the genre. Continuing our example, you can create a Saved search named 'History.Japanese' by first clicking on the genre Japanese in the Tag browser to get a search into the search field, entering History.Japanese into the saved search field, then pushing the "Save search" button (the green box with the white plus, on the right-hand side).
 
 .. image:: images/sg_restrict.jpg
     :align: center
@@ -110,11 +109,11 @@ After creating the saved search, you can use it as a restriction.
 
 Useful template functions
 -------------------------
- 
+
  You might want to use the genre information in a template, such as with save to disk or send to device. The question might then be "How do I get the outermost genre name or names?" A calibre template function, subitems, is provided to make doing this easier.
- 
+
  For example, assume you want to add the outermost genre level to the save-to-disk template to make genre folders, as in "History/The Gathering Storm - Churchill, Winston". To do this, you must extract the first level of the hierarchy and add it to the front along with a slash to indicate that it should make a folder. The template below accomplishes this::
- 
+
     {#genre:subitems(0,1)||/}{title} - {authors}
 
 See :ref:`The template language <templatelangcalibre>` for more information about templates and the :func:`subitems` function.

@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-
 '''
 Read content from ztxt pdb file.
 '''
@@ -8,10 +6,9 @@ __license__   = 'GPL v3'
 __copyright__ = '2009, John Schember <john@nachtimwald.com>'
 __docformat__ = 'restructuredtext en'
 
+import io
 import struct
 import zlib
-
-from cStringIO import StringIO
 
 from calibre.ebooks.pdb.formatreader import FormatReader
 from calibre.ebooks.pdb.ztxt import zTXTError
@@ -19,7 +16,7 @@ from calibre.ebooks.pdb.ztxt import zTXTError
 SUPPORTED_VERSION = (1, 40)
 
 
-class HeaderRecord(object):
+class HeaderRecord:
     '''
     The first record in the file is always the header record. It holds
     information related to the location of text, images, and so on
@@ -51,15 +48,15 @@ class Reader(FormatReader):
         vmajor = (self.header_record.version & 0x0000FF00) >> 8
         vminor = self.header_record.version & 0x000000FF
         if vmajor < 1 or (vmajor == 1 and vminor < 40):
-            raise zTXTError('Unsupported ztxt version (%i.%i). Only versions newer than %i.%i are supported.' %
-                            (vmajor, vminor, SUPPORTED_VERSION[0], SUPPORTED_VERSION[1]))
+            raise zTXTError(f'Unsupported ztxt version ({vmajor}.{vminor}).'
+                            f' Only versions newer than {SUPPORTED_VERSION[0]}.{SUPPORTED_VERSION[1]} are supported.')
 
         if (self.header_record.flags & 0x01) == 0:
             raise zTXTError('Only compression method 1 (random access) is supported')
 
-        self.log.debug('Foud ztxt version: %i.%i' % (vmajor, vminor))
+        self.log.debug(f'Foud ztxt version: {vmajor}.{vminor}')
 
-        # Initalize the decompressor
+        # Initialize the decompressor
         self.uncompressor = zlib.decompressobj()
         self.uncompressor.decompress(self.section_data(1))
 
@@ -72,15 +69,15 @@ class Reader(FormatReader):
         return self.uncompressor.decompress(self.section_data(number))
 
     def extract_content(self, output_dir):
-        raw_txt = ''
+        raw_txt = b''
 
         self.log.info('Decompressing text...')
         for i in range(1, self.header_record.num_records + 1):
-            self.log.debug('\tDecompressing text section %i' % i)
+            self.log.debug(f'\tDecompressing text section {i}')
             raw_txt += self.decompress_text(i)
 
         self.log.info('Converting text to OEB...')
-        stream = StringIO(raw_txt)
+        stream = io.BytesIO(raw_txt)
 
         from calibre.customize.ui import plugin_for_input_format
 

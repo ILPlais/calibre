@@ -1,32 +1,31 @@
-#!/usr/bin/env python2
+#!/usr/bin/env python
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
 
 __license__   = 'GPL v3'
 __copyright__ = '2011, Kovid Goyal <kovid@kovidgoyal.net>'
 __docformat__ = 'restructuredtext en'
 
-import time, re
+import re
+import time
+import unicodedata
 from datetime import datetime
-from Queue import Queue, Empty
-from threading import Thread
-from io import BytesIO
+from io import StringIO
 from operator import attrgetter
-from urlparse import urlparse
-from urllib import quote
+from threading import Thread
 
-from calibre.customize.ui import metadata_plugins, all_metadata_plugins
-from calibre.ebooks.metadata import check_issn, authors_to_sort_string
+from calibre.customize.ui import all_metadata_plugins, metadata_plugins
+from calibre.ebooks.metadata import authors_to_sort_string, check_issn
+from calibre.ebooks.metadata.book.base import Metadata
 from calibre.ebooks.metadata.sources.base import create_log
 from calibre.ebooks.metadata.sources.prefs import msprefs
 from calibre.ebooks.metadata.xisbn import xisbn
-from calibre.ebooks.metadata.book.base import Metadata
-from calibre.utils.date import utc_tz, as_utc
-from calibre.utils.html2text import html2text
-from calibre.utils.icu import lower
-from calibre.utils.date import UNDEFINED_DATE
+from calibre.utils.date import UNDEFINED_DATE, as_utc, utc_tz
 from calibre.utils.formatter import EvalFormatter
+from calibre.utils.html2text import html2text
+from calibre.utils.icu import lower, primary_sort_key
+from polyglot.builtins import as_unicode, iteritems, itervalues
+from polyglot.queue import Empty, Queue
+from polyglot.urllib import quote, urlparse
 
 # Download worker {{{
 
@@ -39,14 +38,14 @@ class Worker(Thread):
 
         self.plugin, self.kwargs, self.rq = plugin, kwargs, Queue()
         self.abort = abort
-        self.buf = BytesIO()
+        self.buf = StringIO()
         self.log = create_log(self.buf)
 
     def run(self):
         start = time.time()
         try:
             self.plugin.identify(self.log, self.rq, self.abort, **self.kwargs)
-        except:
+        except Exception:
             self.log.exception('Plugin', self.plugin.name, 'failed')
         self.plugin.dl_time_spent = time.time() - start
 
@@ -63,8 +62,8 @@ def is_worker_alive(workers):
 
 # }}}
 
-# Merge results from different sources {{{
 
+# Merge results from different sources {{{
 
 class xISBN(Thread):
 
@@ -85,7 +84,7 @@ class xISBN(Thread):
             self.tb = traceback.format_exception()
 
 
-class ISBNMerge(object):
+class ISBNMerge:
 
     def __init__(self, log):
         self.pools = {}
@@ -98,7 +97,7 @@ class ISBNMerge(object):
 
     def isbn_in_pool(self, isbn):
         if isbn:
-            for isbns, pool in self.pools.iteritems():
+            for isbns, pool in iteritems(self.pools):
                 if isbn in isbns:
                     return pool
         return None
@@ -146,7 +145,7 @@ class ISBNMerge(object):
 
     def finalize(self):
         has_isbn_result = False
-        for results in self.pools.itervalues():
+        for results in itervalues(self.pools):
             if results:
                 has_isbn_result = True
                 break
@@ -165,7 +164,7 @@ class ISBNMerge(object):
             # Pick only the most relevant result from each source
             seen = set()
             for result in results:
-                if result.identify_plugin not in seen:
+                if msprefs['keep_dups'] or result.identify_plugin not in seen:
                     seen.add(result.identify_plugin)
                     self.results.append(result)
                     result.average_source_relevance = \
@@ -184,14 +183,14 @@ class ISBNMerge(object):
         groups = {}
         for result in self.results:
             title = lower(result.title if result.title else '')
-            key = (title, tuple([lower(x) for x in result.authors]))
+            key = (title, tuple(lower(x) for x in result.authors))
             if key not in groups:
                 groups[key] = []
             groups[key].append(result)
 
         if len(groups) != len(self.results):
             self.results = []
-            for rgroup in groups.itervalues():
+            for rgroup in itervalues(groups):
                 rel = [r.average_source_relevance for r in rgroup]
                 if len(rgroup) > 1:
                     result = self.merge(rgroup, None, do_asr=False)
@@ -205,7 +204,7 @@ class ISBNMerge(object):
             groups, empty = {}, []
             for result in self.results:
                 key = set()
-                for typ, val in result.identifiers.iteritems():
+                for typ, val in iteritems(result.identifiers):
                     if typ and val:
                         key.add((typ, val))
                 if key:
@@ -226,7 +225,7 @@ class ISBNMerge(object):
 
             if len(groups) != len(self.results):
                 self.results = []
-                for rgroup in groups.itervalues():
+                for rgroup in itervalues(groups):
                     rel = [r.average_source_relevance for r in rgroup]
                     if len(rgroup) > 1:
                         result = self.merge(rgroup, None, do_asr=False)
@@ -243,7 +242,7 @@ class ISBNMerge(object):
     def merge_isbn_results(self):
         self.results = []
         sources = set()
-        for min_year, results in self.pools.itervalues():
+        for min_year, results in itervalues(self.pools):
             if results:
                 for r in results:
                     sources.add(r.identify_plugin)
@@ -298,7 +297,7 @@ class ISBNMerge(object):
             if rating and rating > 0 and rating <= 5:
                 ratings.append(rating)
         if ratings:
-            ans.rating = int(round(sum(ratings)/len(ratings)))
+            ans.rating = round(sum(ratings)/len(ratings))
 
         # Smallest language is likely to be valid
         ans.language = self.length_merge('language', results,
@@ -361,7 +360,7 @@ class ISBNMerge(object):
 
 def merge_identify_results(result_map, log):
     isbn_merge = ISBNMerge(log)
-    for plugin, results in result_map.iteritems():
+    for plugin, results in iteritems(result_map):
         for result in results:
             isbn_merge.add_result(result)
 
@@ -401,7 +400,7 @@ def identify(log, abort,  # {{{
     results = {}
     for p in plugins:
         results[p] = []
-    logs = dict([(w.plugin, w.buf) for w in workers])
+    logs = {w.plugin: w.buf for w in workers}
 
     def get_results():
         found = False
@@ -438,12 +437,12 @@ def identify(log, abort,  # {{{
         pass
 
     sort_kwargs = dict(kwargs)
-    for k in list(sort_kwargs.iterkeys()):
+    for k in list(sort_kwargs):
         if k not in ('title', 'authors', 'identifiers'):
             sort_kwargs.pop(k)
 
     longest, lp = -1, ''
-    for plugin, presults in results.iteritems():
+    for plugin, presults in iteritems(results):
         presults.sort(key=plugin.identify_results_keygen(**sort_kwargs))
 
         # Throw away lower priority results from the same source that have exactly the same
@@ -471,7 +470,7 @@ def identify(log, abort,  # {{{
         for r in presults:
             log('\n\n---')
             try:
-                log(unicode(r))
+                log(str(r))
             except TypeError:
                 log(repr(r))
         if plog:
@@ -502,13 +501,31 @@ def identify(log, abort,  # {{{
     log('We have %d merged results, merging took: %.2f seconds' %
             (len(results), time.time() - start_time))
     tm_rules = msprefs['tag_map_rules']
-    if tm_rules:
+    pm_rules = msprefs['publisher_map_rules']
+    s_rules = msprefs['series_map_rules']
+    if tm_rules or pm_rules or s_rules:
         from calibre.ebooks.metadata.tag_mapper import map_tags
     am_rules = msprefs['author_map_rules']
     if am_rules:
-        from calibre.ebooks.metadata.author_mapper import map_authors, compile_rules
+        from calibre.ebooks.metadata.author_mapper import compile_rules, map_authors
         am_rules = compile_rules(am_rules)
 
+    # normalize unicode strings
+    def n(x):
+        return unicodedata.normalize('NFC', as_unicode(x or '', errors='replace'))
+    for r in results:
+        if r.tags:
+            r.tags = list(map(n, r.tags))
+        if r.authors:
+            r.authors = list(map(n, r.authors))
+        if r.author_sort:
+            r.author_sort = n(r.author_sort)
+        if r.title:
+            r.title = n(r.title)
+        if r.publisher:
+            r.publisher = n(r.publisher)
+        if r.comments:
+            r.comments = n(r.comments)
     max_tags = msprefs['max_tags']
     for r in results:
         if tm_rules:
@@ -516,6 +533,12 @@ def identify(log, abort,  # {{{
         r.tags = r.tags[:max_tags]
         if getattr(r.pubdate, 'year', 2000) <= UNDEFINED_DATE.year:
             r.pubdate = None
+        if pm_rules and r.publisher:
+            pubs = map_tags([r.publisher], pm_rules, separator='')
+            r.publisher = pubs[0] if pubs else ''
+        if s_rules and r.series:
+            ss = map_tags([r.series], s_rules, separator='')
+            r.series = ss[0] if ss else ''
 
     if msprefs['swap_author_names']:
         for r in results:
@@ -540,8 +563,8 @@ def identify(log, abort,  # {{{
 # }}}
 
 
-def urls_from_identifiers(identifiers):  # {{{
-    identifiers = {k.lower():v for k, v in identifiers.iteritems()}
+def urls_from_identifiers(identifiers, sort_results=False):  # {{{
+    identifiers = {k.lower():v for k, v in iteritems(identifiers)}
     ans = []
     keys_left = set(identifiers)
 
@@ -552,9 +575,12 @@ def urls_from_identifiers(identifiers):  # {{{
     rules = msprefs['id_link_rules']
     if rules:
         formatter = EvalFormatter()
-        for k, val in identifiers.iteritems():
+        for k, val in iteritems(identifiers):
             val = val.replace('|', ',')
-            vals = {'id':quote(val if isinstance(val, bytes) else val.encode('utf-8')).decode('ascii')}
+            vals = {
+                'id':str(quote(val if isinstance(val, bytes) else val.encode('utf-8'))),
+                'id_unquoted': str(val),
+            }
             items = rules.get(k) or ()
             for name, template in items:
                 try:
@@ -591,7 +617,7 @@ def urls_from_identifiers(identifiers):  # {{{
         add(issn, 'issn', issn,
             'https://www.worldcat.org/issn/'+issn)
     q = {'http', 'https', 'file'}
-    for k, url in identifiers.iteritems():
+    for k, url in iteritems(identifiers):
         if url and re.match(r'ur[il]\d*$', k) is not None:
             url = url[:8].replace('|', ':') + url[8:].replace('|', ',')
             if url.partition(':')[0].lower() in q:
@@ -606,15 +632,19 @@ def urls_from_identifiers(identifiers):  # {{{
                 parts = urlparse(url)
                 name = parts.netloc or parts.path
                 add(name, k, url, url)
+    if sort_results:
+
+        def url_key(x):
+            return primary_sort_key(str(x[0]))
+
+        ans = sorted(ans, key=url_key)
     return ans
 # }}}
 
 
-if __name__ == '__main__':  # tests {{{
-    # To run these test use: calibre-debug -e
-    # src/calibre/ebooks/metadata/sources/identify.py
-    from calibre.ebooks.metadata.sources.test import (test_identify,
-            title_test, authors_test)
+def tests(start=0, limit=256):  # tests {{{
+    # To run these test use: calibre-debug -c "from calibre.ebooks.metadata.sources.identify import tests; tests()"
+    from calibre.ebooks.metadata.sources.test import authors_test, test_identify, title_test
     tests = [
             (
                 {'title':'Magykal Papers',
@@ -654,5 +684,5 @@ if __name__ == '__main__':  # tests {{{
 
         ]
     # test_identify(tests[1:2])
-    test_identify(tests)
+    test_identify(tests[start:limit])
 # }}}

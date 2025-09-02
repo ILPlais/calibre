@@ -1,16 +1,11 @@
-# -*- coding: utf-8 -*-
-
-from __future__ import (unicode_literals, division, absolute_import, print_function)
-
 __license__ = 'GPL 3'
 __copyright__ = '2006, Ed Summers <ehs@pobox.com>'
 __docformat__ = 'restructuredtext en'
 
-from urlparse import urlparse, urlunparse, parse_qs
-from urllib import urlencode
+from polyglot.urllib import parse_qs, urlencode, urlparse, urlunparse
 
 
-class Query(object):
+class Query:
     '''
     Represents an opensearch query Really this class is just a
     helper for substituting values into the macros in a format.
@@ -61,7 +56,7 @@ class Query(object):
                 query_string[name] = [getattr(self, macro)]
             else:
                 # remove the name/value pair
-                del(query_string[name])
+                del query_string[name]
 
         # copy the url parts and substitute in our new query string
         url_parts = list(self.url_parts)
@@ -72,4 +67,3 @@ class Query(object):
 
     def has_macro(self, macro):
         return macro in self.macro_map
-

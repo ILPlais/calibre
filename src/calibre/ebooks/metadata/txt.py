@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-
 __license__   = 'GPL v3'
 __copyright__ = '2009, John Schember <john@nachtimwald.com>'
 
@@ -7,7 +5,8 @@ __copyright__ = '2009, John Schember <john@nachtimwald.com>'
 Read meta information from TXT files
 '''
 
-import re, os
+import os
+import re
 
 from calibre.ebooks.metadata import MetaInformation
 
@@ -22,17 +21,17 @@ def get_metadata(stream, extract_cover=True):
     mi = MetaInformation(name or _('Unknown'), [_('Unknown')])
     stream.seek(0)
 
-    mdata = u''
-    for x in range(0, 4):
+    mdata = ''
+    for x in range(4):
         line = stream.readline().decode('utf-8', 'replace')
-        if line == '':
+        if not line:
             break
         else:
             mdata += line
 
-    mdata = mdata[:100]
+    mdata = mdata[:1024]
 
-    mo = re.search('(?u)^[ ]*(?P<title>.+)[ ]*(\n{3}|(\r\n){3}|\r{3})[ ]*(?P<author>.+)[ ]*(\n|\r\n|\r)$', mdata)
+    mo = re.search(r'(?u)^[ ]*(?P<title>.+)[ ]*(\n{3}|(\r\n){3}|\r{3})[ ]*(?P<author>.+)[ ]*(\n|\r\n|\r)$', mdata)
     if mo is not None:
         mi.title = mo.group('title')
         mi.authors = mo.group('author').split(',')

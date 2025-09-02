@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-
 __license__ = 'GPL 3'
 __copyright__ = '2010, Li Fanxi <lifanxi@freemindworld.com>'
 __docformat__ = 'restructuredtext en'
@@ -13,12 +11,14 @@ import re
 
 from lxml import etree
 
+from polyglot.builtins import string_or_bytes
+
 
 def ProcessFileName(fileName):
     # Flat the path
-    fileName = fileName.replace("/", "_").replace(os.sep, "_")
+    fileName = fileName.replace('/', '_').replace(os.sep, '_')
     # Handle bookmark for HTML file
-    fileName = fileName.replace("#", "_")
+    fileName = fileName.replace('#', '_')
     # Make it lower case
     fileName = fileName.lower()
     # Change all images to jpg
@@ -49,15 +49,15 @@ SPACE_TAGS = [
     'td',
 ]
 
-CALIBRE_SNB_IMG_TAG = "<$$calibre_snb_temp_img$$>"
-CALIBRE_SNB_BM_TAG = "<$$calibre_snb_bm_tag$$>"
-CALIBRE_SNB_PRE_TAG = "<$$calibre_snb_pre_tag$$>"
+CALIBRE_SNB_IMG_TAG = '<$$calibre_snb_temp_img$$>'
+CALIBRE_SNB_BM_TAG = '<$$calibre_snb_bm_tag$$>'
+CALIBRE_SNB_PRE_TAG = '<$$calibre_snb_pre_tag$$>'
 
 
-class SNBMLizer(object):
+class SNBMLizer:
 
-    curSubItem = ""
-#    curText = [ ]
+    curSubItem = ''
+    # curText = [ ]
 
     def __init__(self, log):
         self.log = log
@@ -72,65 +72,66 @@ class SNBMLizer(object):
 
     def merge_content(self, old_tree, oeb_book, item, subitems, opts):
         newTrees = self.extract_content(oeb_book, item, subitems, opts)
-        body = old_tree.find(".//body")
+        body = old_tree.find('.//body')
         if body is not None:
             for subName in newTrees:
-                newbody = newTrees[subName].find(".//body")
+                newbody = newTrees[subName].find('.//body')
                 for entity in newbody:
                     body.append(entity)
 
     def mlize(self):
         from calibre.ebooks.oeb.base import XHTML
         from calibre.ebooks.oeb.stylizer import Stylizer
-        output = [u'']
+        from calibre.utils.xml_parse import safe_xml_fromstring
+        output = ['']
         stylizer = Stylizer(self.item.data, self.item.href, self.oeb_book, self.opts, self.opts.output_profile)
-        content = unicode(etree.tostring(self.item.data.find(XHTML('body')), encoding=unicode))
-#        content = self.remove_newlines(content)
+        content = etree.tostring(self.item.data.find(XHTML('body')), encoding='unicode')
+        # content = self.remove_newlines(content)
         trees = {}
         for subitem, subtitle in self.subitems:
-            snbcTree = etree.Element("snbc")
-            snbcHead = etree.SubElement(snbcTree, "head")
-            etree.SubElement(snbcHead, "title").text = subtitle
+            snbcTree = etree.Element('snbc')
+            snbcHead = etree.SubElement(snbcTree, 'head')
+            etree.SubElement(snbcHead, 'title').text = subtitle
             if self.opts and self.opts.snb_hide_chapter_name:
-                etree.SubElement(snbcHead, "hidetitle").text = u"true"
-            etree.SubElement(snbcTree, "body")
+                etree.SubElement(snbcHead, 'hidetitle').text = 'true'
+            etree.SubElement(snbcTree, 'body')
             trees[subitem] = snbcTree
-        output.append(u'%s%s\n\n' % (CALIBRE_SNB_BM_TAG, ""))
-        output += self.dump_text(self.subitems, etree.fromstring(content), stylizer)[0]
-        output = self.cleanup_text(u''.join(output))
+        output.append('{}{}\n\n'.format(CALIBRE_SNB_BM_TAG, ''))
+        output += self.dump_text(self.subitems, safe_xml_fromstring(content), stylizer)[0]
+        output = self.cleanup_text(''.join(output))
 
         subitem = ''
-        bodyTree = trees[subitem].find(".//body")
+        bodyTree = trees[subitem].find('.//body')
         for line in output.splitlines():
             pos = line.find(CALIBRE_SNB_PRE_TAG)
             if pos == -1:
-                line = line.strip(u' \t\n\r\u3000')
+                line = line.strip(' \t\n\r\u3000')
             else:
-                etree.SubElement(bodyTree, "text").text = \
+                etree.SubElement(bodyTree, 'text').text = \
                     etree.CDATA(line[pos+len(CALIBRE_SNB_PRE_TAG):])
                 continue
             if len(line) != 0:
                 if line.find(CALIBRE_SNB_IMG_TAG) == 0:
                     prefix = ProcessFileName(os.path.dirname(self.item.href))
                     if prefix != '':
-                        etree.SubElement(bodyTree, "img").text = \
+                        etree.SubElement(bodyTree, 'img').text = \
                             prefix + '_' + line[len(CALIBRE_SNB_IMG_TAG):]
                     else:
-                        etree.SubElement(bodyTree, "img").text = \
+                        etree.SubElement(bodyTree, 'img').text = \
                             line[len(CALIBRE_SNB_IMG_TAG):]
                 elif line.find(CALIBRE_SNB_BM_TAG) == 0:
                     subitem = line[len(CALIBRE_SNB_BM_TAG):]
-                    bodyTree = trees[subitem].find(".//body")
+                    bodyTree = trees[subitem].find('.//body')
                 else:
                     if self.opts and not self.opts.snb_dont_indent_first_line:
-                        prefix = u'\u3000\u3000'
+                        prefix = '\u3000\u3000'
                     else:
-                        prefix = u''
-                    etree.SubElement(bodyTree, "text").text = \
-                        etree.CDATA(unicode(prefix + line))
+                        prefix = ''
+                    etree.SubElement(bodyTree, 'text').text = \
+                        etree.CDATA(str(prefix + line))
                 if self.opts and self.opts.snb_insert_empty_line:
-                    etree.SubElement(bodyTree, "text").text = \
-                        etree.CDATA(u'')
+                    etree.SubElement(bodyTree, 'text').text = \
+                        etree.CDATA('')
 
         return trees
 
@@ -145,9 +146,9 @@ class SNBMLizer(object):
     def cleanup_text(self, text):
         self.log.debug('\tClean up text...')
         # Replace bad characters.
-        text = text.replace(u'\xc2', '')
-        text = text.replace(u'\xa0', ' ')
-        text = text.replace(u'\xa9', '(C)')
+        text = text.replace('\xc2', '')
+        text = text.replace('\xa0', ' ')
+        text = text.replace('\xa9', '(C)')
 
         # Replace tabs, vertical tags and form feeds with single space.
         text = text.replace('\t+', ' ')
@@ -155,22 +156,22 @@ class SNBMLizer(object):
         text = text.replace('\f+', ' ')
 
         # Single line paragraph.
-        text = re.sub('(?<=.)%s(?=.)' % os.linesep, ' ', text)
+        text = re.sub(rf'(?<=.){os.linesep}(?=.)', ' ', text)
 
         # Remove multiple spaces.
-        # text = re.sub('[ ]{2,}', ' ', text)
+        # text = re.sub(r'[ ]{2,}', ' ', text)
 
         # Remove excessive newlines.
-        text = re.sub('\n[ ]+\n', '\n\n', text)
+        text = re.sub(r'\n[ ]+\n', '\n\n', text)
         if self.opts.remove_paragraph_spacing:
-            text = re.sub('\n{2,}', '\n', text)
-            text = re.sub('(?imu)^(?=.)', '\t', text)
+            text = re.sub(r'\n{2,}', '\n', text)
+            text = re.sub(r'(?imu)^(?=.)', '\t', text)
         else:
-            text = re.sub('\n{3,}', '\n\n', text)
+            text = re.sub(r'\n{3,}', '\n\n', text)
 
         # Replace spaces at the beginning and end of lines
-        text = re.sub('(?imu)^[ ]+', '', text)
-        text = re.sub('(?imu)[ ]+$', '', text)
+        text = re.sub(r'(?imu)^[ ]+', '', text)
+        text = re.sub(r'(?imu)[ ]+$', '', text)
 
         if self.opts.snb_max_line_length:
             max_length = self.opts.snb_max_line_length
@@ -211,10 +212,10 @@ class SNBMLizer(object):
     def dump_text(self, subitems, elem, stylizer, end='', pre=False, li=''):
         from calibre.ebooks.oeb.base import XHTML_NS, barename, namespace
 
-        if not isinstance(elem.tag, basestring) \
+        if not isinstance(elem.tag, string_or_bytes) \
            or namespace(elem.tag) != XHTML_NS:
             p = elem.getparent()
-            if p is not None and isinstance(p.tag, basestring) and namespace(p.tag) == XHTML_NS \
+            if p is not None and isinstance(p.tag, string_or_bytes) and namespace(p.tag) == XHTML_NS \
                     and elem.tail:
                 return [elem.tail]
             return ['']
@@ -225,7 +226,7 @@ class SNBMLizer(object):
         if elem.attrib.get('id') is not None and elem.attrib['id'] in [href for href, title in subitems]:
             if self.curSubItem is not None and self.curSubItem != elem.attrib['id']:
                 self.curSubItem = elem.attrib['id']
-                text.append(u'\n\n%s%s\n\n' % (CALIBRE_SNB_BM_TAG, self.curSubItem))
+                text.append(f'\n\n{CALIBRE_SNB_BM_TAG}{self.curSubItem}\n\n')
 
         if style['display'] in ('none', 'oeb-page-head', 'oeb-page-foot') \
            or style['visibility'] == 'hidden':
@@ -239,18 +240,18 @@ class SNBMLizer(object):
         # Are we in a paragraph block?
         if tag in BLOCK_TAGS or style['display'] in BLOCK_STYLES:
             in_block = True
-            if not end.endswith(u'\n\n') and hasattr(elem, 'text') and elem.text:
-                text.append(u'\n\n')
+            if not end.endswith('\n\n') and hasattr(elem, 'text') and elem.text:
+                text.append('\n\n')
 
         if tag in SPACE_TAGS:
             if not end.endswith('u ') and hasattr(elem, 'text') and elem.text:
-                text.append(u' ')
+                text.append(' ')
 
         if tag == 'img':
-            text.append(u'\n\n%s%s\n\n' % (CALIBRE_SNB_IMG_TAG, ProcessFileName(elem.attrib['src'])))
+            text.append('\n\n{}{}\n\n'.format(CALIBRE_SNB_IMG_TAG, ProcessFileName(elem.attrib['src'])))
 
         if tag == 'br':
-            text.append(u'\n\n')
+            text.append('\n\n')
 
         if tag == 'li':
             li = '- '
@@ -259,24 +260,24 @@ class SNBMLizer(object):
         # Process tags that contain text.
         if hasattr(elem, 'text') and elem.text:
             if pre:
-                text.append((u'\n\n%s' % CALIBRE_SNB_PRE_TAG).join((li + elem.text).splitlines()))
+                text.append((f'\n\n{CALIBRE_SNB_PRE_TAG}').join((li + elem.text).splitlines()))
             else:
                 text.append(li + elem.text)
             li = ''
 
         for item in elem:
-            en = u''
+            en = ''
             if len(text) >= 2:
                 en = text[-1][-2:]
             t = self.dump_text(subitems, item, stylizer, en, pre, li)[0]
             text += t
 
         if in_block:
-            text.append(u'\n\n')
+            text.append('\n\n')
 
         if hasattr(elem, 'tail') and elem.tail:
             if pre:
-                text.append((u'\n\n%s' % CALIBRE_SNB_PRE_TAG).join(elem.tail.splitlines()))
+                text.append((f'\n\n{CALIBRE_SNB_PRE_TAG}').join(elem.tail.splitlines()))
             else:
                 text.append(li + elem.tail)
             li = ''

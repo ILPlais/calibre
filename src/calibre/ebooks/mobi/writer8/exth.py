@@ -1,20 +1,19 @@
-#!/usr/bin/env python2
-# vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
+#!/usr/bin/env python
+
 
 __license__   = 'GPL v3'
 __copyright__ = '2012, Kovid Goyal <kovid@kovidgoyal.net>'
 __docformat__ = 'restructuredtext en'
 
 import re
-from struct import pack
 from io import BytesIO
+from struct import pack
 
-from calibre.constants import iswindows, isosx
-from calibre.ebooks.mobi.utils import (utf8_text, to_base)
-from calibre.utils.localization import lang_as_iso639_1
+from calibre.constants import ismacos, iswindows
 from calibre.ebooks.metadata import authors_to_sort_string
+from calibre.ebooks.mobi.utils import to_base, utf8_text
+from calibre.utils.localization import lang_as_iso639_1
+from polyglot.builtins import iteritems
 
 EXTH_CODES = {
     'creator': 100,
@@ -42,6 +41,7 @@ EXTH_CODES = {
     'language': 524,
     'primary_writing_mode': 525,
     'page_progression_direction': 527,
+    'override_kindle_fonts': 528,
 }
 
 COLLAPSE_RE = re.compile(r'[ \t\r\n\v]+')
@@ -62,15 +62,15 @@ def build_exth(metadata, prefer_author_sort=False, is_periodical=False,
         items = metadata[term]
         if term == 'creator':
             if prefer_author_sort:
-                creators = [authors_to_sort_string([unicode(c)]) for c in
+                creators = [authors_to_sort_string([str(c)]) for c in
                             items]
             else:
-                creators = [unicode(c) for c in items]
+                creators = [str(c) for c in items]
             items = creators
         elif term == 'rights':
             try:
-                rights = utf8_text(unicode(metadata.rights[0]))
-            except:
+                rights = utf8_text(str(metadata.rights[0]))
+            except Exception:
                 rights = b'Unknown'
             exth.write(pack(b'>II', EXTH_CODES['rights'], len(rights) + 8))
             exth.write(rights)
@@ -78,7 +78,7 @@ def build_exth(metadata, prefer_author_sort=False, is_periodical=False,
             continue
 
         for item in items:
-            data = unicode(item)
+            data = str(item)
             if term != 'description':
                 data = COLLAPSE_RE.sub(' ', data)
             if term == 'identifier':
@@ -102,14 +102,14 @@ def build_exth(metadata, prefer_author_sort=False, is_periodical=False,
     from calibre.ebooks.oeb.base import OPF
     for x in metadata['identifier']:
         if (x.get(OPF('scheme'), None).lower() == 'uuid' or
-                unicode(x).startswith('urn:uuid:')):
-            uuid = unicode(x).split(':')[-1]
+                str(x).startswith('urn:uuid:')):
+            uuid = str(x).split(':')[-1]
             break
     if uuid is None:
         from uuid import uuid4
         uuid = str(uuid4())
 
-    if isinstance(uuid, unicode):
+    if isinstance(uuid, str):
         uuid = uuid.encode('utf-8')
     if not share_not_sync:
         exth.write(pack(b'>II', 113, len(uuid) + 8))
@@ -142,9 +142,9 @@ def build_exth(metadata, prefer_author_sort=False, is_periodical=False,
         datestr = str(metadata['timestamp'][0])
 
     if datestr is None:
-        raise ValueError("missing date or timestamp")
+        raise ValueError('missing date or timestamp')
 
-    datestr = bytes(datestr)
+    datestr = datestr.encode('utf-8')
     exth.write(pack(b'>II', EXTH_CODES['pubdate'], len(datestr) + 8))
     exth.write(datestr)
     nrecs += 1
@@ -154,7 +154,7 @@ def build_exth(metadata, prefer_author_sort=False, is_periodical=False,
         nrecs += 1
 
     if be_kindlegen2:
-        mv = 200 if iswindows else 202 if isosx else 201
+        mv = 200 if iswindows else 202 if ismacos else 201
         vals = {204:mv, 205:2, 206:9, 207:0}
     elif is_periodical:
         # Pretend to be amazon's super secret periodical generator
@@ -162,7 +162,7 @@ def build_exth(metadata, prefer_author_sort=False, is_periodical=False,
     else:
         # Pretend to be kindlegen 1.2
         vals = {204:201, 205:1, 206:2, 207:33307}
-    for code, val in vals.iteritems():
+    for code, val in iteritems(vals):
         exth.write(pack(b'>III', code, 12, val))
         nrecs += 1
     if be_kindlegen2:
@@ -178,7 +178,7 @@ def build_exth(metadata, prefer_author_sort=False, is_periodical=False,
     if thumbnail_offset is not None:
         exth.write(pack(b'>III', EXTH_CODES['thumboffset'], 12,
             thumbnail_offset))
-        thumbnail_uri_str = bytes('kindle:embed:%s' %(to_base(thumbnail_offset, base=32, min_num_digits=4)))
+        thumbnail_uri_str = (f'kindle:embed:{to_base(thumbnail_offset, base=32, min_num_digits=4)}').encode('utf-8')
         exth.write(pack(b'>II', EXTH_CODES['kf8_thumbnail_uri'], len(thumbnail_uri_str) + 8))
         exth.write(thumbnail_uri_str)
         nrecs += 2
@@ -216,10 +216,14 @@ def build_exth(metadata, prefer_author_sort=False, is_periodical=False,
         nrecs += 1
 
     if page_progression_direction in {'rtl', 'ltr', 'default'}:
-        ppd = bytes(page_progression_direction)
+        ppd = page_progression_direction.encode('ascii')
         exth.write(pack(b'>II', EXTH_CODES['page_progression_direction'], len(ppd) + 8))
         exth.write(ppd)
         nrecs += 1
+
+    exth.write(pack(b'>II', EXTH_CODES['override_kindle_fonts'], len(b'true') + 8))
+    exth.write(b'true')
+    nrecs += 1
 
     exth = exth.getvalue()
     trail = len(exth) % 4

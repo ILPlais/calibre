@@ -1,36 +1,106 @@
-#!/usr/bin/env python2
-# vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
+#!/usr/bin/env python
+
 
 __license__   = 'GPL v3'
 __copyright__ = '2011, Grant Drake <grant.drake@gmail.com>'
 __docformat__ = 'restructuredtext en'
 
-import re, datetime, traceback
-from lxml import html
-from PyQt5.Qt import (Qt, QUrl, QFrame, QVBoxLayout, QLabel, QBrush, QTextEdit,
-                      QComboBox, QAbstractItemView, QHBoxLayout, QDialogButtonBox,
-                      QAbstractTableModel, QTableView, QModelIndex,
-                      QSortFilterProxyModel, QAction, QIcon, QDialog,
-                      QFont, QPixmap, QSize, QLineEdit)
+import datetime
+import re
+import traceback
+from enum import Enum
 
-from calibre import browser, prints
-from calibre.constants import numeric_version, iswindows, isosx, DEBUG, __appname__, __version__
+from qt.core import (
+    QAbstractItemView,
+    QAbstractTableModel,
+    QAction,
+    QBrush,
+    QComboBox,
+    QDialog,
+    QDialogButtonBox,
+    QFont,
+    QFrame,
+    QHBoxLayout,
+    QIcon,
+    QLabel,
+    QLineEdit,
+    QModelIndex,
+    QSize,
+    QSortFilterProxyModel,
+    Qt,
+    QTableView,
+    QUrl,
+    QVBoxLayout,
+)
+
+from calibre import prints
+from calibre.constants import DEBUG, __appname__, __version__, ismacos, iswindows, numeric_version
+from calibre.customize import PluginInstallationType
 from calibre.customize.ui import (
-    initialized_plugins, is_disabled, remove_plugin, add_plugin, enable_plugin, disable_plugin,
-    NameConflict, has_external_plugins)
-from calibre.gui2 import error_dialog, question_dialog, info_dialog, open_url, gprefs
+    BLACKLISTED_PLUGINS,
+    NameConflict,
+    add_plugin,
+    disable_plugin,
+    enable_plugin,
+    has_external_plugins,
+    initialized_plugins,
+    is_disabled,
+    remove_plugin,
+)
+from calibre.gui2 import error_dialog, gprefs, info_dialog, open_url, question_dialog
 from calibre.gui2.preferences.plugins import ConfigWidget
 from calibre.utils.date import UNDEFINED_DATE, format_date
 from calibre.utils.https import get_https_resource_securely
+from calibre.utils.icu import lower as icu_lower
+from polyglot.builtins import itervalues
 
 SERVER = 'https://code.calibre-ebook.com/plugins/'
-INDEX_URL = '%splugins.json.bz2' % SERVER
+INDEX_URL = f'{SERVER}plugins.json.bz2'
 FILTER_ALL = 0
 FILTER_INSTALLED = 1
 FILTER_UPDATE_AVAILABLE = 2
 FILTER_NOT_INSTALLED = 3
+
+
+class Category(Enum):
+    Store = 'Store'
+    FileType = 'File Type'
+    LibraryClosed = 'Library Closed'
+    Editor = 'Editor'
+    ConversionInput = 'Conversion Input'
+    ConversionOutput = 'Conversion Output'
+    Device = 'Device'
+    MetadataWriter = 'Metadata Writer'
+    MetadataReader = 'Metadata Reader'
+    MetadataSource = 'Metadata Source'
+    UserInterface = 'GUI'
+
+    @property
+    def human_name(self) -> str:
+        match self:
+            case Category.Store:
+                return _('Sources of books')
+            case Category.FileType:
+                return _('Customize handling of ebooks')
+            case Category.LibraryClosed:
+                return _('Actions when closing libraries')
+            case Category.Editor:
+                return _('Extend the calibre Editor')
+            case Category.ConversionInput:
+                return _('Conversion from extra formats')
+            case Category.ConversionOutput:
+                return _('Conversion to extra formats')
+            case Category.Device:
+                return _('Devices to manage')
+            case Category.MetadataWriter:
+                return _('Set metadata in files')
+            case Category.MetadataReader:
+                return _('Get metadata from files')
+            case Category.MetadataSource:
+                return _('Download metadata for books')
+            case Category.UserInterface:
+                return _('Extend calibre generally')
+        return self.value
 
 
 def get_plugin_updates_available(raise_error=False):
@@ -44,14 +114,15 @@ def get_plugin_updates_available(raise_error=False):
         return None
     display_plugins = read_available_plugins(raise_error=raise_error)
     if display_plugins:
-        update_plugins = filter(filter_upgradeable_plugins, display_plugins)
+        update_plugins = list(filter(filter_upgradeable_plugins, display_plugins))
         if len(update_plugins) > 0:
             return update_plugins
     return None
 
 
 def filter_upgradeable_plugins(display_plugin):
-    return display_plugin.is_upgrade_available()
+    return display_plugin.installation_type is PluginInstallationType.EXTERNAL \
+            and display_plugin.is_upgrade_available()
 
 
 def filter_not_installed_plugins(display_plugin):
@@ -59,24 +130,26 @@ def filter_not_installed_plugins(display_plugin):
 
 
 def read_available_plugins(raise_error=False):
-    import json, bz2
+    import bz2
+    import json
     display_plugins = []
     try:
         raw = get_https_resource_securely(INDEX_URL)
         if not raw:
             return
         raw = json.loads(bz2.decompress(raw))
-    except:
+    except Exception:
         if raise_error:
             raise
         traceback.print_exc()
         return
-    for plugin in raw.itervalues():
+    for plugin in itervalues(raw):
         try:
-            display_plugin = DisplayPlugin(plugin)
-            get_installed_plugin_status(display_plugin)
-            display_plugins.append(display_plugin)
-        except:
+            if plugin['index_name'] not in BLACKLISTED_PLUGINS:
+                display_plugin = DisplayPlugin(plugin)
+                get_installed_plugin_status(display_plugin)
+                display_plugins.append(display_plugin)
+        except Exception:
             if DEBUG:
                 prints('======= Plugin Parse Error =======')
                 traceback.print_exc()
@@ -90,7 +163,8 @@ def get_installed_plugin_status(display_plugin):
     display_plugin.installed_version = None
     display_plugin.plugin = None
     for plugin in initialized_plugins():
-        if plugin.name == display_plugin.qname and plugin.plugin_path is not None:
+        if plugin.name == display_plugin.qname \
+                and plugin.installation_type is not PluginInstallationType.BUILTIN:
             display_plugin.plugin = plugin
             display_plugin.installed_version = plugin.version
             break
@@ -111,7 +185,6 @@ def get_installed_plugin_status(display_plugin):
 
 
 class ImageTitleLayout(QHBoxLayout):
-
     '''
     A reusable layout widget displaying an image followed by a title
     '''
@@ -121,13 +194,12 @@ class ImageTitleLayout(QHBoxLayout):
         title_font = QFont()
         title_font.setPointSize(16)
         title_image_label = QLabel(parent)
-        pixmap = QPixmap()
-        pixmap.load(I(icon_name))
-        if pixmap is None:
+        ic = QIcon.ic(icon_name)
+        if ic.isNull():
             error_dialog(parent, _('Restart required'),
                          _('You must restart calibre before using this plugin!'), show=True)
         else:
-            title_image_label.setPixmap(pixmap)
+            title_image_label.setPixmap(ic.pixmap(32, 32))
         title_image_label.setMaximumSize(32, 32)
         title_image_label.setScaledContents(True)
         self.addWidget(title_image_label)
@@ -138,7 +210,6 @@ class ImageTitleLayout(QHBoxLayout):
 
 
 class SizePersistedDialog(QDialog):
-
     '''
     This dialog is a base class for any dialogs that want their size/position
     restored when they are next opened.
@@ -149,39 +220,17 @@ class SizePersistedDialog(QDialog):
     def __init__(self, parent, unique_pref_name):
         QDialog.__init__(self, parent)
         self.unique_pref_name = unique_pref_name
-        self.geom = gprefs.get(unique_pref_name, None)
         self.finished.connect(self.dialog_closing)
 
+    def sizeHint(self):
+        ans = super().sizeHint()
+        return ans + self.initial_extra_size
+
     def resize_dialog(self):
-        if self.geom is None:
-            self.resize(self.sizeHint()+self.initial_extra_size)
-        else:
-            self.restoreGeometry(self.geom)
+        self.restore_geometry(gprefs, self.unique_pref_name)
 
     def dialog_closing(self, result):
-        geom = bytearray(self.saveGeometry())
-        gprefs[self.unique_pref_name] = geom
-
-
-class VersionHistoryDialog(SizePersistedDialog):
-
-    def __init__(self, parent, plugin_name, html):
-        SizePersistedDialog.__init__(self, parent, 'Plugin Updater plugin:version history dialog')
-        self.setWindowTitle(_('Version History for %s')%plugin_name)
-
-        layout = QVBoxLayout(self)
-        self.setLayout(layout)
-
-        self.notes = QTextEdit(html, self)
-        self.notes.setReadOnly(True)
-        layout.addWidget(self.notes)
-
-        self.button_box = QDialogButtonBox(QDialogButtonBox.Close)
-        self.button_box.rejected.connect(self.reject)
-        layout.addWidget(self.button_box)
-
-        # Cause our dialog size to be restored from prefs or created on first usage
-        self.resize_dialog()
+        self.save_geometry(gprefs, self.unique_pref_name)
 
 
 class PluginFilterComboBox(QComboBox):
@@ -192,7 +241,31 @@ class PluginFilterComboBox(QComboBox):
         self.addItems(items)
 
 
-class DisplayPlugin(object):
+class CategoryFilterComboBox(QComboBox):
+
+    def __init__(self, parent):
+        QComboBox.__init__(self, parent)
+        self.addItem(_('All'), None)
+        for c in Category:
+            self.addItem(c.human_name, c)
+
+    @property
+    def filter_value(self) -> str:
+        v = self.currentData()
+        if v:
+            return v.value
+        return ''
+
+    def set_category(self, c: Category | None) -> None:
+        if c is None:
+            self.setCurrentIndex(0)
+        else:
+            idx = self.findData(c)
+            if idx > -1:
+                self.setCurrentIndex(idx)
+
+
+class DisplayPlugin:
 
     def __init__(self, plugin):
         self.name = plugin['index_name']
@@ -204,12 +277,14 @@ class DisplayPlugin(object):
         self.donation_link = plugin['donate']
         self.available_version = tuple(plugin['version'])
         self.release_date = datetime.datetime(*tuple(map(int, re.split(r'\D', plugin['last_modified'])))[:6]).date()
-        self.calibre_required_version = plugin['minimum_calibre_version']
+        self.calibre_required_version = tuple(plugin['minimum_calibre_version'])
         self.author = plugin['author']
+        self.category = plugin.get('category', '')
         self.platforms = plugin['supported_platforms']
         self.uninstall_plugins = plugin['uninstall'] or []
         self.has_changelog = plugin['history']
         self.is_deprecated = plugin['deprecated']
+        self.installation_type = PluginInstallationType.EXTERNAL
 
     def is_disabled(self):
         if self.plugin is None:
@@ -223,13 +298,20 @@ class DisplayPlugin(object):
         # filter_text is already lowercase @set_filter_text
         return filter_text in icu_lower(self.name)  # case-insensitive filtering
 
+    def category_matches_filter(self, filter_text):
+        if not filter_text:
+            return True
+        return filter_text == self.category
+
     def is_upgrade_available(self):
+        if isinstance(self.installed_version, str):
+            return True
         return self.is_installed() and (self.installed_version < self.available_version or self.is_deprecated)
 
     def is_valid_platform(self):
         if iswindows:
             return 'windows' in self.platforms
-        if isosx:
+        if ismacos:
             return 'osx' in self.platforms
         return 'linux' in self.platforms
 
@@ -244,22 +326,26 @@ class DisplayPluginSortFilterModel(QSortFilterProxyModel):
 
     def __init__(self, parent):
         QSortFilterProxyModel.__init__(self, parent)
-        self.setSortRole(Qt.UserRole)
-        self.setSortCaseSensitivity(Qt.CaseInsensitive)
+        self.setSortRole(Qt.ItemDataRole.UserRole)
+        self.setSortCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
         self.filter_criteria = FILTER_ALL
-        self.filter_text = ""
+        self.filter_text = ''
+        self.filter_by_category = ''
 
     def filterAcceptsRow(self, sourceRow, sourceParent):
         index = self.sourceModel().index(sourceRow, 0, sourceParent)
         display_plugin = self.sourceModel().display_plugins[index.row()]
+        matches_filters = display_plugin.name_matches_filter(self.filter_text) and display_plugin.category_matches_filter(self.filter_by_category)
         if self.filter_criteria == FILTER_ALL:
-            return not (display_plugin.is_deprecated and not display_plugin.is_installed()) and display_plugin.name_matches_filter(self.filter_text)
+            return (
+                    not (display_plugin.is_deprecated and not display_plugin.is_installed()) and
+                    matches_filters)
         if self.filter_criteria == FILTER_INSTALLED:
-            return display_plugin.is_installed() and display_plugin.name_matches_filter(self.filter_text)
+            return display_plugin.is_installed() and matches_filters
         if self.filter_criteria == FILTER_UPDATE_AVAILABLE:
-            return display_plugin.is_upgrade_available() and display_plugin.name_matches_filter(self.filter_text)
+            return display_plugin.is_upgrade_available() and matches_filters
         if self.filter_criteria == FILTER_NOT_INSTALLED:
-            return not display_plugin.is_installed() and not display_plugin.is_deprecated and display_plugin.name_matches_filter(self.filter_text)
+            return not display_plugin.is_installed() and not display_plugin.is_deprecated and matches_filters
         return False
 
     def set_filter_criteria(self, filter_value):
@@ -267,7 +353,11 @@ class DisplayPluginSortFilterModel(QSortFilterProxyModel):
         self.invalidateFilter()
 
     def set_filter_text(self, filter_text_value):
-        self.filter_text = icu_lower(unicode(filter_text_value))
+        self.filter_text = icu_lower(str(filter_text_value))
+        self.invalidateFilter()
+
+    def set_filter_category(self, filter_text_value):
+        self.filter_by_category = filter_text_value
         self.invalidateFilter()
 
 
@@ -276,8 +366,8 @@ class DisplayPluginModel(QAbstractTableModel):
     def __init__(self, display_plugins):
         QAbstractTableModel.__init__(self)
         self.display_plugins = display_plugins
-        self.headers = map(unicode, [_('Plugin name'), _('Donate'), _('Status'), _('Installed'),
-                                      _('Available'), _('Released'), _('calibre'), _('Author')])
+        self.headers = list(map(str, [_('Plugin name'), _('Donate'), _('Status'), _('Installed'),
+                                      _('Available'), _('Released'), _('calibre'), _('Author')]))
 
     def rowCount(self, *args):
         return len(self.display_plugins)
@@ -286,7 +376,7 @@ class DisplayPluginModel(QAbstractTableModel):
         return len(self.headers)
 
     def headerData(self, section, orientation, role):
-        if role == Qt.DisplayRole and orientation == Qt.Horizontal:
+        if role == Qt.ItemDataRole.DisplayRole and orientation == Qt.Orientation.Horizontal:
             return self.headers[section]
         return None
 
@@ -297,12 +387,12 @@ class DisplayPluginModel(QAbstractTableModel):
         if row < 0 or row >= self.rowCount():
             return None
         display_plugin = self.display_plugins[row]
-        if role in [Qt.DisplayRole, Qt.UserRole]:
+        if role in [Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.UserRole]:
             if col == 0:
                 return display_plugin.name
             if col == 1:
                 if display_plugin.donation_link:
-                    return _('PayPal')
+                    return _('Donate')
             if col == 2:
                 return self._get_status(display_plugin)
             if col == 3:
@@ -310,7 +400,7 @@ class DisplayPluginModel(QAbstractTableModel):
             if col == 4:
                 return self._get_display_version(display_plugin.available_version)
             if col == 5:
-                if role == Qt.UserRole:
+                if role == Qt.ItemDataRole.UserRole:
                     return self._get_display_release_date(display_plugin.release_date, 'yyyyMMdd')
                 else:
                     return self._get_display_release_date(display_plugin.release_date)
@@ -318,25 +408,25 @@ class DisplayPluginModel(QAbstractTableModel):
                 return self._get_display_version(display_plugin.calibre_required_version)
             if col == 7:
                 return display_plugin.author
-        elif role == Qt.DecorationRole:
+        elif role == Qt.ItemDataRole.DecorationRole:
             if col == 0:
                 return self._get_status_icon(display_plugin)
             if col == 1:
                 if display_plugin.donation_link:
-                    return QIcon(I('donate.png'))
-        elif role == Qt.ToolTipRole:
+                    return QIcon.ic('donate.png')
+        elif role == Qt.ItemDataRole.ToolTipRole:
             if col == 1 and display_plugin.donation_link:
                 return _('This plugin is FREE but you can reward the developer for their effort\n'
-                                  'by donating to them via PayPal.\n\n'
+                                  'by donating to them via a payment service.\n\n'
                                   'Right-click and choose Donate to reward: ')+display_plugin.author
             else:
                 return self._get_status_tooltip(display_plugin)
-        elif role == Qt.ForegroundRole:
+        elif role == Qt.ItemDataRole.ForegroundRole:
             if col != 1:  # Never change colour of the donation column
                 if display_plugin.is_deprecated:
-                    return QBrush(Qt.blue)
+                    return QBrush(Qt.GlobalColor.blue)
                 if display_plugin.is_disabled():
-                    return QBrush(Qt.gray)
+                    return QBrush(Qt.GlobalColor.gray)
         return None
 
     def plugin_to_index(self, display_plugin):
@@ -397,7 +487,7 @@ class DisplayPluginModel(QAbstractTableModel):
                 icon_name = 'plugin_new_valid.png'
             else:
                 icon_name = 'plugin_new_invalid.png'
-        return QIcon(I('plugins/' + icon_name))
+        return QIcon.ic('plugins/' + icon_name)
 
     def _get_status_tooltip(self, display_plugin):
         if display_plugin.is_deprecated:
@@ -411,25 +501,53 @@ class DisplayPluginModel(QAbstractTableModel):
             return (_('You must upgrade to at least calibre %s before installing this plugin') %
                             self._get_display_version(display_plugin.calibre_required_version)+'\n\n'+
                             _('Right-click to see more options'))
-        if display_plugin.installed_version < display_plugin.available_version:
-            if display_plugin.installed_version is None:
-                return (_('You can install this plugin')+'\n\n'+
-                                _('Right-click to see more options'))
-            else:
+        if display_plugin.installed_version is None:
+            return (_('You can install this plugin')+'\n\n'+
+                            _('Right-click to see more options'))
+        try:
+            if display_plugin.installed_version < display_plugin.available_version:
                 return (_('A new version of this plugin is available')+'\n\n'+
                                 _('Right-click to see more options'))
+        except Exception:
+            return (_('A new version of this plugin is available')+'\n\n'+
+                            _('Right-click to see more options'))
         return (_('This plugin is installed and up-to-date')+'\n\n'+
                         _('Right-click to see more options'))
+
+
+def notify_on_successful_install(parent, plugin):
+    d = info_dialog(parent, _('Success'),
+            _('Plugin <b>{0}</b> successfully installed under <b>'
+                '{1}</b>. You may have to restart calibre '
+                'for the plugin to take effect.').format(plugin.name, plugin.type),
+            show_copy_button=False)
+    b = d.bb.addButton(_('&Restart calibre now'), QDialogButtonBox.ButtonRole.AcceptRole)
+    b.setIcon(QIcon.ic('lt.png'))
+    d.do_restart = False
+
+    def rf():
+        d.do_restart = True
+    b.clicked.connect(rf)
+    d.set_details('')
+    d.exec()
+    b.clicked.disconnect()
+    return d.do_restart
 
 
 class PluginUpdaterDialog(SizePersistedDialog):
 
     initial_extra_size = QSize(350, 100)
     forum_label_text = _('Plugin homepage')
+    warn_about_neededing_restart = True
 
-    def __init__(self, gui, initial_filter=FILTER_UPDATE_AVAILABLE):
-        SizePersistedDialog.__init__(self, gui, 'Plugin Updater plugin:plugin updater dialog')
-        self.gui = gui
+    @property
+    def gui(self):
+        from calibre.gui2.ui import get_gui
+        return get_gui()
+
+    def __init__(self, parent, initial_filter=FILTER_UPDATE_AVAILABLE, initial_category: Category | None = None):
+        SizePersistedDialog.__init__(self, parent, 'Plugin Updater plugin:plugin updater dialog')
+        self.number_installed = 0
         self.forum_link = None
         self.zip_url = None
         self.model = None
@@ -442,7 +560,7 @@ class PluginUpdaterDialog(SizePersistedDialog):
         except Exception:
             display_plugins = []
             import traceback
-            error_dialog(self.gui, _('Update Check Failed'),
+            error_dialog(self.parent(), _('Update Check Failed'),
                         _('Unable to reach the plugin index page.'),
                         det_msg=traceback.format_exc(), show=True)
 
@@ -455,6 +573,8 @@ class PluginUpdaterDialog(SizePersistedDialog):
             self.plugin_view.selectionModel().currentRowChanged.connect(self._plugin_current_changed)
             self.plugin_view.doubleClicked.connect(self.install_button.click)
             self.filter_combo.setCurrentIndex(initial_filter)
+            if initial_category:
+                self.category_combo.set_category(initial_category)
             self._select_and_focus_view()
         else:
             self.filter_combo.setEnabled(False)
@@ -463,7 +583,7 @@ class PluginUpdaterDialog(SizePersistedDialog):
 
     def _initialize_controls(self):
         self.setWindowTitle(_('User plugins'))
-        self.setWindowIcon(QIcon(I('plugins/plugin_updater.png')))
+        self.setWindowIcon(QIcon.ic('plugins/plugin_updater.png'))
         layout = QVBoxLayout(self)
         self.setLayout(layout)
         title_layout = ImageTitleLayout(self, 'plugins/plugin_updater.png',
@@ -473,12 +593,18 @@ class PluginUpdaterDialog(SizePersistedDialog):
         header_layout = QHBoxLayout()
         layout.addLayout(header_layout)
         self.filter_combo = PluginFilterComboBox(self)
-        self.filter_combo.setMinimumContentsLength(20)
-        self.filter_combo.currentIndexChanged[int].connect(self._filter_combo_changed)
-        la = QLabel(_('Filter list of &plugins')+':', self)
+        self.filter_combo.setMinimumContentsLength(12)
+        self.filter_combo.currentIndexChanged.connect(self._filter_combo_changed)
+        la = QLabel(_('&Install type')+':', self)
         la.setBuddy(self.filter_combo)
         header_layout.addWidget(la)
         header_layout.addWidget(self.filter_combo)
+        self.category_combo = CategoryFilterComboBox(self)
+        self.category_combo.currentIndexChanged.connect(self._category_combo_changed)
+        la = QLabel(_('&Category')+':', self)
+        la.setBuddy(self.filter_combo)
+        header_layout.addWidget(la)
+        header_layout.addWidget(self.category_combo)
         header_layout.addStretch(10)
 
         # filter plugins by name
@@ -486,15 +612,15 @@ class PluginUpdaterDialog(SizePersistedDialog):
         header_layout.addWidget(la)
         self.filter_by_name_lineedit = QLineEdit(self)
         la.setBuddy(self.filter_by_name_lineedit)
-        self.filter_by_name_lineedit.setText("")
+        self.filter_by_name_lineedit.setText('')
         self.filter_by_name_lineedit.textChanged.connect(self._filter_name_lineedit_changed)
 
         header_layout.addWidget(self.filter_by_name_lineedit)
 
         self.plugin_view = QTableView(self)
         self.plugin_view.horizontalHeader().setStretchLastSection(True)
-        self.plugin_view.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.plugin_view.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.plugin_view.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.plugin_view.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.plugin_view.setAlternatingRowColors(True)
         self.plugin_view.setSortingEnabled(True)
         self.plugin_view.setIconSize(QSize(28, 28))
@@ -503,26 +629,26 @@ class PluginUpdaterDialog(SizePersistedDialog):
         details_layout = QHBoxLayout()
         layout.addLayout(details_layout)
         forum_label = self.forum_label = QLabel('')
-        forum_label.setTextInteractionFlags(Qt.LinksAccessibleByMouse | Qt.LinksAccessibleByKeyboard)
+        forum_label.setTextInteractionFlags(Qt.TextInteractionFlag.LinksAccessibleByMouse | Qt.TextInteractionFlag.LinksAccessibleByKeyboard)
         forum_label.linkActivated.connect(self._forum_label_activated)
-        details_layout.addWidget(QLabel(_('Description')+':', self), 0, Qt.AlignLeft)
-        details_layout.addWidget(forum_label, 1, Qt.AlignRight)
+        details_layout.addWidget(QLabel(_('Description')+':', self), 0, Qt.AlignmentFlag.AlignLeft)
+        details_layout.addWidget(forum_label, 1, Qt.AlignmentFlag.AlignRight)
 
         self.description = QLabel(self)
-        self.description.setFrameStyle(QFrame.Panel | QFrame.Sunken)
-        self.description.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+        self.description.setFrameStyle(QFrame.Shape.Panel | QFrame.Shadow.Sunken)
+        self.description.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
         self.description.setMinimumHeight(40)
         self.description.setWordWrap(True)
         layout.addWidget(self.description)
 
-        self.button_box = QDialogButtonBox(QDialogButtonBox.Close)
+        self.button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         self.button_box.rejected.connect(self.reject)
         self.finished.connect(self._finished)
-        self.install_button = self.button_box.addButton(_('&Install'), QDialogButtonBox.AcceptRole)
+        self.install_button = self.button_box.addButton(_('&Install'), QDialogButtonBox.ButtonRole.AcceptRole)
         self.install_button.setToolTip(_('Install the selected plugin'))
         self.install_button.clicked.connect(self._install_clicked)
         self.install_button.setEnabled(False)
-        self.configure_button = self.button_box.addButton(' '+_('&Customize plugin ')+' ', QDialogButtonBox.ResetRole)
+        self.configure_button = self.button_box.addButton(' '+_('&Customize plugin ')+' ', QDialogButtonBox.ButtonRole.ResetRole)
         self.configure_button.setToolTip(_('Customize the options for this plugin'))
         self.configure_button.clicked.connect(self._configure_clicked)
         self.configure_button.setEnabled(False)
@@ -531,22 +657,17 @@ class PluginUpdaterDialog(SizePersistedDialog):
     def update_forum_label(self):
         txt = ''
         if self.forum_link:
-            txt = '<a href="%s">%s</a>' % (self.forum_link, self.forum_label_text)
+            txt = f'<a href="{self.forum_link}">{self.forum_label_text}</a>'
         self.forum_label.setText(txt)
 
     def _create_context_menu(self):
-        self.plugin_view.setContextMenuPolicy(Qt.ActionsContextMenu)
-        self.install_action = QAction(QIcon(I('plugins/plugin_upgrade_ok.png')), _('&Install'), self)
+        self.plugin_view.setContextMenuPolicy(Qt.ContextMenuPolicy.ActionsContextMenu)
+        self.install_action = QAction(QIcon.ic('plugins/plugin_upgrade_ok.png'), _('&Install'), self)
         self.install_action.setToolTip(_('Install the selected plugin'))
         self.install_action.triggered.connect(self._install_clicked)
         self.install_action.setEnabled(False)
         self.plugin_view.addAction(self.install_action)
-        self.history_action = QAction(QIcon(I('chapters.png')), _('Version &history'), self)
-        self.history_action.setToolTip(_('Show history of changes to this plugin'))
-        self.history_action.triggered.connect(self._history_clicked)
-        self.history_action.setEnabled(False)
-        self.plugin_view.addAction(self.history_action)
-        self.forum_action = QAction(QIcon(I('plugins/mobileread.png')), _('Plugin &forum thread'), self)
+        self.forum_action = QAction(QIcon.ic('plugins/mobileread.png'), _('Plugin &forum thread'), self)
         self.forum_action.triggered.connect(self._forum_label_activated)
         self.forum_action.setEnabled(False)
         self.plugin_view.addAction(self.forum_action)
@@ -570,7 +691,7 @@ class PluginUpdaterDialog(SizePersistedDialog):
         sep2.setSeparator(True)
         self.plugin_view.addAction(sep2)
 
-        self.donate_enabled_action = QAction(QIcon(I('donate.png')), _('Donate to developer'), self)
+        self.donate_enabled_action = QAction(QIcon.ic('donate.png'), _('Donate to developer'), self)
         self.donate_enabled_action.setToolTip(_('Donate to the developer of this plugin'))
         self.donate_enabled_action.triggered.connect(self._donate_clicked)
         self.donate_enabled_action.setEnabled(False)
@@ -580,7 +701,7 @@ class PluginUpdaterDialog(SizePersistedDialog):
         sep3.setSeparator(True)
         self.plugin_view.addAction(sep3)
 
-        self.configure_action = QAction(QIcon(I('config.png')), _('&Customize plugin'), self)
+        self.configure_action = QAction(QIcon.ic('config.png'), _('&Customize plugin'), self)
         self.configure_action.setToolTip(_('Customize the options for this plugin'))
         self.configure_action.triggered.connect(self._configure_clicked)
         self.configure_action.setEnabled(False)
@@ -588,8 +709,9 @@ class PluginUpdaterDialog(SizePersistedDialog):
 
     def _finished(self, *args):
         if self.model:
-            update_plugins = filter(filter_upgradeable_plugins, self.model.display_plugins)
-            self.gui.recalc_update_label(len(update_plugins))
+            update_plugins = list(filter(filter_upgradeable_plugins, self.model.display_plugins))
+            if self.gui is not None:
+                self.gui.recalc_update_label(len(update_plugins))
 
     def _plugin_current_changed(self, current, previous):
         if current.isValid():
@@ -602,7 +724,6 @@ class PluginUpdaterDialog(SizePersistedDialog):
             self.install_button.setEnabled(display_plugin.is_valid_to_install())
             self.install_action.setEnabled(self.install_button.isEnabled())
             self.uninstall_action.setEnabled(display_plugin.is_installed())
-            self.history_action.setEnabled(display_plugin.has_changelog)
             self.configure_button.setEnabled(display_plugin.is_installed())
             self.configure_action.setEnabled(self.configure_button.isEnabled())
             self.toggle_enabled_action.setEnabled(display_plugin.is_installed())
@@ -615,7 +736,6 @@ class PluginUpdaterDialog(SizePersistedDialog):
             self.install_button.setEnabled(False)
             self.install_action.setEnabled(False)
             self.uninstall_action.setEnabled(False)
-            self.history_action.setEnabled(False)
             self.configure_button.setEnabled(False)
             self.configure_action.setEnabled(False)
             self.toggle_enabled_action.setEnabled(False)
@@ -636,12 +756,17 @@ class PluginUpdaterDialog(SizePersistedDialog):
         self.plugin_view.setFocus()
 
     def _filter_combo_changed(self, idx):
-        self.filter_by_name_lineedit.setText("")  # clear the name filter text when a different group was selected
+        self.filter_by_name_lineedit.setText('')  # clear the name filter text when a different group was selected
         self.proxy_model.set_filter_criteria(idx)
         if idx == FILTER_NOT_INSTALLED:
-            self.plugin_view.sortByColumn(5, Qt.DescendingOrder)
+            self.plugin_view.sortByColumn(5, Qt.SortOrder.DescendingOrder)
         else:
-            self.plugin_view.sortByColumn(0, Qt.AscendingOrder)
+            self.plugin_view.sortByColumn(0, Qt.SortOrder.AscendingOrder)
+        self._select_and_focus_view()
+
+    def _category_combo_changed(self, idx):
+        self.filter_by_name_lineedit.setText('')  # clear the name filter text when a different group was selected
+        self.proxy_model.set_filter_category(self.category_combo.filter_value)
         self._select_and_focus_view()
 
     def _filter_name_lineedit_changed(self, text):
@@ -726,35 +851,23 @@ class PluginUpdaterDialog(SizePersistedDialog):
                 plugin = add_plugin(zip_path)
             except NameConflict as e:
                 return error_dialog(self.gui, _('Already exists'),
-                        unicode(e), show=True)
+                        str(e), show=True)
             # Check for any toolbars to add to.
             widget = ConfigWidget(self.gui)
             widget.gui = self.gui
             widget.check_for_add_to_toolbars(plugin, previously_installed=plugin.name in installed_plugins)
             self.gui.status_bar.showMessage(_('Plugin installed: %s') % display_plugin.name)
-            d = info_dialog(self.gui, _('Success'),
-                    _('Plugin <b>{0}</b> successfully installed under <b>'
-                        ' {1} plugins</b>. You may have to restart calibre '
-                        'for the plugin to take effect.').format(plugin.name, plugin.type),
-                    show_copy_button=False)
-            b = d.bb.addButton(_('&Restart calibre now'), d.bb.AcceptRole)
-            b.setIcon(QIcon(I('lt.png')))
-            d.do_restart = False
-
-            def rf():
-                d.do_restart = True
-            b.clicked.connect(rf)
-            d.set_details('')
-            d.exec_()
-            b.clicked.disconnect()
-            do_restart = d.do_restart
-
+            if self.warn_about_neededing_restart:
+                do_restart = notify_on_successful_install(self.gui, plugin)
+            else:
+                info_dialog(self, _('Plugin installed'), _('The plugin {} was successfully installed.').format(display_plugin.name), show=True)
+            self.number_installed += 1
             display_plugin.plugin = plugin
             # We cannot read the 'actual' version information as the plugin will not be loaded yet
             display_plugin.installed_version = display_plugin.available_version
-        except:
+        except Exception:
             if DEBUG:
-                prints('ERROR occurred while installing plugin: %s'%display_plugin.name)
+                prints(f'ERROR occurred while installing plugin: {display_plugin.name}')
                 traceback.print_exc()
             error_dialog(self.gui, _('Install plugin failed'),
                          _('A problem occurred while installing this plugin.'
@@ -763,7 +876,7 @@ class PluginUpdaterDialog(SizePersistedDialog):
                            ' the forum thread for this plugin and restart calibre.'),
                          det_msg=traceback.format_exc(), show=True)
             if DEBUG:
-                prints('Due to error now uninstalling plugin: %s'%display_plugin.name)
+                prints(f'Due to error now uninstalling plugin: {display_plugin.name}')
             remove_plugin(display_plugin.name)
             display_plugin.plugin = None
 
@@ -777,17 +890,6 @@ class PluginUpdaterDialog(SizePersistedDialog):
         if do_restart:
             self.do_restart = True
             self.accept()
-
-    def _history_clicked(self):
-        display_plugin = self._selected_display_plugin()
-        text = self._read_version_history_html(display_plugin.forum_link)
-        if text:
-            dlg = VersionHistoryDialog(self, display_plugin.name, text)
-            dlg.exec_()
-        else:
-            return error_dialog(self, _('Version history missing'),
-                _('Unable to find the version history for %s')%display_plugin.name,
-                show=True)
 
     def _configure_clicked(self):
         display_plugin = self._selected_display_plugin()
@@ -807,7 +909,7 @@ class PluginUpdaterDialog(SizePersistedDialog):
         display_plugin = self._selected_display_plugin()
         plugin = display_plugin.plugin
         if not plugin.can_be_disabled:
-            return error_dialog(self,_('Plugin cannot be disabled'),
+            return error_dialog(self, _('Plugin cannot be disabled'),
                          _('The plugin: %s cannot be disabled')%plugin.name, show=True)
         if is_disabled(plugin):
             enable_plugin(plugin)
@@ -815,44 +917,9 @@ class PluginUpdaterDialog(SizePersistedDialog):
             disable_plugin(plugin)
         self.model.refresh_plugin(display_plugin)
 
-    def _read_version_history_html(self, forum_link):
-        br = browser()
-        br.set_handle_gzip(True)
-        try:
-            raw = br.open_novisit(forum_link).read()
-            if not raw:
-                return None
-        except:
-            traceback.print_exc()
-            return None
-        raw = raw.decode('utf-8', errors='replace')
-        root = html.fromstring(raw)
-        spoiler_nodes = root.xpath('//div[@class="smallfont" and strong="Spoiler"]')
-        for spoiler_node in spoiler_nodes:
-            try:
-                if spoiler_node.getprevious() is None:
-                    # This is a spoiler node that has been indented using [INDENT]
-                    # Need to go up to parent div, then previous node to get header
-                    heading_node = spoiler_node.getparent().getprevious()
-                else:
-                    # This is a spoiler node after a BR tag from the heading
-                    heading_node = spoiler_node.getprevious().getprevious()
-                if heading_node is None:
-                    continue
-                if heading_node.text_content().lower().find('version history') != -1:
-                    div_node = spoiler_node.xpath('div')[0]
-                    text = html.tostring(div_node, method='html', encoding=unicode)
-                    return re.sub('<div\s.*?>', '<div>', text)
-            except:
-                if DEBUG:
-                    prints('======= MobileRead Parse Error =======')
-                    traceback.print_exc()
-                    prints(html.tostring(spoiler_node))
-        return None
-
     def _download_zip(self, plugin_zip_url):
         from calibre.ptempfile import PersistentTemporaryFile
-        raw = get_https_resource_securely(plugin_zip_url, headers={'User-Agent':'%s %s' % (__appname__, __version__)})
+        raw = get_https_resource_securely(plugin_zip_url, headers={'User-Agent':f'{__appname__} {__version__}'})
         with PersistentTemporaryFile('.zip') as pt:
             pt.write(raw)
         return pt.name

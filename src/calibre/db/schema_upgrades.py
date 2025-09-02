@@ -1,7 +1,5 @@
-#!/usr/bin/env python2
-# vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
+#!/usr/bin/env python
+
 
 __license__   = 'GPL v3'
 __copyright__ = '2011, Kovid Goyal <kovid@kovidgoyal.net>'
@@ -10,10 +8,11 @@ __docformat__ = 'restructuredtext en'
 import os
 
 from calibre import prints
-from calibre.utils.date import isoformat, DEFAULT_DATE
+from calibre.utils.date import DEFAULT_DATE, isoformat
+from polyglot.builtins import itervalues
 
 
-class SchemaUpgrade(object):
+class SchemaUpgrade:
 
     def __init__(self, db, library_path, field_metadata):
         db.execute('BEGIN EXCLUSIVE TRANSACTION')
@@ -23,15 +22,15 @@ class SchemaUpgrade(object):
         # Upgrade database
         try:
             while True:
-                uv = self.db.execute('pragma user_version').next()[0]
-                meth = getattr(self, 'upgrade_version_%d'%uv, None)
+                uv = next(self.db.execute('pragma user_version'))[0]
+                meth = getattr(self, f'upgrade_version_{uv}', None)
                 if meth is None:
                     break
                 else:
-                    prints('Upgrading database to version %d...'%(uv+1))
+                    prints(f'Upgrading database to version {uv + 1}...')
                     meth()
-                    self.db.execute('pragma user_version=%d'%(uv+1))
-        except:
+                    self.db.execute(f'pragma user_version={uv + 1}')
+        except Exception:
             self.db.execute('ROLLBACK')
             raise
         else:
@@ -244,14 +243,14 @@ class SchemaUpgrade(object):
     def upgrade_version_8(self):
         'Add Tag Browser views'
         def create_tag_browser_view(table_name, column_name):
-            self.db.execute('''
-                DROP VIEW IF EXISTS tag_browser_{tn};
-                CREATE VIEW tag_browser_{tn} AS SELECT
+            self.db.execute(f'''
+                DROP VIEW IF EXISTS tag_browser_{table_name};
+                CREATE VIEW tag_browser_{table_name} AS SELECT
                     id,
                     name,
-                    (SELECT COUNT(id) FROM books_{tn}_link WHERE {cn}={tn}.id) count
-                FROM {tn};
-                '''.format(tn=table_name, cn=column_name))
+                    (SELECT COUNT(id) FROM books_{table_name}_link WHERE {column_name}={table_name}.id) count
+                FROM {table_name};
+                ''')
 
         for tn in ('authors', 'tags', 'publishers', 'series'):
             cn = tn[:-1]
@@ -281,28 +280,28 @@ class SchemaUpgrade(object):
     def upgrade_version_10(self):
         'Add restricted Tag Browser views'
         def create_tag_browser_view(table_name, column_name, view_column_name):
-            script = ('''
-                DROP VIEW IF EXISTS tag_browser_{tn};
-                CREATE VIEW tag_browser_{tn} AS SELECT
+            script = (f'''
+                DROP VIEW IF EXISTS tag_browser_{table_name};
+                CREATE VIEW tag_browser_{table_name} AS SELECT
                     id,
-                    {vcn},
-                    (SELECT COUNT(id) FROM books_{tn}_link WHERE {cn}={tn}.id) count
-                FROM {tn};
-                DROP VIEW IF EXISTS tag_browser_filtered_{tn};
-                CREATE VIEW tag_browser_filtered_{tn} AS SELECT
+                    {view_column_name},
+                    (SELECT COUNT(id) FROM books_{table_name}_link WHERE {column_name}={table_name}.id) count
+                FROM {table_name};
+                DROP VIEW IF EXISTS tag_browser_filtered_{table_name};
+                CREATE VIEW tag_browser_filtered_{table_name} AS SELECT
                     id,
-                    {vcn},
-                    (SELECT COUNT(books_{tn}_link.id) FROM books_{tn}_link WHERE
-                        {cn}={tn}.id AND books_list_filter(book)) count
-                FROM {tn};
-                '''.format(tn=table_name, cn=column_name, vcn=view_column_name))
+                    {view_column_name},
+                    (SELECT COUNT(books_{table_name}_link.id) FROM books_{table_name}_link WHERE
+                        {column_name}={table_name}.id AND books_list_filter(book)) count
+                FROM {table_name};
+                ''')
             self.db.execute(script)
 
-        for field in self.field_metadata.itervalues():
+        for field in itervalues(self.field_metadata):
             if field['is_category'] and not field['is_custom'] and 'link_column' in field:
                 table = self.db.get(
-                    'SELECT name FROM sqlite_master WHERE type="table" AND name=?',
-                    ('books_%s_link'%field['table'],), all=False)
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+                    ('books_{}_link'.format(field['table']),), all=False)
                 if table is not None:
                     create_tag_browser_view(field['table'], field['link_column'], field['column'])
 
@@ -310,75 +309,74 @@ class SchemaUpgrade(object):
         'Add average rating to tag browser views'
         def create_std_tag_browser_view(table_name, column_name,
                                         view_column_name, sort_column_name):
-            script = ('''
-                DROP VIEW IF EXISTS tag_browser_{tn};
-                CREATE VIEW tag_browser_{tn} AS SELECT
+            script = (f'''
+                DROP VIEW IF EXISTS tag_browser_{table_name};
+                CREATE VIEW tag_browser_{table_name} AS SELECT
                     id,
-                    {vcn},
-                    (SELECT COUNT(id) FROM books_{tn}_link WHERE {cn}={tn}.id) count,
+                    {view_column_name},
+                    (SELECT COUNT(id) FROM books_{table_name}_link WHERE {column_name}={table_name}.id) count,
                     (SELECT AVG(ratings.rating)
-                     FROM books_{tn}_link AS tl, books_ratings_link AS bl, ratings
-                     WHERE tl.{cn}={tn}.id AND bl.book=tl.book AND
+                     FROM books_{table_name}_link AS tl, books_ratings_link AS bl, ratings
+                     WHERE tl.{column_name}={table_name}.id AND bl.book=tl.book AND
                      ratings.id = bl.rating AND ratings.rating <> 0) avg_rating,
-                     {scn} AS sort
-                FROM {tn};
-                DROP VIEW IF EXISTS tag_browser_filtered_{tn};
-                CREATE VIEW tag_browser_filtered_{tn} AS SELECT
+                     {sort_column_name} AS sort
+                FROM {table_name};
+                DROP VIEW IF EXISTS tag_browser_filtered_{table_name};
+                CREATE VIEW tag_browser_filtered_{table_name} AS SELECT
                     id,
-                    {vcn},
-                    (SELECT COUNT(books_{tn}_link.id) FROM books_{tn}_link WHERE
-                        {cn}={tn}.id AND books_list_filter(book)) count,
+                    {view_column_name},
+                    (SELECT COUNT(books_{table_name}_link.id) FROM books_{table_name}_link WHERE
+                        {column_name}={table_name}.id AND books_list_filter(book)) count,
                     (SELECT AVG(ratings.rating)
-                     FROM books_{tn}_link AS tl, books_ratings_link AS bl, ratings
-                     WHERE tl.{cn}={tn}.id AND bl.book=tl.book AND
+                     FROM books_{table_name}_link AS tl, books_ratings_link AS bl, ratings
+                     WHERE tl.{column_name}={table_name}.id AND bl.book=tl.book AND
                      ratings.id = bl.rating AND ratings.rating <> 0 AND
                      books_list_filter(bl.book)) avg_rating,
-                     {scn} AS sort
-                FROM {tn};
+                     {sort_column_name} AS sort
+                FROM {table_name};
 
-                '''.format(tn=table_name, cn=column_name,
-                           vcn=view_column_name, scn=sort_column_name))
+                ''')
             self.db.execute(script)
 
         def create_cust_tag_browser_view(table_name, link_table_name):
-            script = '''
-                DROP VIEW IF EXISTS tag_browser_{table};
-                CREATE VIEW tag_browser_{table} AS SELECT
+            script = f'''
+                DROP VIEW IF EXISTS tag_browser_{table_name};
+                CREATE VIEW tag_browser_{table_name} AS SELECT
                     id,
                     value,
-                    (SELECT COUNT(id) FROM {lt} WHERE value={table}.id) count,
+                    (SELECT COUNT(id) FROM {link_table_name} WHERE value={table_name}.id) count,
                     (SELECT AVG(r.rating)
-                     FROM {lt},
+                     FROM {link_table_name},
                           books_ratings_link AS bl,
                           ratings AS r
-                     WHERE {lt}.value={table}.id AND bl.book={lt}.book AND
+                     WHERE {link_table_name}.value={table_name}.id AND bl.book={link_table_name}.book AND
                            r.id = bl.rating AND r.rating <> 0) avg_rating,
                      value AS sort
-                FROM {table};
+                FROM {table_name};
 
-                DROP VIEW IF EXISTS tag_browser_filtered_{table};
-                CREATE VIEW tag_browser_filtered_{table} AS SELECT
+                DROP VIEW IF EXISTS tag_browser_filtered_{table_name};
+                CREATE VIEW tag_browser_filtered_{table_name} AS SELECT
                     id,
                     value,
-                    (SELECT COUNT({lt}.id) FROM {lt} WHERE value={table}.id AND
+                    (SELECT COUNT({link_table_name}.id) FROM {link_table_name} WHERE value={table_name}.id AND
                     books_list_filter(book)) count,
                     (SELECT AVG(r.rating)
-                     FROM {lt},
+                     FROM {link_table_name},
                           books_ratings_link AS bl,
                           ratings AS r
-                     WHERE {lt}.value={table}.id AND bl.book={lt}.book AND
+                     WHERE {link_table_name}.value={table_name}.id AND bl.book={link_table_name}.book AND
                            r.id = bl.rating AND r.rating <> 0 AND
                            books_list_filter(bl.book)) avg_rating,
                      value AS sort
-                FROM {table};
-                '''.format(lt=link_table_name, table=table_name)
+                FROM {table_name};
+                '''
             self.db.execute(script)
 
-        for field in self.field_metadata.itervalues():
+        for field in itervalues(self.field_metadata):
             if field['is_category'] and not field['is_custom'] and 'link_column' in field:
                 table = self.db.get(
-                    'SELECT name FROM sqlite_master WHERE type="table" AND name=?',
-                    ('books_%s_link'%field['table'],), all=False)
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+                    ('books_{}_link'.format(field['table']),), all=False)
                 if table is not None:
                     create_std_tag_browser_view(field['table'], field['link_column'],
                                             field['column'], field['category_sort'])
@@ -390,7 +388,7 @@ class SchemaUpgrade(object):
         for (table,) in db_tables:
             tables.append(table)
         for table in tables:
-            link_table = 'books_%s_link'%table
+            link_table = f'books_{table}_link'
             if table.startswith('custom_column_') and link_table in tables:
                 create_cust_tag_browser_view(table, link_table)
 
@@ -581,9 +579,9 @@ class SchemaUpgrade(object):
 
         INSERT INTO identifiers (book, val) SELECT id,isbn FROM books WHERE isbn;
 
-        ALTER TABLE books ADD COLUMN last_modified TIMESTAMP NOT NULL DEFAULT "%s";
+        ALTER TABLE books ADD COLUMN last_modified TIMESTAMP NOT NULL DEFAULT "{}";
 
-        '''%isoformat(DEFAULT_DATE, sep=' ')
+        '''.format(isoformat(DEFAULT_DATE, sep=' '))
         # Sqlite does not support non constant default values in alter
         # statements
         self.db.execute(script)
@@ -591,17 +589,16 @@ class SchemaUpgrade(object):
     def upgrade_version_19(self):
         recipes = self.db.get('SELECT id,title,script FROM feeds')
         if recipes:
-            from calibre.web.feeds.recipes import (custom_recipes,
-                    custom_recipe_filename)
+            from calibre.web.feeds.recipes import custom_recipe_filename, custom_recipes
             bdir = os.path.dirname(custom_recipes.file_path)
             for id_, title, script in recipes:
-                existing = frozenset(map(int, custom_recipes.iterkeys()))
+                existing = frozenset(map(int, custom_recipes))
                 if id_ in existing:
                     id_ = max(existing) + 1000
                 id_ = str(id_)
                 fname = custom_recipe_filename(id_, title)
                 custom_recipes[id_] = (title, fname)
-                if isinstance(script, unicode):
+                if isinstance(script, str):
                     script = script.encode('utf-8')
                 with open(os.path.join(bdir, fname), 'wb') as f:
                     f.write(script)
@@ -696,3 +693,128 @@ CREATE TRIGGER fkc_lrp_update
         END;
 
         ''')
+
+    def upgrade_version_23(self):
+        ''' Create the annotations table '''
+        self.db.execute('''
+DROP TABLE IF EXISTS annotations_dirtied;
+CREATE TABLE annotations_dirtied(id INTEGER PRIMARY KEY,
+                             book INTEGER NOT NULL,
+                             UNIQUE(book));
+DROP TABLE IF EXISTS annotations;
+CREATE TABLE annotations ( id INTEGER PRIMARY KEY,
+    book INTEGER NOT NULL,
+    format TEXT NOT NULL COLLATE NOCASE,
+    user_type TEXT NOT NULL,
+    user TEXT NOT NULL,
+    timestamp REAL NOT NULL,
+    annot_id TEXT NOT NULL,
+    annot_type TEXT NOT NULL,
+    annot_data TEXT NOT NULL,
+    searchable_text TEXT NOT NULL DEFAULT "",
+    UNIQUE(book, user_type, user, format, annot_type, annot_id)
+);
+
+DROP INDEX IF EXISTS annot_idx;
+CREATE INDEX annot_idx ON annotations (book);
+
+DROP TABLE IF EXISTS annotations_fts;
+DROP TABLE IF EXISTS annotations_fts_stemmed;
+CREATE VIRTUAL TABLE annotations_fts USING fts5(searchable_text,
+    content = 'annotations', content_rowid = 'id', tokenize = 'unicode61 remove_diacritics 2');
+CREATE VIRTUAL TABLE annotations_fts_stemmed USING fts5(searchable_text,
+    content = 'annotations', content_rowid = 'id', tokenize = 'porter unicode61 remove_diacritics 2');
+
+DROP TRIGGER IF EXISTS annotations_fts_insert_trg;
+CREATE TRIGGER annotations_fts_insert_trg AFTER INSERT ON annotations
+BEGIN
+    INSERT INTO annotations_fts(rowid, searchable_text) VALUES (NEW.id, NEW.searchable_text);
+    INSERT INTO annotations_fts_stemmed(rowid, searchable_text) VALUES (NEW.id, NEW.searchable_text);
+END;
+
+DROP TRIGGER IF EXISTS annotations_fts_delete_trg;
+CREATE TRIGGER annotations_fts_delete_trg AFTER DELETE ON annotations
+BEGIN
+    INSERT INTO annotations_fts(annotations_fts, rowid, searchable_text) VALUES('delete', OLD.id, OLD.searchable_text);
+    INSERT INTO annotations_fts_stemmed(annotations_fts_stemmed, rowid, searchable_text) VALUES('delete', OLD.id, OLD.searchable_text);
+END;
+
+DROP TRIGGER IF EXISTS annotations_fts_update_trg;
+CREATE TRIGGER annotations_fts_update_trg AFTER UPDATE ON annotations
+BEGIN
+    INSERT INTO annotations_fts(annotations_fts, rowid, searchable_text) VALUES('delete', OLD.id, OLD.searchable_text);
+    INSERT INTO annotations_fts(rowid, searchable_text) VALUES (NEW.id, NEW.searchable_text);
+    INSERT INTO annotations_fts_stemmed(annotations_fts_stemmed, rowid, searchable_text) VALUES('delete', OLD.id, OLD.searchable_text);
+    INSERT INTO annotations_fts_stemmed(rowid, searchable_text) VALUES (NEW.id, NEW.searchable_text);
+END;
+
+
+DROP TRIGGER IF EXISTS books_delete_trg;
+CREATE TRIGGER books_delete_trg
+    AFTER DELETE ON books
+    BEGIN
+        DELETE FROM books_authors_link WHERE book=OLD.id;
+        DELETE FROM books_publishers_link WHERE book=OLD.id;
+        DELETE FROM books_ratings_link WHERE book=OLD.id;
+        DELETE FROM books_series_link WHERE book=OLD.id;
+        DELETE FROM books_tags_link WHERE book=OLD.id;
+        DELETE FROM books_languages_link WHERE book=OLD.id;
+        DELETE FROM data WHERE book=OLD.id;
+        DELETE FROM last_read_positions WHERE book=OLD.id;
+        DELETE FROM annotations WHERE book=OLD.id;
+        DELETE FROM comments WHERE book=OLD.id;
+        DELETE FROM conversion_options WHERE book=OLD.id;
+        DELETE FROM books_plugin_data WHERE book=OLD.id;
+        DELETE FROM identifiers WHERE book=OLD.id;
+END;
+
+DROP TRIGGER IF EXISTS fkc_annot_insert;
+DROP TRIGGER IF EXISTS fkc_annot_update;
+CREATE TRIGGER fkc_annot_insert
+        BEFORE INSERT ON annotations
+        BEGIN
+            SELECT CASE
+                WHEN (SELECT id from books WHERE id=NEW.book) IS NULL
+                THEN RAISE(ABORT, 'Foreign key violation: book not in books')
+            END;
+        END;
+CREATE TRIGGER fkc_annot_update
+        BEFORE UPDATE OF book ON annotations
+        BEGIN
+            SELECT CASE
+                WHEN (SELECT id from books WHERE id=NEW.book) IS NULL
+                THEN RAISE(ABORT, 'Foreign key violation: book not in books')
+            END;
+        END;
+
+        ''')
+
+    def upgrade_version_24(self):
+        self.db.reindex_annotations()
+
+    def upgrade_version_25(self):
+        alters = []
+        for record in self.db.execute(
+                'SELECT label,name,datatype,editable,display,normalized,id,is_multiple FROM custom_columns'):
+            data = {
+                    'label':record[0],
+                    'name':record[1],
+                    'datatype':record[2],
+                    'editable':bool(record[3]),
+                    'display':record[4],
+                    'normalized':bool(record[5]),
+                    'num':record[6],
+                    'is_multiple':bool(record[7]),
+                    }
+            if data['normalized']:
+                tn = 'custom_column_{}'.format(data['num'])
+                alters.append(f"ALTER TABLE {tn} ADD COLUMN link TEXT NOT NULL DEFAULT '';")
+
+        alters.append("ALTER TABLE publishers ADD COLUMN link TEXT NOT NULL DEFAULT '';")
+        alters.append("ALTER TABLE series ADD COLUMN link TEXT NOT NULL DEFAULT '';")
+        alters.append("ALTER TABLE tags ADD COLUMN link TEXT NOT NULL DEFAULT '';")
+        # These aren't necessary in that there is no UI to set links, but having them
+        # makes the code uniform
+        alters.append("ALTER TABLE languages ADD COLUMN link TEXT NOT NULL DEFAULT '';")
+        alters.append("ALTER TABLE ratings ADD COLUMN link TEXT NOT NULL DEFAULT '';")
+        self.db.execute('\n'.join(alters))

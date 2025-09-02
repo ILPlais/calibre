@@ -1,10 +1,10 @@
 __license__   = 'GPL v3'
 __copyright__ = '2008, Kovid Goyal <kovid at kovidgoyal.net>'
 
-from PyQt5.Qt import Qt, QDialog, QListWidgetItem
+from qt.core import QDialog, QListWidgetItem, Qt
 
+from calibre.gui2 import error_dialog, question_dialog
 from calibre.gui2.dialogs.device_category_editor_ui import Ui_DeviceCategoryEditor
-from calibre.gui2 import question_dialog, error_dialog
 
 
 class ListWidgetItem(QListWidgetItem):
@@ -16,19 +16,19 @@ class ListWidgetItem(QListWidgetItem):
         self.previous_value = txt
 
     def data(self, role):
-        if role == Qt.DisplayRole:
+        if role == Qt.ItemDataRole.DisplayRole:
             if self.initial_value != self.current_value:
                 return _('%(curr)s (was %(initial)s)')%dict(
                         curr=self.current_value, initial=self.initial_value)
             else:
                 return self.current_value
-        elif role == Qt.EditRole:
+        elif role == Qt.ItemDataRole.EditRole:
             return self.current_value
         else:
             return QListWidgetItem.data(self, role)
 
     def setData(self, role, data):
-        if role == Qt.EditRole:
+        if role == Qt.ItemDataRole.EditRole:
             self.previous_value = self.current_value
             self.current_value = data
         QListWidgetItem.setData(self, role, data)
@@ -55,11 +55,11 @@ class DeviceCategoryEditor(QDialog, Ui_DeviceCategoryEditor):
         self.setupUi(self)
         # Remove help icon on title bar
         icon = self.windowIcon()
-        self.setWindowFlags(self.windowFlags()&(~Qt.WindowContextHelpButtonHint))
+        self.setWindowFlags(self.windowFlags()&(~Qt.WindowType.WindowContextHelpButtonHint))
         self.setWindowIcon(icon)
 
         self.to_rename = {}
-        self.to_delete = set([])
+        self.to_delete = set()
         self.original_names = {}
         self.all_tags = {}
 
@@ -68,12 +68,12 @@ class DeviceCategoryEditor(QDialog, Ui_DeviceCategoryEditor):
             self.original_names[k] = v
         for tag in sorted(self.all_tags.keys(), key=key):
             item = ListWidgetItem(tag)
-            item.setData(Qt.UserRole, self.all_tags[tag])
-            item.setFlags(item.flags() | Qt.ItemIsEditable)
+            item.setData(Qt.ItemDataRole.UserRole, self.all_tags[tag])
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
             self.available_tags.addItem(item)
 
         if tag_to_match is not None:
-            items = self.available_tags.findItems(tag_to_match, Qt.MatchExactly)
+            items = self.available_tags.findItems(tag_to_match, Qt.MatchFlag.MatchExactly)
             if len(items) == 1:
                 self.available_tags.setCurrentItem(items[0])
 
@@ -84,13 +84,13 @@ class DeviceCategoryEditor(QDialog, Ui_DeviceCategoryEditor):
 
     def finish_editing(self, item):
         if not item.text():
-                error_dialog(self, _('Item is blank'),
-                             _('An item cannot be set to nothing. Delete it instead.')).exec_()
-                item.setText(item.previous_text())
-                return
+            error_dialog(self, _('Item is blank'),
+                            _('An item cannot be set to nothing. Delete it instead.')).exec()
+            item.setText(item.previous_text())
+            return
         if item.text() != item.initial_text():
-            id_ = int(item.data(Qt.UserRole))
-            self.to_rename[id_] = unicode(item.text())
+            id_ = int(item.data(Qt.ItemDataRole.UserRole))
+            self.to_rename[id_] = str(item.text())
 
     def rename_tag(self):
         item = self.available_tags.currentItem()
@@ -99,7 +99,7 @@ class DeviceCategoryEditor(QDialog, Ui_DeviceCategoryEditor):
     def _rename_tag(self, item):
         if item is None:
             error_dialog(self, _('No item selected'),
-                         _('You must select one item from the list of Available items.')).exec_()
+                         _('You must select one item from the list of available items.')).exec()
             return
         self.available_tags.editItem(item)
 
@@ -107,15 +107,15 @@ class DeviceCategoryEditor(QDialog, Ui_DeviceCategoryEditor):
         deletes = self.available_tags.selectedItems()
         if not deletes:
             error_dialog(self, _('No items selected'),
-                         _('You must select at least one item from the list.')).exec_()
+                         _('You must select at least one item from the list.')).exec()
             return
-        ct = ', '.join([unicode(item.text()) for item in deletes])
+        ct = ', '.join([str(item.text()) for item in deletes])
         if not question_dialog(self, _('Are you sure?'),
             '<p>'+_('Are you sure you want to delete the following items?')+'<br>'+ct):
             return
         row = self.available_tags.row(deletes[0])
         for item in deletes:
-            id = int(item.data(Qt.UserRole))
+            id = int(item.data(Qt.ItemDataRole.UserRole))
             self.to_delete.add(id)
             self.available_tags.takeItem(self.available_tags.row(item))
 

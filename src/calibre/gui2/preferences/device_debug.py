@@ -1,14 +1,12 @@
-#!/usr/bin/env python2
-# vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
-from __future__ import with_statement
+#!/usr/bin/env python
+
 
 __license__   = 'GPL v3'
 __copyright__ = '2009, Kovid Goyal <kovid@kovidgoyal.net>'
 __docformat__ = 'restructuredtext en'
 
 
-from PyQt5.Qt import QDialog, QVBoxLayout, QPlainTextEdit, QTimer, \
-    QDialogButtonBox, QPushButton, QApplication, QIcon
+from qt.core import QApplication, QDialog, QDialogButtonBox, QIcon, QPlainTextEdit, QPushButton, QTimer, QVBoxLayout
 
 from calibre.gui2 import error_dialog
 
@@ -26,14 +24,14 @@ class DebugDevice(QDialog):
         self.copy = QPushButton(_('Copy to &clipboard'))
         self.copy.setDefault(True)
         self.setWindowTitle(_('Debug device detection'))
-        self.setWindowIcon(QIcon(I('debug.png')))
+        self.setWindowIcon(QIcon.ic('debug.png'))
         self.copy.clicked.connect(self.copy_to_clipboard)
         self.ok = QPushButton('&OK')
         self.ok.setAutoDefault(False)
         self.ok.clicked.connect(self.accept)
         self.bbox = QDialogButtonBox(self)
-        self.bbox.addButton(self.copy, QDialogButtonBox.ActionRole)
-        self.bbox.addButton(self.ok, QDialogButtonBox.AcceptRole)
+        self.bbox.addButton(self.copy, QDialogButtonBox.ButtonRole.ActionRole)
+        self.bbox.addButton(self.ok, QDialogButtonBox.ButtonRole.AcceptRole)
         self._layout.addWidget(self.bbox)
         self.resize(750, 500)
         self.bbox.setEnabled(False)
@@ -65,7 +63,8 @@ class DebugDevice(QDialog):
     def copy_to_clipboard(self):
         QApplication.clipboard().setText(self.log.toPlainText())
 
+
 if __name__ == '__main__':
     app = QApplication([])
     d = DebugDevice()
-    d.exec_()
+    d.exec()

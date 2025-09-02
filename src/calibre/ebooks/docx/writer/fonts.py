@@ -1,7 +1,5 @@
-#!/usr/bin/env python2
-# vim:fileencoding=utf-8
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
+#!/usr/bin/env python
+
 
 __license__ = 'GPL v3'
 __copyright__ = '2015, Kovid Goyal <kovid at kovidgoyal.net>'
@@ -16,11 +14,11 @@ from calibre.ebooks.oeb.transforms.subset import find_font_face_rules
 def obfuscate_font_data(data, key):
     prefix = bytearray(data[:32])
     key = bytearray(reversed(key.bytes))
-    prefix = bytes(bytearray(prefix[i]^key[i % len(key)] for i in xrange(len(prefix))))
+    prefix = bytes(bytearray(prefix[i]^key[i % len(key)] for i in range(len(prefix))))
     return prefix + data[32:]
 
 
-class FontsManager(object):
+class FontsManager:
 
     def __init__(self, namespace, oeb, opts):
         self.namespace = namespace
@@ -69,10 +67,10 @@ class FontsManager(object):
             item = ef['item']
             rid = rel_map.get(item)
             if rid is None:
-                rel_map[item] = rid = 'rId%d' % num
-                fname = 'fonts/font%d.odttf' % num
+                rel_map[item] = rid = f'rId{num}'
+                fname = f'fonts/font{num}.odttf'
                 makeelement(embed_relationships, 'Relationship', Id=rid, Type=self.namespace.names['EMBEDDED_FONT'], Target=fname)
                 font_data_map['word/' + fname] = obfuscate_font_data(item.data, key)
             makeelement(font, 'w:embed' + tag, r_id=rid,
-                        w_fontKey='{%s}' % key.urn.rpartition(':')[-1].upper(),
-                        w_subsetted="true" if self.opts.subset_embedded_fonts else "false")
+                        w_fontKey='{{{}}}'.format(key.urn.rpartition(':')[-1].upper()),
+                        w_subsetted='true' if self.opts.subset_embedded_fonts else 'false')

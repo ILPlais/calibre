@@ -21,9 +21,11 @@
 #define STRFY2(x) STRFY(x)
 #define CORRUPT PyErr_SetString(PyExc_ValueError, "Corrupt bitstream at line: " STRFY2(__LINE__))
 
+#if __STDC_VERSION__ < 202311L
 typedef uint8_t bool;
+#endif
 
-typedef struct Table { 
+typedef struct Table {
     uint16_t p;
     uint16_t m;
     uint8_t  up;
@@ -315,11 +317,11 @@ static Table default_ztable[256] = // {{{
 
 #define MIN(x, y) ((x < y) ? x : y)
 
-#define ffz(ffzt, x) ((x>=0xff00) ? (ffzt[x&0xff]+8) : (ffzt[(x>>8)&0xff])) 
+#define ffz(ffzt, x) ((x>=0xff00) ? (ffzt[x&0xff]+8) : (ffzt[(x>>8)&0xff]))
 
 #define TRUE 1
 #define FALSE 0
-#define MAXBLOCK 4096 
+#define MAXBLOCK 4096
 #define FREQMAX  4
 #define CTXIDS  3
 
@@ -397,7 +399,7 @@ static inline int32_t decode_sub_simple(State *state, int32_t mps, uint32_t z) {
         }
         state->fence = MIN(state->code, 0x7fff);
         return mps ^ 1;
-    } 
+    }
 
     /* MPS renormalization */
     state->scount -= 1;
@@ -543,10 +545,10 @@ static bool decode(State *state, uint8_t *ctx) {
 
         ctxid = 2 * CTXIDS;
         for (j = 1; j < 8; j++) {
-            if (zpcodec_decode(state, ctx, ctxid)) { 
-                mtfno = (1 << j) + decode_binary(state, ctx, ctxid, j); 
-                state->buf[i] = mtf[mtfno]; 
-                goto rotate; 
+            if (zpcodec_decode(state, ctx, ctxid)) {
+                mtfno = (1 << j) + decode_binary(state, ctx, ctxid, j);
+                state->buf[i] = mtf[mtfno];
+                goto rotate;
             }
             ctxid += 1 << j;
         }
@@ -571,7 +573,7 @@ static bool decode(State *state, uint8_t *ctx) {
         // Relocate new char according to new freq
         fc = fadd;
         if (mtfno < FREQMAX) fc += freq[mtfno];
-        for (k=mtfno; k>=FREQMAX; k--) 
+        for (k=mtfno; k>=FREQMAX; k--)
             mtf[k] = mtf[k-1];
         for (; k>0 && fc>=freq[k-1]; k--) {
             mtf[k] = mtf[k-1];
@@ -585,7 +587,7 @@ static bool decode(State *state, uint8_t *ctx) {
     if (markerpos<1 || (uint32_t)markerpos>=state->xsize) { CORRUPT; goto end; }
     // Allocate pointers
     // Fill count buffer
-    for (i=0; i<(uint32_t)markerpos; i++) 
+    for (i=0; i<(uint32_t)markerpos; i++)
     {
         c = state->buf[i];
         posn[i] = (c<<24) | (count[c] & 0xffffff);
@@ -632,7 +634,7 @@ bzz_decompress(PyObject *self, PyObject *args) {
     size_t buflen = 0, blocksize = MAXBLOCK * 1024;
     PyObject *ans = NULL;
 
-    if (!PyArg_ParseTuple(args, "s#", &(state.raw), &input_len))
+    if (!PyArg_ParseTuple(args, "y#", &(state.raw), &input_len))
 		return NULL;
     state.end = state.raw + input_len - 1;
 
@@ -655,12 +657,13 @@ bzz_decompress(PyObject *self, PyObject *args) {
 
         if (state.xsize > 0) {
             while (buflen - (pos - buf) <= state.xsize) {
+                size_t xpos = pos - buf;
                 tmp = (char*) realloc(buf, buflen + (buflen * sizeof(char)));
                 if (tmp == NULL) {
                     PyErr_NoMemory(); goto end;
                 }
                 buflen += buflen * sizeof(char);
-                pos = tmp + (pos - buf);
+                pos = tmp + xpos;
                 buf = tmp; tmp = NULL;
             }
             memcpy(pos, state.buf, state.xsize);
@@ -676,14 +679,17 @@ end:
         for (i = 0; i < 3; i++) {
             buflen <<= 8; buflen += (uint8_t)buf[i];
         }
-        ans = Py_BuildValue("s#", buf + 3, MIN(buflen, pos - buf));
+        Py_ssize_t psz = MIN(buflen, pos - buf);
+        ans = Py_BuildValue("y#", buf + 3, psz);
     }
     if (buf != NULL) free(buf);
     if (PyErr_Occurred()) return NULL;
     return ans;
 }
- 
-static PyMethodDef bzzdecmethods[] = {
+
+static char bzzdec_doc[] = "Decompress BZZ encoded strings (used in DJVU)";
+
+static PyMethodDef bzzdec_methods[] = {
     {"decompress", bzz_decompress, METH_VARARGS,
     "decompress(bytestring) -> decompressed bytestring\n\n"
     		"Decompress a BZZ compressed byte string. "
@@ -692,15 +698,16 @@ static PyMethodDef bzzdecmethods[] = {
     {NULL, NULL, 0, NULL}
 };
 
+static int
+exec_module(PyObject *module) { return 0; }
+static PyModuleDef_Slot slots[] = { {Py_mod_exec, exec_module}, {0, NULL} };
 
+static struct PyModuleDef module_def = {
+    .m_base     = PyModuleDef_HEAD_INIT,
+    .m_name     = "bzzdec",
+    .m_doc      = bzzdec_doc,
+    .m_methods  = bzzdec_methods,
+    .m_slots    = slots,
+};
 
-CALIBRE_MODINIT_FUNC
-initbzzdec(void) {
-    PyObject *m;
-    m = Py_InitModule3("bzzdec", bzzdecmethods,
-    "Decompress BZZ encoded strings (used in DJVU)"
-    );
-    if (m == NULL) return;
-}
-
-
+CALIBRE_MODINIT_FUNC PyInit_bzzdec(void) { return PyModuleDef_Init(&module_def); }

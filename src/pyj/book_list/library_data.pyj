@@ -10,13 +10,19 @@ from lru_cache import LRUCache
 from session import get_interface_data
 from utils import parse_url_params
 
-load_status = {'loading':True, 'ok':False, 'error_html':None, 'current_fetch': None}
-library_data = {'metadata':{}, 'previous_book_ids': v'[]', 'force_refresh': False}
+load_status = {'loading':True, 'ok':False, 'error_html':None, 'current_fetch': None, 'http_error_code': 0}
+library_data = {'metadata':{}, 'previous_book_ids': v'[]', 'force_refresh': False, 'bools_are_tristate': True}
 
 
 def current_library_id():
     q = parse_url_params()
     return q.library_id or get_interface_data().default_library_id
+
+
+def all_libraries():
+    interface_data = get_interface_data()
+    lids = sorted(interface_data.library_map, key=def(x): return interface_data.library_map[x];)
+    return [(lid, interface_data.library_map[lid]) for lid in lids]
 
 
 def current_virtual_library():
@@ -72,11 +78,12 @@ def update_library_data(data):
     load_status.loading = False
     load_status.ok = True
     load_status.error_html = None
+    load_status.http_error_code = 0
     library_data.previous_book_ids = v'[]'
     if library_data.for_library is not current_library_id():
         library_data.field_names = {}
     library_data.for_library = current_library_id()
-    for key in 'search_result sortable_fields field_metadata metadata virtual_libraries book_display_fields'.split(' '):
+    for key in 'search_result sortable_fields field_metadata metadata virtual_libraries book_display_fields bools_are_tristate book_details_vertical_categories fts_enabled fields_that_support_notes categories_using_hierarchy'.split(' '):
         library_data[key] = data[key]
     sr = library_data.search_result
     if sr:
@@ -100,14 +107,30 @@ def current_book_ids():
     return library_data.previous_book_ids.concat(library_data.search_result.book_ids)
 
 
-def book_after(book_id):
+def remove_from_array(array, item):
+    while True:
+        idx = array.indexOf(item)
+        if idx < 0:
+            break
+        array.splice(idx, 1)
+
+
+def remove_book(book_id):
+    book_id = int(book_id)
+    if library_data.previous_book_ids:
+        remove_from_array(library_data.previous_book_ids, book_id)
+    if library_data.search_result?.book_ids:
+        remove_from_array(library_data.search_result.book_ids, book_id)
+
+
+def book_after(book_id, delta):
+    if not delta:
+        delta = 1
     ids = current_book_ids()
     idx = ids.indexOf(int(book_id))
     if idx > -1:
-        if idx < ids.length - 1:
-            return ids[idx + 1]
-        if idx > 0:  # wrap around
-            return ids[0]
+        new_idx = (idx + ids.length + delta) % ids.length
+        return ids[new_idx]
 
 
 def on_data_loaded(end_type, xhr, ev):
@@ -116,6 +139,7 @@ def on_data_loaded(end_type, xhr, ev):
         load_status.ok = False
         load_status.loading = False
         load_status.error_html = msg or xhr.error_html
+        load_status.http_error_code = xhr.status
 
     if end_type is 'load':
         data = JSON.parse(xhr.responseText)
@@ -139,6 +163,7 @@ def fetch_init_data():
     load_status.loading = True
     load_status.ok = False
     load_status.error_html = None
+    load_status.http_error_code = 0
     load_status.current_fetch = ajax('interface-data/books-init', on_data_loaded, query=query)
     load_status.current_fetch.send()
 
@@ -178,11 +203,12 @@ def field_names_for(field, proceed):
 
 
 def thumbnail_url(book_id, width, height):
-    return absolute_path(
-        'get/thumb/{}/{}?sz={}x{}'.format(
-            book_id, loaded_books_query().library_id,
-            Math.ceil(width * window.devicePixelRatio), Math.ceil(height * window.devicePixelRatio)
-        ))
+    query = f'sz={Math.ceil(width * window.devicePixelRatio)}x{Math.ceil(height * window.devicePixelRatio)}'
+    prefix = f'get/thumb/{book_id}'
+    lid = loaded_books_query().library_id or current_library_id()
+    if lid:
+        prefix += f'/{lid}'
+    return absolute_path(f'{prefix}?{query}')
 
 
 def cover_url(book_id):
@@ -190,9 +216,25 @@ def cover_url(book_id):
     return absolute_path(f'get/cover/{book_id}/{lid}')
 
 
-def download_url(book_id, fmt):
+def download_url(book_id, fmt, content_disposition):
     lid = current_library_id()
-    return absolute_path(f'get/{fmt}/{book_id}/{lid}')
+    ans = absolute_path(f'get/{fmt}/{book_id}/{lid}')
+    if content_disposition:
+        ans += f'?content_disposition={content_disposition}'
+    return ans
+
+
+def download_data_file_url(book_id, relpath, content_disposition):
+    lid = current_library_id()
+    rpath = encodeURIComponent(relpath)
+    ans = absolute_path(f'data-files/get/{book_id}/{rpath}/{lid}')
+    if content_disposition:
+        ans += f'?content_disposition={content_disposition}'
+    return ans
+
+
+def web_search_url(book_id, field, item_val):
+    return absolute_path(f'web-search/{book_id}/{encodeURIComponent(field)}/{encodeURIComponent(item_val)}?library_id={encodeURIComponent(current_library_id())}')
 
 
 def book_metadata(book_id):
@@ -241,7 +283,7 @@ class ThumbnailCache:
     # Cache to prevent browser from issuing HTTP requests when thumbnails pages
     # are destroyed/rebuilt.
 
-    def __init__(self, size=250):
+    def __init__(self, size=256):
         self.cache = LRUCache(size)
 
     def get(self, book_id, width, height, callback):
@@ -253,7 +295,7 @@ class ThumbnailCache:
             img.onerror = self.load_finished.bind(None, item, 'error')
             img.onload = self.load_finished.bind(None, item, 'load')
             img.onabort = self.load_finished.bind(None, item, 'abort')
-            img.dataset.bookId = str(book_id)
+            img.dataset.bookId = book_id + ''
             img.src = url
             self.cache.set(url, item)
             return img
@@ -275,7 +317,7 @@ thumbnail_cache = ThumbnailCache()
 
 
 def sync_library_books(library_id, to_sync, callback):
-    url = f'book-get-last-read-position/{library_id}/'
+    url = f'book-get-annotations/{library_id}/'
     which = v'[]'
     lrmap = {}
     for key, last_read in to_sync:

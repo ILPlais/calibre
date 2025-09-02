@@ -1,21 +1,38 @@
-#!/usr/bin/env python2
-# vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
+#!/usr/bin/env python
 
-from __future__ import print_function
+
 __license__   = 'GPL v3'
 __copyright__ = '2011, Kovid Goyal <kovid@kovidgoyal.net>'
 __docformat__ = 'restructuredtext en'
 
 import sys
+from contextlib import suppress
 
-from PyQt5.Qt import (
-    QPainter, QDialog, QIcon, QApplication, QSize, QKeySequence,
-    QAction, Qt, QTextBrowser, QDialogButtonBox, QVBoxLayout, QGridLayout,
-    QLabel, QPlainTextEdit, QTextDocument, QCheckBox, pyqtSignal, QWidget,
-    QSizePolicy)
+from qt.core import (
+    QAction,
+    QApplication,
+    QCheckBox,
+    QDialog,
+    QDialogButtonBox,
+    QGridLayout,
+    QIcon,
+    QKeySequence,
+    QLabel,
+    QPainter,
+    QPlainTextEdit,
+    QSize,
+    QSizePolicy,
+    Qt,
+    QTextBrowser,
+    QTextDocument,
+    QVBoxLayout,
+    QWidget,
+    pyqtSignal,
+)
 
 from calibre.constants import __version__, isfrozen
 from calibre.gui2 import gprefs
+from calibre.utils.localization import ngettext
 
 
 class Icon(QWidget):
@@ -23,7 +40,7 @@ class Icon(QWidget):
     def __init__(self, parent=None, size=None):
         QWidget.__init__(self, parent)
         self.pixmap = None
-        self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         self.size = size or 64
 
     def set_icon(self, qicon):
@@ -51,104 +68,113 @@ class MessageBox(QDialog):  # {{{
     resize_needed = pyqtSignal()
 
     def setup_ui(self):
-        self.setObjectName("Dialog")
+        self.setObjectName('Dialog')
         self.resize(497, 235)
         self.gridLayout = l = QGridLayout(self)
-        l.setObjectName("gridLayout")
+        l.setObjectName('gridLayout')
         self.icon_widget = Icon(self)
         l.addWidget(self.icon_widget)
         self.msg = la = QLabel(self)
         la.setWordWrap(True), la.setMinimumWidth(400)
         la.setOpenExternalLinks(True)
-        la.setObjectName("msg")
+        la.setObjectName('msg')
         l.addWidget(la, 0, 1, 1, 1)
-        self.det_msg = dm = QPlainTextEdit(self)
+        self.det_msg = dm = QTextBrowser(self)
         dm.setReadOnly(True)
-        dm.setObjectName("det_msg")
+        dm.setObjectName('det_msg')
         l.addWidget(dm, 1, 0, 1, 2)
         self.bb = bb = QDialogButtonBox(self)
-        bb.setStandardButtons(QDialogButtonBox.Ok)
-        bb.setObjectName("bb")
+        bb.setStandardButtons(QDialogButtonBox.StandardButton.Ok)
+        bb.setObjectName('bb')
         bb.accepted.connect(self.accept)
         bb.rejected.connect(self.reject)
         l.addWidget(bb, 3, 0, 1, 2)
         self.toggle_checkbox = tc = QCheckBox(self)
-        tc.setObjectName("toggle_checkbox")
+        tc.setObjectName('toggle_checkbox')
         l.addWidget(tc, 2, 0, 1, 2)
 
-    def __init__(self, type_, title, msg,
-                 det_msg='',
-                 q_icon=None,
-                 show_copy_button=True,
-                 parent=None, default_yes=True,
-                 yes_text=None, no_text=None, yes_icon=None, no_icon=None):
-        QDialog.__init__(self, parent)
+    def __init__(
+        self, type_, title, msg,
+        det_msg='',
+        q_icon=None,
+        show_copy_button=True,
+        parent=None, default_yes=True,
+        yes_text=None, no_text=None, yes_icon=None, no_icon=None,
+        add_abort_button=False,
+        only_copy_details=False
+    ):
+        super().__init__(parent)
+        self.only_copy_details = only_copy_details
+        self.aborted = False
         if q_icon is None:
             icon = {
-                    self.ERROR : 'error',
+                    self.ERROR: 'error',
                     self.WARNING: 'warning',
                     self.INFO:    'information',
                     self.QUESTION: 'question',
             }[type_]
-            icon = 'dialog_%s.png'%icon
-            self.icon = QIcon(I(icon))
+            icon = f'dialog_{icon}.png'
+            self.icon = QIcon.ic(icon)
         else:
-            self.icon = q_icon if isinstance(q_icon, QIcon) else QIcon(I(q_icon))
+            self.icon = q_icon if isinstance(q_icon, QIcon) else QIcon.ic(q_icon)
         self.setup_ui()
 
         self.setWindowTitle(title)
         self.setWindowIcon(self.icon)
         self.icon_widget.set_icon(self.icon)
         self.msg.setText(msg)
-        self.det_msg.setPlainText(det_msg)
+        if det_msg and Qt.mightBeRichText(det_msg):
+            self.det_msg.setHtml(det_msg)
+        else:
+            self.det_msg.setPlainText(det_msg)
         self.det_msg.setVisible(False)
         self.toggle_checkbox.setVisible(False)
 
         if show_copy_button:
             self.ctc_button = self.bb.addButton(_('&Copy to clipboard'),
-                    self.bb.ActionRole)
+                    QDialogButtonBox.ButtonRole.ActionRole)
             self.ctc_button.clicked.connect(self.copy_to_clipboard)
 
         self.show_det_msg = _('Show &details')
         self.hide_det_msg = _('Hide &details')
-        self.det_msg_toggle = self.bb.addButton(self.show_det_msg, self.bb.ActionRole)
+        self.det_msg_toggle = self.bb.addButton(self.show_det_msg, QDialogButtonBox.ButtonRole.ActionRole)
         self.det_msg_toggle.clicked.connect(self.toggle_det_msg)
         self.det_msg_toggle.setToolTip(
                 _('Show detailed information about this error'))
 
         self.copy_action = QAction(self)
         self.addAction(self.copy_action)
-        self.copy_action.setShortcuts(QKeySequence.Copy)
+        self.copy_action.setShortcuts(QKeySequence.StandardKey.Copy)
         self.copy_action.triggered.connect(self.copy_to_clipboard)
 
         self.is_question = type_ == self.QUESTION
         if self.is_question:
-            self.bb.setStandardButtons(self.bb.Yes|self.bb.No)
-            self.bb.button(self.bb.Yes if default_yes else self.bb.No
+            self.bb.setStandardButtons(QDialogButtonBox.StandardButton.Yes|QDialogButtonBox.StandardButton.No)
+            self.bb.button(QDialogButtonBox.StandardButton.Yes if default_yes else QDialogButtonBox.StandardButton.No
                     ).setDefault(True)
             self.default_yes = default_yes
             if yes_text is not None:
-                self.bb.button(self.bb.Yes).setText(yes_text)
+                self.bb.button(QDialogButtonBox.StandardButton.Yes).setText(yes_text)
             if no_text is not None:
-                self.bb.button(self.bb.No).setText(no_text)
+                self.bb.button(QDialogButtonBox.StandardButton.No).setText(no_text)
             if yes_icon is not None:
-                self.bb.button(self.bb.Yes).setIcon(yes_icon if isinstance(yes_icon, QIcon) else QIcon(I(yes_icon)))
+                self.bb.button(QDialogButtonBox.StandardButton.Yes).setIcon(yes_icon if isinstance(yes_icon, QIcon) else QIcon.ic(yes_icon))
             if no_icon is not None:
-                self.bb.button(self.bb.No).setIcon(no_icon if isinstance(no_icon, QIcon) else QIcon(I(no_icon)))
+                self.bb.button(QDialogButtonBox.StandardButton.No).setIcon(no_icon if isinstance(no_icon, QIcon) else QIcon.ic(no_icon))
         else:
-            self.bb.button(self.bb.Ok).setDefault(True)
+            self.bb.button(QDialogButtonBox.StandardButton.Ok).setDefault(True)
+
+        if add_abort_button:
+            self.bb.addButton(QDialogButtonBox.StandardButton.Abort).clicked.connect(self.on_abort)
 
         if not det_msg:
             self.det_msg_toggle.setVisible(False)
 
-        self.resize_needed.connect(self.do_resize, type=Qt.QueuedConnection)
+        self.resize_needed.connect(self.do_resize)
         self.do_resize()
 
-    def sizeHint(self):
-        ans = QDialog.sizeHint(self)
-        ans.setWidth(max(min(ans.width(), 500), self.bb.sizeHint().width() + 100))
-        ans.setHeight(min(ans.height(), 500))
-        return ans
+    def on_abort(self):
+        self.aborted = True
 
     def toggle_det_msg(self, *args):
         vis = self.det_msg.isVisible()
@@ -157,33 +183,37 @@ class MessageBox(QDialog):  # {{{
         self.resize_needed.emit()
 
     def do_resize(self):
+        sz = self.sizeHint()
+        sz.setWidth(max(min(sz.width(), 500), self.bb.sizeHint().width() + 100))
+        sz.setHeight(min(sz.height(), 500))
+        self.setMaximumSize(sz)
         self.resize(self.sizeHint())
 
     def copy_to_clipboard(self, *args):
-        QApplication.clipboard().setText(
-                'calibre, version %s\n%s: %s\n\n%s' %
-                (__version__, unicode(self.windowTitle()),
-                    unicode(self.msg.text()),
-                    unicode(self.det_msg.toPlainText())))
+        text = self.det_msg.toPlainText()
+        if not self.only_copy_details:
+            text = f'calibre, version {__version__}\n{self.windowTitle()}: {self.msg.text()}\n\n{text}'
+        QApplication.clipboard().setText(text)
         if hasattr(self, 'ctc_button'):
             self.ctc_button.setText(_('Copied'))
 
     def showEvent(self, ev):
         ret = QDialog.showEvent(self, ev)
         if self.is_question:
-            try:
-                self.bb.button(self.bb.Yes if self.default_yes else self.bb.No
-                        ).setFocus(Qt.OtherFocusReason)
-            except:
-                pass  # Buttons were changed
+            with suppress(Exception):
+                self.bb.button(QDialogButtonBox.StandardButton.Yes if self.default_yes else QDialogButtonBox.StandardButton.No
+                        ).setFocus(Qt.FocusReason.OtherFocusReason)
         else:
-            self.bb.button(self.bb.Ok).setFocus(Qt.OtherFocusReason)
+            self.bb.button(QDialogButtonBox.StandardButton.Ok).setFocus(Qt.FocusReason.OtherFocusReason)
         return ret
 
     def set_details(self, msg):
         if not msg:
             msg = ''
-        self.det_msg.setPlainText(msg)
+        if Qt.mightBeRichText(msg):
+            self.det_msg.setHtml(msg)
+        else:
+            self.det_msg.setPlainText(msg)
         self.det_msg_toggle.setText(self.show_det_msg)
         self.det_msg_toggle.setVisible(bool(msg))
         self.det_msg.setVisible(False)
@@ -199,36 +229,36 @@ class ViewLog(QDialog):  # {{{
         self.setLayout(l)
 
         self.tb = QTextBrowser(self)
-        self.tb.setHtml('<pre style="font-family: monospace">%s</pre>' % html)
+        self.tb.setHtml(f'<pre style="font-family: monospace">{html}</pre>')
         l.addWidget(self.tb)
 
-        self.bb = QDialogButtonBox(QDialogButtonBox.Ok)
+        self.bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok)
         self.bb.accepted.connect(self.accept)
         self.bb.rejected.connect(self.reject)
         self.copy_button = self.bb.addButton(_('Copy to clipboard'),
-                self.bb.ActionRole)
-        self.copy_button.setIcon(QIcon(I('edit-copy.png')))
+                QDialogButtonBox.ButtonRole.ActionRole)
+        self.copy_button.setIcon(QIcon.ic('edit-copy.png'))
         self.copy_button.clicked.connect(self.copy_to_clipboard)
         l.addWidget(self.bb)
 
         self.unique_name = unique_name or 'view-log-dialog'
         self.finished.connect(self.dialog_closing)
-        self.resize(QSize(700, 500))
-        geom = gprefs.get(self.unique_name, None)
-        if geom is not None:
-            self.restoreGeometry(geom)
+        self.restore_geometry(gprefs, self.unique_name)
 
         self.setModal(False)
         self.setWindowTitle(title)
-        self.setWindowIcon(QIcon(I('debug.png')))
+        self.setWindowIcon(QIcon.ic('debug.png'))
         self.show()
+
+    def sizeHint(self):
+        return QSize(700, 500)
 
     def copy_to_clipboard(self):
         txt = self.tb.toPlainText()
         QApplication.clipboard().setText(txt)
 
     def dialog_closing(self, result):
-        gprefs[self.unique_name] = bytearray(self.saveGeometry())
+        self.save_geometry(gprefs, self.unique_name)
 # }}}
 
 
@@ -272,8 +302,8 @@ class ProceedNotification(MessageBox):  # {{{
         self.log_is_file = log_is_file
         self.log_viewer_title = log_viewer_title
 
-        self.vlb = self.bb.addButton(_('&View log'), self.bb.ActionRole)
-        self.vlb.setIcon(QIcon(I('debug.png')))
+        self.vlb = self.bb.addButton(_('&View log'), QDialogButtonBox.ButtonRole.ActionRole)
+        self.vlb.setIcon(QIcon.ic('debug.png'))
         self.vlb.clicked.connect(self.show_log)
         self.det_msg_toggle.setVisible(bool(det_msg))
         self.setModal(False)
@@ -290,7 +320,7 @@ class ProceedNotification(MessageBox):  # {{{
 
     def do_proceed(self, result):
         from calibre.gui2.ui import get_gui
-        func = (self.callback if result == self.Accepted else
+        func = (self.callback if result == QDialog.DialogCode.Accepted else
                 self.cancel_callback)
         gui = get_gui()
         gui.proceed_requested.emit(func, self.payload)
@@ -326,10 +356,10 @@ class ErrorNotification(MessageBox):  # {{{
                 parent=parent)
         self.html_log = html_log
         self.log_viewer_title = log_viewer_title
-        self.finished.connect(self.do_close, type=Qt.QueuedConnection)
+        self.finished.connect(self.do_close, type=Qt.ConnectionType.QueuedConnection)
 
-        self.vlb = self.bb.addButton(_('&View log'), self.bb.ActionRole)
-        self.vlb.setIcon(QIcon(I('debug.png')))
+        self.vlb = self.bb.addButton(_('&View log'), QDialogButtonBox.ButtonRole.ActionRole)
+        self.vlb.setIcon(QIcon.ic('debug.png'))
         self.vlb.clicked.connect(self.show_log)
         self.det_msg_toggle.setVisible(bool(det_msg))
         self.setModal(False)
@@ -355,35 +385,35 @@ class JobError(QDialog):  # {{{
 
     def __init__(self, parent):
         QDialog.__init__(self, parent)
-        self.setAttribute(Qt.WA_DeleteOnClose, False)
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, False)
         self.queue = []
-        self.do_pop.connect(self.pop, type=Qt.QueuedConnection)
+        self.do_pop.connect(self.pop, type=Qt.ConnectionType.QueuedConnection)
 
         self._layout = l = QGridLayout()
         self.setLayout(l)
-        self.icon = QIcon(I('dialog_error.png'))
+        self.icon = QIcon.ic('dialog_error.png')
         self.setWindowIcon(self.icon)
         self.icon_widget = Icon(self)
         self.icon_widget.set_icon(self.icon)
         self.msg_label = QLabel('<p>&nbsp;')
         self.msg_label.setStyleSheet('QLabel { margin-top: 1ex; }')
         self.msg_label.setWordWrap(True)
-        self.msg_label.setTextFormat(Qt.RichText)
+        self.msg_label.setTextFormat(Qt.TextFormat.RichText)
         self.det_msg = QPlainTextEdit(self)
         self.det_msg.setVisible(False)
 
-        self.bb = QDialogButtonBox(QDialogButtonBox.Close, parent=self)
+        self.bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Close, parent=self)
         self.bb.accepted.connect(self.accept)
         self.bb.rejected.connect(self.reject)
         self.ctc_button = self.bb.addButton(_('&Copy to clipboard'),
-                self.bb.ActionRole)
+                QDialogButtonBox.ButtonRole.ActionRole)
         self.ctc_button.clicked.connect(self.copy_to_clipboard)
-        self.retry_button = self.bb.addButton(_('&Retry'), self.bb.ActionRole)
+        self.retry_button = self.bb.addButton(_('&Retry'), QDialogButtonBox.ButtonRole.ActionRole)
         self.retry_button.clicked.connect(self.retry)
         self.retry_func = None
         self.show_det_msg = _('Show &details')
         self.hide_det_msg = _('Hide &details')
-        self.det_msg_toggle = self.bb.addButton(self.show_det_msg, self.bb.ActionRole)
+        self.det_msg_toggle = self.bb.addButton(self.show_det_msg, QDialogButtonBox.ButtonRole.ActionRole)
         self.det_msg_toggle.clicked.connect(self.toggle_det_msg)
         self.det_msg_toggle.setToolTip(
                 _('Show detailed information about this error'))
@@ -392,8 +422,8 @@ class JobError(QDialog):  # {{{
         l.addWidget(self.icon_widget, 0, 0, 1, 1)
         l.addWidget(self.msg_label,  0, 1, 1, 1)
         l.addWidget(self.det_msg,    1, 0, 1, 2)
-        l.addWidget(self.suppress,   2, 0, 1, 2, Qt.AlignLeft|Qt.AlignBottom)
-        l.addWidget(self.bb,         3, 0, 1, 2, Qt.AlignRight|Qt.AlignBottom)
+        l.addWidget(self.suppress,   2, 0, 1, 2, Qt.AlignmentFlag.AlignLeft|Qt.AlignmentFlag.AlignBottom)
+        l.addWidget(self.bb,         3, 0, 1, 2, Qt.AlignmentFlag.AlignRight|Qt.AlignmentFlag.AlignBottom)
         l.setColumnStretch(1, 100)
 
         self.setModal(False)
@@ -416,15 +446,13 @@ class JobError(QDialog):  # {{{
         d = QTextDocument()
         d.setHtml(self.msg_label.text())
         QApplication.clipboard().setText(
-                u'calibre, version %s (%s, embedded-python: %s)\n%s: %s\n\n%s' %
-                (__version__, sys.platform, isfrozen,
-                    unicode(self.windowTitle()), unicode(d.toPlainText()),
-                    unicode(self.det_msg.toPlainText())))
+                f'calibre, version {__version__} ({sys.platform}, embedded-python: {isfrozen})\n'
+                f'{self.windowTitle()!s}: {d.toPlainText()!s}\n\n{self.det_msg.toPlainText()!s}')
         if hasattr(self, 'ctc_button'):
             self.ctc_button.setText(_('Copied'))
 
     def toggle_det_msg(self, *args):
-        vis = unicode(self.det_msg_toggle.text()) == self.hide_det_msg
+        vis = str(self.det_msg_toggle.text()) == self.hide_det_msg
         self.det_msg_toggle.setText(self.show_det_msg if vis else
                 self.hide_det_msg)
         self.det_msg.setVisible(not vis)
@@ -440,10 +468,10 @@ class JobError(QDialog):  # {{{
 
     def showEvent(self, ev):
         ret = QDialog.showEvent(self, ev)
-        self.bb.button(self.bb.Close).setFocus(Qt.OtherFocusReason)
+        self.bb.button(QDialogButtonBox.StandardButton.Close).setFocus(Qt.FocusReason.OtherFocusReason)
         return ret
 
-    def show_error(self, title, msg, det_msg=u'', retry_func=None):
+    def show_error(self, title, msg, det_msg='', retry_func=None):
         self.queue.append((title, msg, det_msg, retry_func))
         self.update_suppress_state()
         self.pop()
@@ -477,8 +505,24 @@ class JobError(QDialog):  # {{{
 
 
 if __name__ == '__main__':
-    from calibre.gui2 import question_dialog, Application
+    from qt.core import QMainWindow, QTimer
+
+    from calibre import prepare_string_for_xml
+    from calibre.gui2 import Application, question_dialog
     app = Application([])
-    print(question_dialog(None, 'title', 'msg <a href="http://google.com">goog</a> ',
-            det_msg='det '*1000,
+    merged = {'Kovid Goyal': ['Waterloo', 'Doomed'], 'Someone Else': ['Some other book ' * 1000]}
+    lines = []
+    for author in sorted(merged):
+        lines.append(f'<b><i>{prepare_string_for_xml(author)}</i></b><ol style="margin-top: 0">')
+        for title in sorted(merged[author]):
+            lines.append(f'<li>{prepare_string_for_xml(title)}</li>')
+        lines.append('</ol>')
+    w = QMainWindow()
+    w.show()
+    def doit():
+        print(question_dialog(w, 'title', 'msg <a href="http://google.com">goog</a> ',
+            det_msg='\n'.join(lines),
             show_copy_button=True))
+        w.close()
+    QTimer.singleShot(100, doit)
+    app.exec()

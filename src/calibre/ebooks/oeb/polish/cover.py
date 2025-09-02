@@ -1,17 +1,15 @@
-#!/usr/bin/env python2
-# vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:fdm=marker:ai
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
-
 __license__   = 'GPL v3'
 __copyright__ = '2013, Kovid Goyal <kovid at kovidgoyal.net>'
 __docformat__ = 'restructuredtext en'
 
-import shutil, re, os
+import os
+import re
+import shutil
 
-from calibre.ebooks.oeb.base import OPF, OEB_DOCS, XPath, XLINK, xml2text
-from calibre.ebooks.oeb.polish.replace import replace_links, get_recommended_folders
+from calibre.ebooks.oeb.base import OEB_DOCS, OPF, XLINK, XPath, xml2text
+from calibre.ebooks.oeb.polish.replace import get_recommended_folders, replace_links
 from calibre.utils.imghdr import identify
+from polyglot.builtins import iteritems
 
 
 def set_azw3_cover(container, cover_path, report, options=None):
@@ -35,7 +33,7 @@ def set_azw3_cover(container, cover_path, report, options=None):
     container.insert_into_xml(guide, guide.makeelement(
         OPF('reference'), href=href, type='cover'))
     if not existing_image:
-        with lopen(cover_path, 'rb') as src, container.open(name, 'wb') as dest:
+        with open(cover_path, 'rb') as src, container.open(name, 'wb') as dest:
             shutil.copyfileobj(src, dest)
     container.dirty(container.opf_name)
     report(_('Cover updated') if found else _('Cover inserted'))
@@ -98,18 +96,18 @@ def mark_as_cover(container, name):
     Mark the specified image as the cover image.
     '''
     if name not in container.mime_map:
-        raise ValueError('Cannot mark %s as cover as it does not exist' % name)
+        raise ValueError(f'Cannot mark {name} as cover as it does not exist')
     mt = container.mime_map[name]
     if not is_raster_image(mt):
-        raise ValueError('Cannot mark %s as the cover image as it is not a raster image' % name)
+        raise ValueError(f'Cannot mark {name} as the cover image as it is not a raster image')
     if container.book_type == 'azw3':
         mark_as_cover_azw3(container, name)
     else:
         mark_as_cover_epub(container, name)
 
+
 ###############################################################################
 # The delightful EPUB cover processing
-
 
 def is_raster_image(media_type):
     return media_type and media_type.lower() in {
@@ -135,7 +133,7 @@ def find_cover_image2(container, strict=False):
 
     # First look for a guide item with type == 'cover'
     guide_type_map = container.guide_type_map
-    for ref_type, name in guide_type_map.iteritems():
+    for ref_type, name in iteritems(guide_type_map):
         if ref_type.lower() == 'cover' and is_raster_image(mm.get(name, None)):
             return name
 
@@ -144,7 +142,7 @@ def find_cover_image2(container, strict=False):
 
     # Find the largest image from all possible guide cover items
     largest_cover = (None, 0)
-    for ref_type, name in guide_type_map.iteritems():
+    for ref_type, name in iteritems(guide_type_map):
         if ref_type.lower() in COVER_TYPES and is_raster_image(mm.get(name, None)):
             path = container.name_path_map.get(name, None)
             if path:
@@ -188,9 +186,9 @@ def get_guides(container):
 
 
 def mark_as_cover_epub(container, name):
-    mmap = {v:k for k, v in container.manifest_id_map.iteritems()}
+    mmap = {v:k for k, v in iteritems(container.manifest_id_map)}
     if name not in mmap:
-        raise ValueError('Cannot mark %s as cover as it is not in manifest' % name)
+        raise ValueError(f'Cannot mark {name} as cover as it is not in manifest')
     mid = mmap[name]
     ver = container.opf_version_parsed
 
@@ -257,7 +255,7 @@ def find_cover_page(container):
     mm = container.mime_map
     if ver.major < 3:
         guide_type_map = container.guide_type_map
-        for ref_type, name in guide_type_map.iteritems():
+        for ref_type, name in iteritems(guide_type_map):
             if ref_type.lower() == 'cover' and mm.get(name, '').lower() in OEB_DOCS:
                 return name
     else:
@@ -341,8 +339,8 @@ def create_epub_cover(container, cover_path, existing_image, options=None):
 
     if existing_image:
         raster_cover = existing_image
-        manifest_id = {v:k for k, v in container.manifest_id_map.iteritems()}[existing_image]
-        raster_cover_item = container.opf_xpath('//opf:manifest/*[@id="%s"]' % manifest_id)[0]
+        manifest_id = {v:k for k, v in iteritems(container.manifest_id_map)}[existing_image]
+        raster_cover_item = container.opf_xpath(f'//opf:manifest/*[@id="{manifest_id}"]')[0]
     else:
         folder = recommended_folders[cname]
         if folder:
@@ -354,7 +352,7 @@ def create_epub_cover(container, cover_path, existing_image, options=None):
             if callable(cover_path):
                 cover_path('write_image', dest)
             else:
-                with lopen(cover_path, 'rb') as src:
+                with open(cover_path, 'rb') as src:
                     shutil.copyfileobj(src, dest)
     if options is None:
         opts = load_defaults('epub_output')
@@ -378,13 +376,13 @@ def create_epub_cover(container, cover_path, existing_image, options=None):
                 if existing_image:
                     width, height = identify(container.raw_data(existing_image, decode=False))[1:]
                 else:
-                    with lopen(cover_path, 'rb') as csrc:
+                    with open(cover_path, 'rb') as csrc:
                         width, height = identify(csrc)[1:]
-            except:
-                container.log.exception("Failed to get width and height of cover")
+            except Exception:
+                container.log.exception('Failed to get width and height of cover')
             ar = 'xMidYMid meet' if keep_aspect else 'none'
             templ = CoverManager.SVG_TEMPLATE.replace('__ar__', ar)
-            templ = templ.replace('__viewbox__', '0 0 %d %d'%(width, height))
+            templ = templ.replace('__viewbox__', f'0 0 {width} {height}')
             templ = templ.replace('__width__', str(width))
             templ = templ.replace('__height__', str(height))
     folder = recommended_folders[tname]
@@ -393,8 +391,10 @@ def create_epub_cover(container, cover_path, existing_image, options=None):
     titlepage_item = container.generate_item(tname, id_prefix='titlepage')
     titlepage = container.href_to_name(titlepage_item.get('href'),
                                           container.opf_name)
-    raw = templ%container.name_to_href(raster_cover, titlepage).encode('utf-8')
+    raw = templ % container.name_to_href(raster_cover, titlepage)
     with container.open(titlepage, 'wb') as f:
+        if not isinstance(raw, bytes):
+            raw = raw.encode('utf-8')
         f.write(raw)
 
     # We have to make sure the raster cover item has id="cover" for the moron
@@ -439,7 +439,20 @@ def remove_cover_image_in_page(container, page, cover_images):
         break
 
 
-def set_epub_cover(container, cover_path, report, options=None):
+def has_epub_cover(container):
+    if find_cover_image(container):
+        return True
+    if find_cover_page(container):
+        return True
+    spine_items = tuple(container.spine_items)
+    if spine_items:
+        candidate = container.abspath_to_name(spine_items[0])
+        if find_cover_image_in_page(container, candidate) is not None:
+            return True
+    return False
+
+
+def set_epub_cover(container, cover_path, report, options=None, image_callback=None):
     existing_image = options is not None and options.get('existing_image', False)
     if existing_image:
         existing_image = cover_path
@@ -454,6 +467,7 @@ def set_epub_cover(container, cover_path, report, options=None):
     # TODO: Handle possible_removals and also iterate over links in the removed
     # pages and handle possibly removing stylesheets referred to by them.
 
+    image_callback_called = False
     spine_items = tuple(container.spine_items)
     if cover_page is None and spine_items:
         # Check if the first item in the spine is a simple cover wrapper
@@ -486,12 +500,18 @@ def set_epub_cover(container, cover_path, report, options=None):
         if wrapped_image is not None:
             # The cover page is a simple wrapper around a single cover image,
             # we can remove it safely.
-            log('Existing cover page is a simple wrapper, removing it')
+            log(f'Existing cover page {cover_page} is a simple wrapper, removing it')
             container.remove_item(cover_page)
             if wrapped_image != existing_image:
+                if image_callback is not None and not image_callback_called:
+                    image_callback(cover_image, wrapped_image)
+                    image_callback_called = True
                 container.remove_item(wrapped_image)
             updated = True
 
+    if image_callback is not None and not image_callback_called:
+        image_callback_called = True
+        image_callback(cover_image, wrapped_image)
     if cover_image and cover_image != wrapped_image:
         # Remove the old cover image
         if cover_image != existing_image:
@@ -503,9 +523,9 @@ def set_epub_cover(container, cover_path, report, options=None):
     report(_('Cover updated') if updated else _('Cover inserted'))
 
     # Replace links to the old cover image/cover page
-    link_sub = {s:d for s, d in {
+    link_sub = {s:d for s, d in iteritems({
         cover_page:titlepage, wrapped_image:raster_cover,
-        cover_image:raster_cover, extra_cover_page:titlepage}.iteritems()
+        cover_image:raster_cover, extra_cover_page:titlepage})
         if s is not None and s != d}
     if link_sub:
         replace_links(container, link_sub, frag_map=lambda x, y:None)

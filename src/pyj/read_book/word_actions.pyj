@@ -9,12 +9,13 @@ from book_list.globals import get_session_data
 from book_list.item_list import create_item, create_item_list
 from dom import clear, ensure_id
 from modals import error_dialog
+from read_book.globals import ui_operations
 from widgets import create_button
 
 
 def lookup(close_panel_func, url):
     close_panel_func()
-    window.open(url, '_blank')
+    ui_operations.open_url(url)
 
 
 def toggle_custom_container(container_id, visible):
@@ -62,10 +63,10 @@ def add_custom(container_id):
         E.tr(E.td('\xa0'), E.td('\xa0')),
         E.tr(E.td(_('URL:') + '\xa0'), E.td(E.input(type='url', name='url'))),
     )))
-    container.append(E.div(style='margin: 1rem',
+    container.append(E.div(style='margin: 1rem; display: flex',
         create_button(_('Add'), 'plus', add.bind(None, container_id), highlight=True),
         '\xa0',
-        create_button(_('Cancel'), toggle_custom_container.bind(None, container_id, False)),
+        create_button(_('Cancel'), action=toggle_custom_container.bind(None, container_id, False)),
     ))
     container.querySelector('input').focus()
 
@@ -134,6 +135,7 @@ def create_word_actions_panel(container, word, close_panel_func):
     nonlocal current_data
     word = str.replace(word, '\u00ad', '')
     current_data = word, close_panel_func
+    container.appendChild(E.div())
     container.appendChild(E.div(style='display:none'))
     populate_list(container)
 

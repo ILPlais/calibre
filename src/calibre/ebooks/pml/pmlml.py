@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-
 __license__ = 'GPL 3'
 __copyright__ = '2009, John Schember <john@nachtimwald.com>'
 __docformat__ = 'restructuredtext en'
@@ -14,6 +12,8 @@ from lxml import etree
 
 from calibre.ebooks.pdb.ereader import image_name
 from calibre.ebooks.pml import unipmlcode
+from calibre.utils.xml_parse import safe_xml_fromstring
+from polyglot.builtins import string_or_bytes
 
 TAG_MAP = {
     'b'       : 'B',
@@ -34,10 +34,10 @@ TAG_MAP = {
 }
 
 STYLES = [
-    ('font-weight', {'bold' : 'B', 'bolder' : 'B'}),
-    ('font-style', {'italic' : 'i'}),
-    ('text-decoration', {'underline' : 'u'}),
-    ('text-align', {'right' : 'r', 'center' : 'c'}),
+    ('font-weight', {'bold': 'B', 'bolder': 'B'}),
+    ('font-style', {'italic': 'i'}),
+    ('text-decoration', {'underline': 'u'}),
+    ('text-align', {'right': 'r', 'center': 'c'}),
 ]
 
 BLOCK_TAGS = [
@@ -71,7 +71,7 @@ SEPARATE_TAGS = [
 ]
 
 
-class PMLMLizer(object):
+class PMLMLizer:
 
     def __init__(self, log):
         self.log = log
@@ -102,7 +102,7 @@ class PMLMLizer(object):
     def pmlmlize_spine(self):
         self.image_hrefs = {}
         self.link_hrefs = {}
-        output = [u'']
+        output = ['']
         output.append(self.get_cover_page())
         output.append(self.get_text())
         output = ''.join(output)
@@ -110,10 +110,10 @@ class PMLMLizer(object):
         return output
 
     def get_cover_page(self):
-        from calibre.ebooks.oeb.stylizer import Stylizer
         from calibre.ebooks.oeb.base import XHTML
+        from calibre.ebooks.oeb.stylizer import Stylizer
 
-        output = u''
+        output = ''
         if 'cover' in self.oeb_book.guide:
             output += '\\m="cover.png"\n'
             self.image_hrefs[self.oeb_book.guide['cover'].href] = 'cover.png'
@@ -128,15 +128,15 @@ class PMLMLizer(object):
         return output
 
     def get_text(self):
-        from calibre.ebooks.oeb.stylizer import Stylizer
         from calibre.ebooks.oeb.base import XHTML
+        from calibre.ebooks.oeb.stylizer import Stylizer
 
-        text = [u'']
+        text = ['']
         for item in self.oeb_book.spine:
-            self.log.debug('Converting %s to PML markup...' % item.href)
-            content = unicode(etree.tostring(item.data, encoding=unicode))
+            self.log.debug(f'Converting {item.href} to PML markup...')
+            content = etree.tostring(item.data, encoding='unicode')
             content = self.prepare_text(content)
-            content = etree.fromstring(content)
+            content = safe_xml_fromstring(content)
             stylizer = Stylizer(content, item.href, self.oeb_book, self.opts, self.opts.output_profile)
             text.append(self.add_page_anchor(item))
             text += self.dump_text(content.find(XHTML('body')), stylizer, item)
@@ -146,15 +146,15 @@ class PMLMLizer(object):
         return self.get_anchor(page, '')
 
     def get_anchor_id(self, href, aid):
-        aid = '%s#%s' % (href, aid)
+        aid = f'{href}#{aid}'
         if aid not in self.link_hrefs.keys():
-            self.link_hrefs[aid] = 'calibre_link-%s' % len(self.link_hrefs.keys())
+            self.link_hrefs[aid] = f'calibre_link-{len(self.link_hrefs.keys())}'
         aid = self.link_hrefs[aid]
         return aid
 
     def get_anchor(self, page, aid):
         aid = self.get_anchor_id(page.href, aid)
-        return u'\\Q="%s"' % aid
+        return rf'\Q="{aid}"'
 
     def remove_newlines(self, text):
         text = text.replace('\r\n', ' ')
@@ -164,7 +164,7 @@ class PMLMLizer(object):
 
     def prepare_string_for_pml(self, text):
         text = self.remove_newlines(text)
-        # Replace \ with \\ so \ in the text is not interperted as
+        # Replace \ with \\ so \ in the text is not interpreted as
         # a pml code.
         text = text.replace('\\', '\\\\')
         # Replace sequences of \\c \\c with pml sequences denoting
@@ -173,8 +173,8 @@ class PMLMLizer(object):
         return text
 
     def prepare_text(self, text):
-        # Replace empty paragraphs with \c pml codes used to denote emtpy lines.
-        text = re.sub(unicode(r'(?<=</p>)\s*<p[^>]*>[\xc2\xa0\s]*</p>'), '\\c\n\\c', text)
+        # Replace empty paragraphs with \c pml codes used to denote empty lines.
+        text = re.sub(r'(?<=</p>)\s*<p[^>]*>[\xc2\xa0\s]*</p>', r'\\c\n\\c', text)
         return text
 
     def clean_text(self, text):
@@ -185,47 +185,47 @@ class PMLMLizer(object):
         anchors = set(re.findall(r'(?<=\\Q=").+?(?=")', text))
         links = set(re.findall(r'(?<=\\q="#).+?(?=")', text))
         for unused in anchors.difference(links):
-            text = text.replace('\\Q="%s"' % unused, '')
+            text = text.replace(rf'\Q="{unused}"', '')
 
         # Remove \Cn tags that are within \x and \Xn tags
-        text = re.sub(unicode(r'(?msu)(?P<t>\\(x|X[0-4]))(?P<a>.*?)(?P<c>\\C[0-4]\s*=\s*"[^"]*")(?P<b>.*?)(?P=t)'), '\\g<t>\\g<a>\\g<b>\\g<t>', text)
+        text = re.sub(r'(?msu)(?P<t>\\(x|X[0-4]))(?P<a>.*?)(?P<c>\\C[0-4]\s*=\s*"[^"]*")(?P<b>.*?)(?P=t)', r'\g<t>\g<a>\g<b>\g<t>', text)
 
         # Replace bad characters.
-        text = text.replace(u'\xc2', '')
-        text = text.replace(u'\xa0', ' ')
+        text = text.replace('\xc2', '')
+        text = text.replace('\xa0', ' ')
 
         # Turn all characters that cannot be represented by themself into their
-        # PML code equivelent
-        text = re.sub('[^\x00-\x7f]', lambda x: unipmlcode(x.group()), text)
+        # PML code equivalent
+        text = re.sub(r'[^\x00-\x7f]', lambda x: unipmlcode(x.group()), text)
 
         # Remove excess spaces at beginning and end of lines
-        text = re.sub('(?m)^[ ]+', '', text)
-        text = re.sub('(?m)[ ]+$', '', text)
+        text = re.sub(r'(?m)^[ ]+', '', text)
+        text = re.sub(r'(?m)[ ]+$', '', text)
 
         # Remove excessive spaces
-        text = re.sub('[ ]{2,}', ' ', text)
+        text = re.sub(r'[ ]{2,}', ' ', text)
 
         # Condense excessive \c empty line sequences.
-        text = re.sub('(\\c\\s*\\c\\s*){2,}', '\\c \n\\c\n', text)
+        text = re.sub(r'(\\c\s*\\c\s*){2,}', r'\\c \n\\c\n', text)
 
         # Remove excessive newlines.
-        text = re.sub('\n[ ]+\n', '\n\n', text)
+        text = re.sub(r'\n[ ]+\n', '\n\n', text)
         if self.opts.remove_paragraph_spacing:
-            text = re.sub('\n{2,}', '\n', text)
+            text = re.sub(r'\n{2,}', '\n', text)
             # Only indent lines that don't have special formatting
-            text = re.sub('(?imu)^(?P<text>.+)$', lambda mo: mo.group('text')
-                          if re.search(r'\\[XxCmrctTp]', mo.group('text')) else '        %s' % mo.group('text'), text)
+            text = re.sub(r'(?imu)^(?P<text>.+)$', lambda mo: mo.group('text')
+                          if re.search(r'\\[XxCmrctTp]', mo.group('text')) else '        {}'.format(mo.group('text')), text)
         else:
-            text = re.sub('\n{3,}', '\n\n', text)
+            text = re.sub(r'\n{3,}', '\n\n', text)
 
         return text
 
     def dump_text(self, elem, stylizer, page, tag_stack=[]):
         from calibre.ebooks.oeb.base import XHTML_NS, barename, namespace
 
-        if not isinstance(elem.tag, basestring) or namespace(elem.tag) != XHTML_NS:
+        if not isinstance(elem.tag, string_or_bytes) or namespace(elem.tag) != XHTML_NS:
             p = elem.getparent()
-            if p is not None and isinstance(p.tag, basestring) and namespace(p.tag) == XHTML_NS \
+            if p is not None and isinstance(p.tag, string_or_bytes) and namespace(p.tag) == XHTML_NS \
                     and elem.tail:
                 return [elem.tail]
             return []
@@ -255,15 +255,15 @@ class PMLMLizer(object):
                         self.image_hrefs[page.abshref(elem.attrib['src'])] = 'cover.png'
                     else:
                         self.image_hrefs[page.abshref(elem.attrib['src'])] = image_name(
-                            '%s.png' % len(self.image_hrefs.keys()), self.image_hrefs.keys()).strip('\x00')
-                text.append('\\m="%s"' % self.image_hrefs[page.abshref(elem.attrib['src'])])
+                            f'{len(self.image_hrefs.keys())}.png', self.image_hrefs.keys()).strip('\x00')
+                text.append('\\m="{}"'.format(self.image_hrefs[page.abshref(elem.attrib['src'])]))
         elif tag == 'hr':
-            w = '\\w'
+            w = r'\w'
             width = elem.get('width')
             if width:
                 if not width.endswith('%'):
                     width += '%'
-                w += '="%s"' % width
+                w += f'="{width}"'
             else:
                 w += '="50%"'
             text.append(w)
@@ -285,17 +285,17 @@ class PMLMLizer(object):
                     toc_title, toc_depth = self.toc[toc_page].get(toc_x, (None, 0))
                     if toc_title:
                         toc_depth = max(min(toc_depth, 4), 0)
-                        text.append('\\C%s="%s"' % (toc_depth, toc_title))
+                        text.append(fr'\C{toc_depth}="{toc_title}"')
 
         # Process style information that needs holds a single tag.
         # Commented out because every page in an OEB book starts with this style.
         if style['page-break-before'] == 'always':
-            text.append('\\p')
+            text.append(r'\p')
 
         # Process basic PML tags.
         pml_tag = TAG_MAP.get(tag, None)
         if pml_tag and pml_tag not in tag_stack+tags:
-            text.append('\\%s' % pml_tag)
+            text.append(rf'\{pml_tag}')
             tags.append(pml_tag)
 
         # Special processing of tags that require an argument.
@@ -308,9 +308,9 @@ class PMLMLizer(object):
                     if '#' not in href:
                         href += '#'
                     if href not in self.link_hrefs.keys():
-                        self.link_hrefs[href] = 'calibre_link-%s' % len(self.link_hrefs.keys())
-                    href = '#%s' % self.link_hrefs[href]
-                    text.append('\\q="%s"' % href)
+                        self.link_hrefs[href] = f'calibre_link-{len(self.link_hrefs.keys())}'
+                    href = f'#{self.link_hrefs[href]}'
+                    text.append(rf'\q="{href}"')
                     tags.append('q')
 
         # Anchor ids
@@ -324,26 +324,26 @@ class PMLMLizer(object):
         for s in STYLES:
             style_tag = s[1].get(style[s[0]], None)
             if style_tag and style_tag not in tag_stack+tags:
-                text.append('\\%s' % style_tag)
+                text.append(rf'\{style_tag}')
                 tags.append(style_tag)
 
         # margin left
         try:
             mms = int(float(style['margin-left']) * 100 / style.height)
             if mms:
-                text.append('\\T="%s%%"' % mms)
-        except:
+                text.append(rf'\T="{mms}%"')
+        except Exception:
             pass
 
         # Soft scene breaks.
         try:
-            ems = int(round((float(style.marginTop) / style.fontSize) - 1))
+            ems = round((float(style.marginTop) / style.fontSize) - 1)
             if ems >= 1:
                 text.append('\n\\c \n\\c\n')
-        except:
+        except Exception:
             pass
 
-        # Proccess text within this tag.
+        # Process text within this tag.
         if hasattr(elem, 'text') and elem.text:
             text.append(self.prepare_string_for_pml(elem.text))
 
@@ -356,10 +356,10 @@ class PMLMLizer(object):
         text += self.close_tags(tags)
 
         # if tag in SEPARATE_TAGS:
-        #    text.append('\n\n')
+        #     text.append('\n\n')
 
         if style['page-break-after'] == 'always':
-            text.append('\\p')
+            text.append(r'\p')
 
         # Process text after this tag but not within another.
         if hasattr(elem, 'tail') and elem.tail:
@@ -379,7 +379,7 @@ class PMLMLizer(object):
                 # closing \c and \r need to be placed
                 # on the next line per PML spec.
                 if tag in ('c', 'r'):
-                    text.append('\n\\%s' % tag)
+                    text.append(f'\n\\{tag}')
                 else:
-                    text.append('\\%s' % tag)
+                    text.append(rf'\{tag}')
         return text

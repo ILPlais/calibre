@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-
 __license__   = 'GPL v3'
 __copyright__ = '2009, John Schember <john at nachtimwald.com>'
 __docformat__ = 'restructuredtext en'
@@ -7,15 +5,16 @@ __docformat__ = 'restructuredtext en'
 '''
 Device driver for Hanvon devices
 '''
-import re, os
+import os
+import re
 
 from calibre import fsync
 from calibre.devices.usbms.driver import USBMS
 
 
 def is_alex(device_info):
-    return device_info[3] == u'Linux 2.6.28 with pxa3xx_u2d' and \
-            device_info[4] == u'Seleucia Disk'
+    return device_info[3] == 'Linux 2.6.28 with pxa3xx_u2d' and \
+            device_info[4] == 'Seleucia Disk'
 
 
 class N516(USBMS):
@@ -62,7 +61,7 @@ class KIBANO(N516):
 
 class THEBOOK(N516):
     name = 'The Book driver'
-    gui_name = 'The Book'
+    gui_name = 'Book'
     description    = _('Communicate with The Book reader.')
     author         = 'Kovid Goyal'
 
@@ -128,7 +127,7 @@ class ALEX(N516):
         cdir = os.path.dirname(cpath)
         if not os.path.exists(cdir):
             os.makedirs(cdir)
-        with lopen(cpath, 'wb') as coverfile:
+        with open(cpath, 'wb') as coverfile:
             coverfile.write(cover)
             fsync(coverfile)
 
@@ -143,7 +142,7 @@ class ALEX(N516):
                 cpath = self.alex_cpath(path)
                 if os.path.exists(cpath):
                     os.remove(cpath)
-            except:
+            except Exception:
                 pass
         self.report_progress(1.0, _('Removing books from device...'))
 

@@ -1,15 +1,12 @@
-#!/usr/bin/env python2
-# vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
-from __future__ import with_statement
-from __future__ import print_function
+#!/usr/bin/env python
+
 
 __license__   = 'GPL v3'
 __copyright__ = '2009, Kovid Goyal <kovid@kovidgoyal.net>'
 __docformat__ = 'restructuredtext en'
 
 
-from PyQt5.Qt import QVBoxLayout, QDialog, QLabel, QDialogButtonBox, Qt, \
-        QAbstractListModel, QListView, QSize
+from qt.core import QAbstractItemView, QAbstractListModel, QApplication, QDialog, QDialogButtonBox, QLabel, QListView, QSize, Qt, QVBoxLayout
 
 from calibre.gui2 import file_icon_provider
 
@@ -27,22 +24,33 @@ class Formats(QAbstractListModel):
 
     def data(self, index, role):
         row = index.row()
-        if role == Qt.DisplayRole:
+        if role == Qt.ItemDataRole.DisplayRole:
             fmt = self.fmts[row]
             count = self.counts[fmt]
-            return ('%s [%d]'%(fmt.upper(), count))
-        if role == Qt.DecorationRole:
-            return (self.fi.icon_from_ext(self.fmts[row].lower()))
-        if role == Qt.ToolTipRole:
+            if fmt == '..cover..':
+                fmt = _('Book cover')
+            else:
+                fmt = fmt.upper()
+            return f'{fmt} [{count}]'
+        if role == Qt.ItemDataRole.DecorationRole:
+            fmt = self.fmts[row]
+            if fmt == '..cover..':
+                fmt = 'jpg'
+            return (self.fi.icon_from_ext(fmt.lower()))
+        if role == Qt.ItemDataRole.ToolTipRole:
             fmt = self.fmts[row]
             count = self.counts[fmt]
-            return ngettext('There is one book with the {fmt} format',
-                            'There are {count} books with the {fmt} format', count).format(
+            if fmt == '..cover..':
+                if count == 1:
+                    return _('There is only one book with a cover')
+                return _('There are {} books with a cover').format(count)
+            return _('There is one book with the {} format').format(fmt.upper()) if count == 1 else _(
+                'There are {count} books with the {fmt} format').format(
                                 count=count, fmt=fmt.upper())
         return None
 
     def flags(self, index):
-        return Qt.ItemIsSelectable|Qt.ItemIsEnabled
+        return Qt.ItemFlag.ItemIsSelectable|Qt.ItemFlag.ItemIsEnabled
 
     def fmt(self, idx):
         return self.fmts[idx.row()]
@@ -62,18 +70,16 @@ class SelectFormats(QDialog):
         self.formats = Formats(fmt_count)
         self.fview = QListView(self)
         self.fview.doubleClicked.connect(self.double_clicked,
-                type=Qt.QueuedConnection)
+                type=Qt.ConnectionType.QueuedConnection)
         if exclude:
-            self.fview.setStyleSheet('''
-                    QListView { background-color: #FAE7B5}
-                    ''')
+            self.fview.setStyleSheet(f'QListView {{ background-color: {QApplication.instance().emphasis_window_background_color} }}')
         self._l.addWidget(self.fview)
         self.fview.setModel(self.formats)
-        self.fview.setSelectionMode(self.fview.SingleSelection if single else
-                self.fview.MultiSelection)
+        self.fview.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection if single else
+                QAbstractItemView.SelectionMode.MultiSelection)
         self.bbox = \
-        QDialogButtonBox(QDialogButtonBox.Ok|QDialogButtonBox.Cancel,
-                Qt.Horizontal, self)
+        QDialogButtonBox(QDialogButtonBox.StandardButton.Ok|QDialogButtonBox.StandardButton.Cancel,
+                Qt.Orientation.Horizontal, self)
         self._l.addWidget(self.bbox)
         self.bbox.accepted.connect(self.accept)
         self.bbox.rejected.connect(self.reject)
@@ -81,7 +87,7 @@ class SelectFormats(QDialog):
         self.fview.setSpacing(2)
 
         self.resize(350, 500)
-        self.selected_formats = set([])
+        self.selected_formats = set()
 
     def accept(self, *args):
         for idx in self.fview.selectedIndexes():
@@ -94,8 +100,8 @@ class SelectFormats(QDialog):
 
 
 if __name__ == '__main__':
-    from PyQt5.Qt import QApplication
-    app = QApplication([])
+    from calibre.gui2 import Application
+    app = Application([])
     d = SelectFormats(['epub', 'lrf', 'lit', 'mobi'], 'Choose a format')
-    d.exec_()
+    d.exec()
     print(d.selected_formats)

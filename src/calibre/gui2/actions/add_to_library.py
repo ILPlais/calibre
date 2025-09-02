@@ -1,5 +1,5 @@
-#!/usr/bin/env python2
-# vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
+#!/usr/bin/env python
+
 
 __license__   = 'GPL v3'
 __copyright__ = '2010, Kovid Goyal <kovid@kovidgoyal.net>'
@@ -14,7 +14,7 @@ class AddToLibraryAction(InterfaceAction):
     action_spec = (_('Add books to library'), 'add_book.png',
             _('Add books to your calibre library from the connected device'),
             ())
-    dont_add_to = frozenset(['menubar', 'toolbar', 'context-menu', 'toolbar-child'])
+    dont_add_to = frozenset(('menubar', 'toolbar', 'context-menu', 'toolbar-child'))
     action_type = 'current'
 
     def genesis(self):

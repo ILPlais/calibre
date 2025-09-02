@@ -1,13 +1,13 @@
-#!/usr/bin/env python2
-# vim:fileencoding=utf-8
+#!/usr/bin/env python
 # License: GPLv3 Copyright: 2015, Kovid Goyal <kovid at kovidgoyal.net>
 
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
-from polyglot.builtins import map
+
+from qt.core import QDialog
 
 from calibre.gui2 import gprefs
 from calibre.gui2.actions import InterfaceAction
+from calibre.utils.localization import ngettext
+from polyglot.builtins import iteritems
 
 
 class AuthorMapAction(InterfaceAction):
@@ -24,14 +24,14 @@ class AuthorMapAction(InterfaceAction):
         selected = True
         if not rows or len(rows) < 2:
             selected = False
-            rows = xrange(self.gui.library_view.model().rowCount(None))
+            rows = range(self.gui.library_view.model().rowCount(None))
         ids = set(map(self.gui.library_view.model().id, rows))
         self.do_map(ids, selected)
 
     def do_map(self, book_ids, selected):
-        from calibre.ebooks.metadata.author_mapper import map_authors, compile_rules
+        from calibre.ebooks.metadata.author_mapper import compile_rules, map_authors
         from calibre.gui2.author_mapper import RulesDialog
-        from calibre.gui2.device import BusyCursor
+        from calibre.gui2.widgets import BusyCursor
         d = RulesDialog(self.gui)
         d.setWindowTitle(ngettext(
             'Map authors for one book in the library',
@@ -43,7 +43,7 @@ class AuthorMapAction(InterfaceAction):
             'The changes will be applied to <b>one book in the library</b>',
             'The changes will be applied to <b>{} books in the library</b>', len(book_ids))
         d.edit_widget.msg_label.setText(d.edit_widget.msg_label.text() + '<p>' + txt.format(len(book_ids)))
-        if d.exec_() != d.Accepted:
+        if d.exec() != QDialog.DialogCode.Accepted:
             return
         with BusyCursor():
             rules = d.rules
@@ -53,7 +53,7 @@ class AuthorMapAction(InterfaceAction):
             author_map = db.all_field_for('authors', book_ids)
             changed_author_map = {}
             changed_author_sort_map = {}
-            for book_id, authors in author_map.iteritems():
+            for book_id, authors in iteritems(author_map):
                 authors = list(authors)
                 new_authors = map_authors(authors, rules)
                 if authors != new_authors:

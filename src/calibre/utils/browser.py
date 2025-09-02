@@ -1,14 +1,15 @@
-#!/usr/bin/env python2
-# vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
+#!/usr/bin/env python
+# License: GPLv3 Copyright: 2010, Kovid Goyal <kovid at kovidgoyal.net>
 
-__license__   = 'GPL v3'
-__copyright__ = '2010, Kovid Goyal <kovid@kovidgoyal.net>'
-__docformat__ = 'restructuredtext en'
 
-import copy, httplib, ssl
-from cookielib import CookieJar, Cookie
+import copy
+import ssl
 
-from mechanize import Browser as B, HTTPSHandler
+from mechanize import Browser as B
+from mechanize import HTTPSHandler
+
+from polyglot import http_client
+from polyglot.http_cookie import CookieJar
 
 
 class ModernHTTPSHandler(HTTPSHandler):
@@ -24,13 +25,13 @@ class ModernHTTPSHandler(HTTPSHandler):
 
         def conn_factory(hostport, **kw):
             kw['context'] = self.ssl_context
-            return httplib.HTTPSConnection(hostport, **kw)
+            return http_client.HTTPSConnection(hostport, **kw)
         return self.do_open(conn_factory, req)
 
 
 class Browser(B):
     '''
-    A cloneable mechanize browser. Useful for multithreading. The idea is that
+    A clonable mechanize browser. Useful for multithreading. The idea is that
     each thread has a browser clone. Every clone uses the same thread safe
     cookie jar. All clones share the same browser configuration.
 
@@ -89,13 +90,7 @@ class Browser(B):
         self._clone_actions['set_cookiejar'] = ('set_cookiejar', args, kwargs)
 
     def set_cookie(self, name, value, domain, path='/'):
-        self.cookiejar.set_cookie(Cookie(
-            None, name, value,
-            None, False,
-            domain, True, False,
-            path, True,
-            False, None, False, None, None, None
-        ))
+        return self.set_simple_cookie(name, value, domain, path=path)
 
     @property
     def cookiejar(self):
@@ -111,10 +106,10 @@ class Browser(B):
         self._clone_actions['set_handle_equiv'] = ('set_handle_equiv',
                 args, kwargs)
 
-    def set_handle_gzip(self, handle):
-        B._set_handler(self, '_gzip', handle)
+    def set_handle_gzip(self, *args, **kwargs):
+        B.set_handle_gzip(self, *args, **kwargs)
         self._clone_actions['set_handle_gzip'] = ('set_handle_gzip',
-                (handle,), {})
+                args, kwargs)
 
     def set_debug_redirects(self, *args, **kwargs):
         B.set_debug_redirects(self, *args, **kwargs)
@@ -159,8 +154,9 @@ class Browser(B):
 
 
 if __name__ == '__main__':
-    from calibre import browser
     from pprint import pprint
+
+    from calibre import browser
     orig = browser()
     clone = orig.clone_browser()
     pprint(orig._ua_handlers)

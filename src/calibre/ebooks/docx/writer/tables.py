@@ -1,18 +1,18 @@
-#!/usr/bin/env python2
-# vim:fileencoding=utf-8
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
+#!/usr/bin/env python
+
 
 __license__ = 'GPL v3'
 __copyright__ = '2015, Kovid Goyal <kovid at kovidgoyal.net>'
 
 from collections import namedtuple
 
+from calibre.ebooks.docx.writer.styles import border_edges
+from calibre.ebooks.docx.writer.styles import read_css_block_borders as rcbb
 from calibre.ebooks.docx.writer.utils import convert_color
-from calibre.ebooks.docx.writer.styles import read_css_block_borders as rcbb, border_edges
+from polyglot.builtins import iteritems
 
 
-class Dummy(object):
+class Dummy:
     pass
 
 
@@ -21,7 +21,7 @@ border_style_weight = {
     x:100-i for i, x in enumerate(('double', 'solid', 'dashed', 'dotted', 'ridge', 'outset', 'groove', 'inset'))}
 
 
-class SpannedCell(object):
+class SpannedCell:
 
     def __init__(self, spanning_cell, horizontal=True):
         self.spanning_cell = spanning_cell
@@ -34,7 +34,7 @@ class SpannedCell(object):
     def serialize(self, tr, makeelement):
         tc = makeelement(tr, 'w:tc')
         tcPr = makeelement(tc, 'w:tcPr')
-        makeelement(tcPr, 'w:%sMerge' % ('h' if self.horizontal else 'v'), w_val='continue')
+        makeelement(tcPr, 'w:{}Merge'.format('h' if self.horizontal else 'v'), w_val='continue')
         makeelement(tc, 'w:p')
 
     def applicable_borders(self, edge):
@@ -46,10 +46,10 @@ def read_css_block_borders(self, css):
     rcbb(obj, css, store_css_style=True)
     for edge in border_edges:
         setattr(self, 'border_' + edge, Border(
-            getattr(obj, 'border_%s_css_style' % edge),
-            getattr(obj, 'border_%s_style' % edge),
-            getattr(obj, 'border_%s_width' % edge),
-            getattr(obj, 'border_%s_color' % edge),
+            getattr(obj, f'border_{edge}_css_style'),
+            getattr(obj, f'border_{edge}_style'),
+            getattr(obj, f'border_{edge}_width'),
+            getattr(obj, f'border_{edge}_color'),
             self.BLEVEL
         ))
         setattr(self, 'padding_' + edge, getattr(obj, 'padding_' + edge))
@@ -79,7 +79,7 @@ def convert_width(tag_style):
     return ('auto', 0)
 
 
-class Cell(object):
+class Cell:
 
     BLEVEL = 2
 
@@ -121,10 +121,10 @@ class Cell(object):
         # cell level
         bc = self.background_color or self.row.background_color or self.row.table.background_color
         if bc:
-            makeelement(tcPr, 'w:shd', w_val="clear", w_color="auto", w_fill=bc)
+            makeelement(tcPr, 'w:shd', w_val='clear', w_color='auto', w_fill=bc)
 
         b = makeelement(tcPr, 'w:tcBorders', append=False)
-        for edge, border in self.borders.iteritems():
+        for edge, border in iteritems(self.borders):
             if border is not None and border.width > 0 and border.style != 'none':
                 makeelement(b, 'w:' + edge, w_val=border.style, w_sz=str(border.width), w_color=border.color)
         if len(b) > 0:
@@ -211,7 +211,7 @@ class Cell(object):
         return getattr(ans, 'spanning_cell', ans)
 
 
-class Row(object):
+class Row:
 
     BLEVEL = 1
 
@@ -257,7 +257,7 @@ class Row(object):
             cell.serialize(tr, makeelement)
 
 
-class Table(object):
+class Table:
 
     BLEVEL = 0
 
@@ -309,7 +309,7 @@ class Table(object):
             for cell in tuple(row.cells):
                 idx = row.cells.index(cell)
                 if cell.col_span > 1 and (cell is row.cells[-1] or not isinstance(row.cells[idx+1], SpannedCell)):
-                    row.cells[idx:idx+1] = [cell] + [SpannedCell(cell, horizontal=True) for i in xrange(1, cell.col_span)]
+                    row.cells[idx:idx+1] = [cell] + [SpannedCell(cell, horizontal=True) for i in range(1, cell.col_span)]
 
         # Expand vertically
         for r, row in enumerate(self.rows):
@@ -322,7 +322,7 @@ class Table(object):
                         except Exception:
                             tcell = None
                         if tcell is None:
-                            nrow.cells.extend([SpannedCell(nrow.cells[-1], horizontal=True) for i in xrange(idx - len(nrow.cells))])
+                            nrow.cells.extend([SpannedCell(nrow.cells[-1], horizontal=True) for i in range(idx - len(nrow.cells))])
                             nrow.cells.append(sc)
                         else:
                             if isinstance(tcell, SpannedCell):

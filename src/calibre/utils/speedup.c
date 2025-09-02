@@ -1,6 +1,12 @@
 #define UNICODE
+#define PY_SSIZE_T_CLEAN
+#ifndef _FILE_OFFSET_BITS
+#define _FILE_OFFSET_BITS 64
+#endif
+
 #include <Python.h>
 #include <datetime.h>
+#include <errno.h>
 
 #include <stdlib.h>
 #include <fcntl.h>
@@ -25,6 +31,34 @@ typedef unsigned __int8 uint8_t;
 #else
 #include <stdint.h>
 #endif
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <unistd.h>
+#endif
+
+static PyObject*
+barename(PyObject *self, PyObject *tag) {
+    if (!PyUnicode_Check(tag)) { PyErr_Format(PyExc_TypeError, "%R is not a unicode string", tag); return NULL; }
+    Py_ssize_t pos = PyUnicode_FindChar(tag, '}', 0, PyUnicode_GetLength(tag), -1);
+    switch(pos) {
+        case -2: return NULL;
+        case -1: Py_INCREF(tag); return tag;
+        default: return PyUnicode_Substring(tag, pos + 1, PyUnicode_GetLength(tag));
+    }
+}
+
+static PyObject*
+namespace(PyObject *self, PyObject *tag) {
+    if (!PyUnicode_Check(tag)) { PyErr_Format(PyExc_TypeError, "%R is not a unicode string", tag); return NULL; }
+    Py_ssize_t pos = PyUnicode_FindChar(tag, '}', 0, PyUnicode_GetLength(tag), -1);
+    switch(pos) {
+        case -2: return NULL;
+        case -1: return PyUnicode_FromString("");
+        default: return PyUnicode_Substring(tag, 1, pos);
+    }
+}
+
 
 static PyObject *
 speedup_parse_date(PyObject *self, PyObject *args) {
@@ -42,7 +76,7 @@ speedup_parse_date(PyObject *self, PyObject *args) {
     year = strtol(raw, &end, 10);
     if ((end - raw) != 4) Py_RETURN_NONE;
     raw += 5;
-    
+
 
     month = strtol(raw, &end, 10);
     if ((end - raw) != 2) Py_RETURN_NONE;
@@ -51,7 +85,7 @@ speedup_parse_date(PyObject *self, PyObject *args) {
     day = strtol(raw, &end, 10);
     if ((end - raw) != 2) Py_RETURN_NONE;
     raw += 3;
-    
+
     hour = strtol(raw, &end, 10);
     if ((end - raw) != 2) Py_RETURN_NONE;
     raw += 3;
@@ -88,7 +122,7 @@ static PyObject*
 speedup_pdf_float(PyObject *self, PyObject *args) {
     double f = 0.0, a = 0.0;
     char *buf = "0", *dot;
-    void *free_buf = NULL; 
+    void *free_buf = NULL;
     int precision = 6, l = 0;
     PyObject *ret;
 
@@ -120,34 +154,10 @@ static PyObject*
 speedup_detach(PyObject *self, PyObject *args) {
     char *devnull = NULL;
     if (!PyArg_ParseTuple(args, "s", &devnull)) return NULL;
-    if (freopen(devnull, "r", stdin) == NULL) return PyErr_SetFromErrno(PyExc_EnvironmentError);
-    if (freopen(devnull, "w", stdout) == NULL) return PyErr_SetFromErrno(PyExc_EnvironmentError);
-    if (freopen(devnull, "w", stderr) == NULL)  return PyErr_SetFromErrno(PyExc_EnvironmentError);
+    if (freopen(devnull, "r", stdin) == NULL) return PyErr_SetFromErrnoWithFilename(PyExc_OSError, devnull);
+    if (freopen(devnull, "w", stdout) == NULL) return PyErr_SetFromErrnoWithFilename(PyExc_OSError, devnull);
+    if (freopen(devnull, "w", stderr) == NULL)  return PyErr_SetFromErrnoWithFilename(PyExc_OSError, devnull);
     Py_RETURN_NONE;
-}
-
-static PyObject*
-speedup_fdopen(PyObject *self, PyObject *args) {
-    PyObject *ans = NULL;
-    char *name;
-#if PY_MAJOR_VERSION == 2
-    FILE *fp;
-#endif
-    int fd, bufsize = -1;
-    char *mode;
-
-    if (!PyArg_ParseTuple(args, "iss|i", &fd, &name, &mode, &bufsize)) return NULL;
-#if PY_MAJOR_VERSION >= 3
-    ans = PyFile_FromFd(fd, name, mode, bufsize, NULL, NULL, NULL, 1);
-#else
-    fp = fdopen(fd, mode);
-    if (fp == NULL) return PyErr_SetFromErrno(PyExc_OSError);
-    ans = PyFile_FromFile(fp, name, mode, fclose);
-    if (ans != NULL) {
-        PyFile_SetBufSize(ans, bufsize);
-    }
-#endif
-    return ans;
 }
 
 static void calculate_gaussian_kernel(Py_ssize_t size, double *kernel, double radius) {
@@ -185,7 +195,7 @@ speedup_create_texture(PyObject *self, PyObject *args, PyObject *kw) {
     if (radius <= 0) { PyErr_SetString(PyExc_ValueError, "The radius must be positive"); return NULL; }
     if (width > 100000 || height > 10000) { PyErr_SetString(PyExc_ValueError, "The width or height is too large"); return NULL; }
     if (width < 1 || height < 1) { PyErr_SetString(PyExc_ValueError, "The width or height is too small"); return NULL; }
-    snprintf(header, 99, "P6\n%d %d\n255\n", (int)width, (int)height);
+    snprintf(header, sizeof(header)-1, "P6\n%d %d\n255\n", (int)width, (int)height); // NOLINT
 
     kernel = (double*)calloc(weight * weight, sizeof(double));
     if (kernel == NULL) { PyErr_NoMemory(); return NULL; }
@@ -198,7 +208,7 @@ speedup_create_texture(PyObject *self, PyObject *args, PyObject *kw) {
 
     // Random noise, noisy pixels are blend_alpha, other pixels are 0
     for (i = 0; i < width * height; i++) {
-        if (((float)(rand()) / RAND_MAX) <= density) mask[i] = blend_alpha;
+        if (((float)(rand()) / (float)RAND_MAX) <= density) mask[i] = blend_alpha;
     }
 
     // Blur the noise using the gaussian kernel
@@ -215,8 +225,8 @@ speedup_create_texture(PyObject *self, PyObject *args, PyObject *kw) {
         }
     }
 
-    // Create the texture in PPM (P6) format 
-    memcpy(ppm, header, strlen(header));
+    // Create the texture in PPM (P6) format
+    memcpy(ppm, header, strlen(header));  // NOLINT
     t = ppm + strlen(header);
     for (i = 0, j = 0; j < width * height; i += 3, j += 1) {
 #define BLEND(src, dest) ( ((unsigned char)(src * mask[j])) + ((unsigned char)(dest * (1 - mask[j]))) )
@@ -322,42 +332,6 @@ error:
 	return Py_BuildValue("NII", ans, state, codep);
 }
 
-// This digs into python internals and can't be implemented easily in python3
-#if PY_MAJOR_VERSION == 2
-static PyObject*
-clean_xml_chars(PyObject *self, PyObject *text) {
-    Py_UNICODE *buf = NULL, ch;
-    PyUnicodeObject *ans = NULL;
-    Py_ssize_t i = 0, j = 0;
-    if (!PyUnicode_Check(text)) {
-        PyErr_SetString(PyExc_TypeError, "A unicode string is required");
-        return NULL;
-    }
-    ans = (PyUnicodeObject*) PyUnicode_FromUnicode(NULL, PyUnicode_GET_SIZE(text));
-    if (ans == NULL) return PyErr_NoMemory();
-    buf = ans->str;
-
-    for (; i < PyUnicode_GET_SIZE(text); i++) {
-        ch = PyUnicode_AS_UNICODE(text)[i];
-#ifdef Py_UNICODE_WIDE
-        if ((0x20 <= ch && ch <= 0xd7ff && ch != 0x7f) || ch == 9 || ch == 10 || ch == 13 || (0xe000 <= ch && ch <= 0xfffd) || (0xffff < ch && ch <= 0x10ffff)) 
-            buf[j++] = ch;
-#else
-        if ((0x20 <= ch && ch <= 0xd7ff && ch != 0x7f) || ch == 9 || ch == 10 || ch == 13 || (0xd000 <= ch && ch <= 0xfffd)) {
-            if (0xd800 <= ch && ch <= 0xdfff) {
-                // Test for valid surrogate pair
-                if (ch <= 0xdbff && i + 1 < PyUnicode_GET_SIZE(text) && 0xdc00 <= PyUnicode_AS_UNICODE(text)[i + 1] && PyUnicode_AS_UNICODE(text)[i+1] <= 0xdfff) {
-                    buf[j++] = ch; buf[j++] = PyUnicode_AS_UNICODE(text)[++i];
-                }
-            } else 
-                buf[j++] = ch;
-        }
-#endif
-    }
-    ans->length = j;
-    return (PyObject*)ans;
-}
-#else
 static PyObject*
 clean_xml_chars(PyObject *self, PyObject *text) {
     PyObject *result = NULL;
@@ -393,8 +367,11 @@ clean_xml_chars(PyObject *self, PyObject *text) {
         // based on https://en.wikipedia.org/wiki/Valid_characters_in_XML#Non-restricted_characters
         // python 3.3+ unicode strings never contain surrogate pairs, since if
         // they did, they would be represented as UTF-32
-        if ((0x20 <= ch && ch <= 0xd7ff && ch != 0x7f) ||
-                ch == 9 || ch == 10 || ch == 13 ||
+        if ((0x20 <= ch && ch <= 0x7e) ||
+                ch == 0x9 || ch == 0xa || ch == 0xd || ch == 0x85 ||
+				(0x00A0 <= ch && ch <= 0xD7FF) ||
+				(0xE000 <= ch && ch <= 0xFDCF) ||
+				(0xFDF0 <= ch && ch <= 0xFFFD) ||
                 (0xffff < ch && ch <= 0x10ffff)) {
             PyUnicode_WRITE(text_kind, result_text, target_i, ch);
             target_i += 1;
@@ -407,7 +384,6 @@ clean_xml_chars(PyObject *self, PyObject *text) {
     free(result_text);
     return result;
 }
-#endif
 
 static PyObject *
 speedup_iso_8601(PyObject *self, PyObject *args) {
@@ -490,8 +466,321 @@ speedup_iso_8601(PyObject *self, PyObject *args) {
     return Py_BuildValue("NOi", PyDateTime_FromDateAndTime(year, month, day, hour, minute, second, usecond), (tzhour == 1000) ? Py_False : Py_True, tzsign*60*(tzhour*60 + tzminute));
 }
 
+#ifndef _MSC_VER
+#include <pthread.h>
+#if defined(__FreeBSD__) || defined(__OpenBSD__)
+#define FREEBSD_SET_NAME
+#endif
+#if defined(__APPLE__)
+// I can't figure out how to get pthread.h to include this definition on macOS. MACOSX_DEPLOYMENT_TARGET does not work.
+extern int pthread_setname_np(const char *name);
+#elif defined(FREEBSD_SET_NAME)
+// Function has a different name on FreeBSD
+void pthread_set_name_np(pthread_t tid, const char *name);
+#elif defined(__NetBSD__)
+// pthread.h provides the symbol
+#elif defined(__HAIKU__)
+// Haiku doesn't support pthread_set_name_np yet
+#else
+// Need _GNU_SOURCE for pthread_setname_np on linux and that causes other issues on systems with old glibc
+extern int pthread_setname_np(pthread_t, const char *name);
+#endif
+#endif
+
+
+static PyObject*
+set_thread_name(PyObject *self, PyObject *args) {
+	(void)(self); (void)(args);
+#if defined(_MSC_VER) || defined(__HAIKU__)
+	PyErr_SetString(PyExc_RuntimeError, "Setting thread names not supported on this platform");
+	return NULL;
+#else
+	char *name;
+	int ret;
+	if (!PyArg_ParseTuple(args, "s", &name)) return NULL;
+	while (1) {
+		errno = 0;
+#if defined(__APPLE__)
+		ret = pthread_setname_np(name);
+#elif defined(FREEBSD_SET_NAME)
+		pthread_set_name_np(pthread_self(), name);
+		ret = 0;
+#elif defined(__NetBSD__)
+		ret = pthread_setname_np(pthread_self(), "%s", name);
+#else
+		ret = pthread_setname_np(pthread_self(), name);
+#endif
+		if (ret != 0 && (errno == EINTR || errno == EAGAIN)) continue;
+		break;
+	}
+    if (ret != 0) { PyErr_SetFromErrno(PyExc_OSError); return NULL; }
+	Py_RETURN_NONE;
+#endif
+}
+
+#define char_is_ignored(ch) (ch <= 32)
+
+typedef struct udata {
+    void *data; int kind; Py_ssize_t len;
+} udata;
+
+static size_t
+count_chars_in(udata *text) {
+	size_t ans = text->len;
+	for (Py_ssize_t i = 0; i < text->len; i++) if (char_is_ignored(PyUnicode_READ(text->kind, text->data, i))) ans--;
+	return ans;
+}
+
+static size_t
+count_chars(const char *tag_name, Py_ssize_t tag_len, udata *text, udata *tail) {
+	size_t ans = 0;
+    int is_ignored_tag = 0;
+    char ltagname[16];
+    if (tag_name) {
+        const char *b = memchr(tag_name, '}', tag_len);
+        if (b) {
+            b++;
+            tag_len -= b - tag_name;
+            tag_name = b;
+        }
+        if (tag_len < sizeof(ltagname)) {
+            memcpy(ltagname, tag_name, tag_len);
+            for (size_t i = 0; i < tag_len; i++) if ('A' <= ltagname[i] && ltagname[i] <= 'Z') ltagname[i] += 32;
+#define EQ(x) (memcmp(ltagname, #x, tag_len) == 0)
+            switch(ltagname[0]) {
+                case 's':
+                    if (EQ(script) || EQ(style)) is_ignored_tag = 1;
+                    else if (EQ(svg)) ans += 1000;
+                    break;
+                case 'n':
+                    if (EQ(noscript)) is_ignored_tag = 1;
+                    break;
+                case 't':
+                    if (EQ(title)) is_ignored_tag = 1;
+                    break;
+                case 'i':
+                    if (EQ(img)) ans += 1000;
+                    break;
+            }
+        }
+    }
+#undef EQ
+	ans += count_chars_in(tail);
+	if (!is_ignored_tag) ans += count_chars_in(text);
+    return ans;
+}
+
+static PyObject*
+get_num_of_significant_chars(PyObject *self, PyObject *elem) {
+	(void)(self);
+	const char *tag_name = NULL;
+    Py_ssize_t tag_len = 0;
+    PyObject *ptn = PyObject_GetAttrString(elem, "tag"), *text = NULL;
+    if (ptn && PyUnicode_Check(ptn)) tag_name = PyUnicode_AsUTF8AndSize(ptn, &tag_len);
+    udata xdata = {0}, tdata = {0};
+    if (tag_name) {
+        text = PyObject_GetAttrString(elem, "text");
+        if (text && PyUnicode_Check(text)) {
+            xdata.len = PyUnicode_GET_LENGTH(text); xdata.kind = PyUnicode_KIND(text); xdata.data = PyUnicode_DATA(text);
+        }
+    }
+    PyObject *tail = PyObject_GetAttrString(elem, "tail");
+    if (tail && PyUnicode_Check(tail)) {
+        tdata.len = PyUnicode_GET_LENGTH(tail); tdata.kind = PyUnicode_KIND(tail); tdata.data = PyUnicode_DATA(tail);
+    }
+    size_t ans;
+    Py_BEGIN_ALLOW_THREADS
+        ans = count_chars(tag_name, tag_len, &xdata, &tdata);
+    Py_END_ALLOW_THREADS;
+    Py_XDECREF(ptn); Py_XDECREF(text); Py_XDECREF(tail);
+	return PyLong_FromSize_t(ans);
+}
+
+
+typedef struct deepcopy_data {
+    PyObject *python_deepcopy, *memo;
+} deepcopy_data;
+
+static PyObject* deepcopy_object(PyObject *, deepcopy_data *);
+
+static PyObject*
+insert_into_cache(PyObject *o, deepcopy_data *d) {
+    if (!o) return NULL;
+    PyObject *key = PyLong_FromVoidPtr(o);
+    if (!key) { Py_DECREF(o); return NULL; }
+    if (PyDict_SetItem(d->memo, key, o) != 0) { Py_DECREF(key); Py_DECREF(o); return NULL; }
+    return o;
+}
+
+static PyObject*
+deepcopy_list(PyObject *o, deepcopy_data *d) {
+    PyObject *ans = insert_into_cache(PyList_New(PyList_GET_SIZE(o)), d);
+    if (!ans) return NULL;
+    for (Py_ssize_t i = 0; i < PyList_GET_SIZE(o); i++) {
+        PyObject *t = deepcopy_object(PyList_GET_ITEM(o, i), d);
+        if (!t) { Py_CLEAR(t); return NULL; }
+        PyList_SET_ITEM(ans, i, t);
+    }
+    return ans;
+}
+
+static PyObject*
+deepcopy_tuple(PyObject *o, deepcopy_data *d) {
+    PyObject *ans = insert_into_cache(PyTuple_New(PyTuple_GET_SIZE(o)), d);
+    if (!ans) return NULL;
+    for (Py_ssize_t i = 0; i < PyTuple_GET_SIZE(o); i++) {
+        PyObject *t = deepcopy_object(PyTuple_GET_ITEM(o, i), d);
+        if (!t) { Py_CLEAR(ans); return NULL; }
+        PyTuple_SET_ITEM(ans, i, t);
+    }
+    return ans;
+}
+
+
+static PyObject*
+deepcopy_dict(PyObject *o, deepcopy_data *d) {
+    PyObject *key, *value;
+    Py_ssize_t pos = 0;
+    PyObject *ans = insert_into_cache(PyDict_New(), d);
+    if (!ans) return NULL;
+
+    while (PyDict_Next(o, &pos, &key, &value)) {
+        PyObject *tk = deepcopy_object(key, d);
+        if (!tk) break;
+        PyObject *tv = deepcopy_object(value, d);
+        if (!tv) { Py_DECREF(tk); break; }
+        int ok = PyDict_SetItem(ans, tk, tv) == 0;
+        Py_DECREF(tk); Py_DECREF(tv);
+        if (!ok) break;
+    }
+    if (PyErr_Occurred()) { Py_DECREF(ans); return NULL; }
+    return ans;
+}
+
+static PyObject*
+deepcopy_set(PyObject *o, deepcopy_data *d, int is_frozen) {
+    PyObject *ans = insert_into_cache(is_frozen ? PyFrozenSet_New(NULL) : PySet_New(NULL), d);
+    if (!ans) return NULL;
+    PyObject *iter = PyObject_GetIter(o);
+    if (!iter) { Py_DECREF(ans); return NULL; }
+    PyObject *key;
+    while ((key = PyIter_Next(iter)) != NULL) {
+        PyObject *t = deepcopy_object(key, d);
+        if (!t) break;
+        if (PySet_Add(ans, t) != 0) { Py_DECREF(t); break; }
+    }
+    Py_DECREF(iter);
+    if (PyErr_Occurred()) { Py_DECREF(ans); return NULL; }
+    return ans;
+}
+
+static PyObject*
+deepcopy_object(PyObject *o, deepcopy_data *d) {
+    PyObject *key = PyLong_FromVoidPtr(o);
+    if (!key) return NULL;
+    PyObject *cached = PyDict_GetItem(d->memo, key);
+    Py_DECREF(key);
+    if (cached) return Py_NewRef(cached);
+    PyTypeObject *type;
+    // Fast case for builtin immutable types
+    if (
+        o == Py_None || o == Py_True || o == Py_False || (type = Py_TYPE(o)) == &PyUnicode_Type ||
+        type == &PyBytes_Type || type == &PyLong_Type || type == &PyFloat_Type || type == &PyMemoryView_Type ||
+        type == &PyComplex_Type || type == &PyType_Type || type == &PyFunction_Type || type == &PyCode_Type ||
+        o == Py_Ellipsis || o == Py_NotImplemented
+    ) return Py_NewRef(o);
+    if (type == &PyList_Type) return deepcopy_list(o, d);
+    if (type == &PyTuple_Type) return deepcopy_tuple(o, d);
+    if (type == &PyDict_Type) return deepcopy_dict(o, d);
+    if (type == &PySet_Type) return deepcopy_set(o, d, 0);
+    if (type == &PyFrozenSet_Type) return deepcopy_set(o, d, 1);
+    if (PyWeakref_Check(o)) return Py_NewRef(o);
+    return PyObject_CallFunctionObjArgs(d->python_deepcopy, o, d->memo);
+}
+
+static PyObject*
+deepcopy(PyObject *self, PyObject *o) {
+    PyObject *memo = PyDict_New();
+    if (!memo) return NULL;
+    PyObject *copy_module = PyImport_ImportModule("copy");
+    if (!copy_module) { Py_DECREF(memo); return NULL; }
+    PyObject *python_deepcopy = PyObject_GetAttrString(copy_module, "deepcopy");
+    Py_DECREF(copy_module);
+    if (!python_deepcopy) { Py_DECREF(memo); return NULL; }
+    deepcopy_data d = {.python_deepcopy = python_deepcopy, .memo = memo};
+    PyObject *ans = deepcopy_object(o, &d);
+    Py_DECREF(python_deepcopy); Py_DECREF(memo);
+    return ans;
+}
+
+
+static PyObject*
+pread_all(PyObject *self, PyObject *args) {
+    int fd; unsigned long long n, offset = 0;
+    if (!PyArg_ParseTuple(args, "iK|K", &fd, &n, &offset)) return NULL;
+#ifdef _WIN32
+    PyObject *msvcrt = PyImport_ImportModule("msvcrt");
+    if (!msvcrt) return NULL;
+    PyObject *get_osfhandle = PyObject_GetAttrString(msvcrt, "get_osfhandle");
+    Py_CLEAR(msvcrt);
+    if (!get_osfhandle) return NULL;
+    PyObject *ret = PyObject_CallFunctionObjArgs(get_osfhandle, PyTuple_GET_ITEM(args, 0), NULL);
+    Py_CLEAR(get_osfhandle);
+    if (!ret) return NULL;
+    HANDLE file = (HANDLE)PyLong_AsUnsignedLongLong(ret);
+    Py_CLEAR(ret);
+#endif
+    PyObject *output = PyBytes_FromStringAndSize(NULL, n);
+    if (!output || !n) return output;
+    size_t pos = 0;
+    char *buf = PyBytes_AS_STRING(output);
+    int saved_errno = 0;
+    Py_BEGIN_ALLOW_THREADS;
+    while (pos < n) {
+#ifdef _WIN32
+        DWORD nr = 0;
+        OVERLAPPED overlapped;
+        memset(&overlapped, 0, sizeof(OVERLAPPED));
+        overlapped.OffsetHigh = (uint32_t)((offset & 0xFFFFFFFF00000000LL) >> 32);
+        overlapped.Offset = (uint32_t)(offset & 0xFFFFFFFFLL);
+        SetLastError(0);
+        BOOL ok = ReadFile(file, buf + pos, n - pos, &nr, &overlapped);
+        if (!ok) {
+            DWORD err = GetLastError();
+            if (err != ERROR_HANDLE_EOF) saved_errno = err;
+            break;
+        }
+#else
+        ssize_t nr = pread(fd, buf + pos, n - pos, offset);
+        if (nr < 0) {
+            if (errno == EINTR || errno == EAGAIN) continue;
+            saved_errno = errno;
+            break;
+        } else if (nr == 0) break;
+#endif
+        pos += nr;
+        offset += nr;
+    }
+    Py_END_ALLOW_THREADS
+    if (saved_errno != 0) {
+        Py_CLEAR(output);
+#ifdef _WIN32
+        PyErr_SetFromWindowsErr(saved_errno);
+#else
+        errno = saved_errno;
+        PyErr_SetFromErrno(PyExc_OSError);
+#endif
+        return NULL;
+    }
+    if (pos < n && _PyBytes_Resize(&output, pos) != 0) return NULL;
+    return output;
+}
 
 static PyMethodDef speedup_methods[] = {
+    {"deepcopy", deepcopy, METH_O,
+        "deepcopy(object)\n\nFast implementation of deepcopy()"
+    },
+
     {"parse_date", speedup_parse_date, METH_VARARGS,
         "parse_date()\n\nParse ISO dates faster (specialized for dates stored in the calibre db)."
     },
@@ -518,10 +807,6 @@ static PyMethodDef speedup_methods[] = {
             " This function returns an image (bytestring) in the PPM format as the texture."
     },
 
-    {"fdopen", speedup_fdopen, METH_VARARGS,
-        "fdopen(fd, name, mode [, bufsize=-1)\n\nCreate a python file object from an OS file descriptor with a name. Note that this does not do any validation of mode, so you must ensure fd already has the correct flags set."
-    },
-
     {"websocket_mask", speedup_websocket_mask, METH_VARARGS,
         "websocket_mask(data, mask [, offset=0)\n\nXOR the data (bytestring) with the specified (must be 4-byte bytestring) mask"
     },
@@ -534,40 +819,49 @@ static PyMethodDef speedup_methods[] = {
         "clean_xml_chars(unicode_object)\n\nRemove codepoints in unicode_object that are not allowed in XML"
     },
 
+	{"set_thread_name", set_thread_name, METH_VARARGS,
+		"set_thread_name(name)\n\nWrapper for pthread_setname_np"
+	},
+
+	{"pread_all", pread_all, METH_VARARGS,
+		"pread_all(fd, n, offset)\n\nRead upto n bytes from the specified fd at offset in a thread safe manner."
+        " If less than n bytes are returned it means there were less than n bytes in the file at offset."
+        " Only works with seekable regular files, not sockets/ttys/etc. Note that on Windows it moves the file pointer"
+        " so cannot be mixed with calls to tell() or ordinary reads."
+	},
+
+	{"get_num_of_significant_chars", get_num_of_significant_chars, METH_O,
+		"get_num_of_significant_chars(elem)\n\nGet the number of chars in specified tag"
+	},
+
+	{"barename", barename, METH_O,
+		"barename(tag)\n\nGet bare tag name without namespace"
+	},
+
+	{"namespace", namespace, METH_O,
+		"namespace(tag)\n\nGet namespace of the tag"
+	},
+
     {NULL, NULL, 0, NULL}
 };
 
+static int
+exec_module(PyObject *module) {
+    PyDateTime_IMPORT;
+#ifndef _WIN32
+    PyModule_AddIntConstant(module, "O_CLOEXEC", O_CLOEXEC);
+#endif
+    return 0;
+}
 
-#if PY_MAJOR_VERSION >= 3
-#define INITERROR return NULL
-static struct PyModuleDef speedup_module = {
-    /* m_base     */ PyModuleDef_HEAD_INIT,
-    /* m_name     */ "speedup",
-    /* m_doc      */ "Implementation of methods in C for speed.",
-    /* m_size     */ -1,
-    /* m_methods  */ speedup_methods,
-    /* m_slots    */ 0,
-    /* m_traverse */ 0,
-    /* m_clear    */ 0,
-    /* m_free     */ 0,
+static PyModuleDef_Slot slots[] = { {Py_mod_exec, exec_module}, {0, NULL} };
+
+static struct PyModuleDef module_def = {
+    .m_base     = PyModuleDef_HEAD_INIT,
+    .m_name     = "speedup",
+    .m_doc      = "Implementation of methods in C for speed.",
+    .m_methods  = speedup_methods,
+    .m_slots    = slots,
 };
 
-CALIBRE_MODINIT_FUNC PyInit_speedup(void) {
-    PyObject *mod = PyModule_Create(&speedup_module);
-#else
-#define INITERROR return
-CALIBRE_MODINIT_FUNC initspeedup(void) {
-    PyObject *mod = Py_InitModule3("speedup", speedup_methods,
-        "Implementation of methods in C for speed.");
-#endif
-
-    if (mod == NULL) INITERROR;
-    PyDateTime_IMPORT;
-#ifdef O_CLOEXEC
-    PyModule_AddIntConstant(mod, "O_CLOEXEC", O_CLOEXEC);
-#endif
-
-#if PY_MAJOR_VERSION >= 3
-    return mod;
-#endif
-}
+CALIBRE_MODINIT_FUNC PyInit_speedup(void) { return PyModuleDef_Init(&module_def); }

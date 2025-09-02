@@ -1,12 +1,13 @@
-#!/usr/bin/env python2
-# vim:fileencoding=utf-8
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
+#!/usr/bin/env python
+
 
 __license__ = 'GPL v3'
 __copyright__ = '2014, Kovid Goyal <kovid at kovidgoyal.net>'
 
-import os, shutil, subprocess, sys
+import os
+import shutil
+import subprocess
+import sys
 
 d, j, a = (getattr(os.path, x) for x in ('dirname', 'join', 'abspath'))
 base = d(a(__file__))
@@ -17,12 +18,12 @@ sources = {'library':j(imgsrc, 'calibre.svg'), 'ebook-edit':j(imgsrc, 'tweak.svg
 if sys.argv[-1] == 'only-logo':
     sources = {'library':sources['library']}
 
-for name, src in sources.iteritems():
+for name, src in sources.items():
     os.mkdir('ico_temp')
     try:
         names = []
         for sz in (16, 24, 32, 48, 64, 256):
-            iname = os.path.join('ico_temp', '{0}x{0}.png'.format(sz))
+            iname = os.path.join('ico_temp', f'{sz}x{sz}.png')
             subprocess.check_call(['rsvg-convert', src, '-w', str(sz), '-h', str(sz), '-o', iname])
             subprocess.check_call(['optipng', '-o7', '-strip', 'all', iname])
             if sz >= 128:

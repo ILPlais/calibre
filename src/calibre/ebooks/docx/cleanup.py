@@ -1,12 +1,12 @@
-#!/usr/bin/env python2
-# vim:fileencoding=utf-8
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
+#!/usr/bin/env python
+
 
 __license__ = 'GPL v3'
 __copyright__ = '2013, Kovid Goyal <kovid at kovidgoyal.net>'
 
 import os
+
+from polyglot.builtins import itervalues
 
 NBSP = '\xa0'
 
@@ -53,7 +53,7 @@ def merge_run(run):
 def liftable(css):
     # A <span> is liftable if all its styling would work just as well if it is
     # specified on the parent element.
-    prefixes = {x.partition('-')[0] for x in css.iterkeys()}
+    prefixes = {x.partition('-')[0] for x in css}
     return not (prefixes - {'text', 'font', 'letter', 'color', 'background'})
 
 
@@ -104,9 +104,30 @@ def before_count(root, tag, limit=10):
             return limit
 
 
-def cleanup_markup(log, root, styles, dest_dir, detect_cover, XPath):
+def wrap_contents(tag_name, elem):
+    wrapper = elem.makeelement(tag_name)
+    wrapper.text, elem.text = elem.text, ''
+    for child in elem:
+        elem.remove(child)
+        wrapper.append(child)
+    elem.append(wrapper)
+
+
+def cleanup_markup(log, root, styles, dest_dir, detect_cover, XPath, uuid):
+    # Apply vertical-align
+    for span in root.xpath('//span[@data-docx-vert]'):
+        wrap_contents(span.attrib.pop('data-docx-vert'), span)
+
+    for span in root.xpath(f'//*[@data-noteref-container="{uuid}"]'):
+        span.attrib.pop('data-noteref-container')
+        parent = span.getparent()
+        idx = parent.index(span)
+        if idx + 1 < len(parent) and len(ns := parent[idx+1]) and hasattr(ns, 'get') and ns.get('data-noteref-container'):
+            if len(span) and not span[-1].tail:
+                span[-1].tail = '\xa0'
+
     # Move <hr>s outside paragraphs, if possible.
-    pancestor = XPath('|'.join('ancestor::%s[1]' % x for x in ('p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6')))
+    pancestor = XPath('|'.join(f'ancestor::{x}[1]' for x in ('p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6')))
     for hr in root.xpath('//span/hr'):
         p = pancestor(hr)
         if p:
@@ -133,9 +154,9 @@ def cleanup_markup(log, root, styles, dest_dir, detect_cover, XPath):
                 current_run = [span]
 
     # Process dir attributes
-    class_map = dict(styles.classes.itervalues())
-    parents = ('p', 'div') + tuple('h%d' % i for i in xrange(1, 7))
-    for parent in root.xpath('//*[(%s)]' % ' or '.join('name()="%s"' % t for t in parents)):
+    class_map = dict(itervalues(styles.classes))
+    parents = ('p', 'div') + tuple(f'h{i}' for i in range(1, 7))
+    for parent in root.xpath('//*[({})]'.format(' or '.join(f'name()="{t}"' for t in parents))):
         # Ensure that children of rtl parents that are not rtl have an
         # explicit dir set. Also, remove dir from children if it is the same as
         # that of the parent.
@@ -151,7 +172,7 @@ def cleanup_markup(log, root, styles, dest_dir, detect_cover, XPath):
 
     # Remove unnecessary span tags that are the only child of a parent block
     # element
-    for parent in root.xpath('//*[(%s) and count(span)=1]' % ' or '.join('name()="%s"' % t for t in parents)):
+    for parent in root.xpath('//*[({}) and count(span)=1]'.format(' or '.join(f'name()="{t}"' for t in parents))):
         if len(parent) == 1 and not parent.text and not parent[0].tail and not parent[0].get('id', None):
             # We have a block whose contents are entirely enclosed in a <span>
             span = parent[0]
@@ -207,10 +228,10 @@ def cleanup_markup(log, root, styles, dest_dir, detect_cover, XPath):
             if os.path.exists(path) and before_count(root, img, limit=10) < 5:
                 from calibre.utils.imghdr import identify
                 try:
-                    with lopen(path, 'rb') as imf:
+                    with open(path, 'rb') as imf:
                         fmt, width, height = identify(imf)
-                except:
-                    width, height, fmt = 0, 0, None  # noqa
+                except Exception:
+                    width, height, fmt = 0, 0, None
                 del fmt
                 try:
                     is_cover = 0.8 <= height/width <= 1.8 and height*width >= 160000

@@ -1,5 +1,5 @@
-#!/usr/bin/env python2
-# vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
+#!/usr/bin/env python
+
 
 __license__   = 'GPL v3'
 __copyright__ = '2010, Kovid Goyal <kovid@kovidgoyal.net>'
@@ -8,21 +8,83 @@ __docformat__ = 'restructuredtext en'
 from functools import partial
 from zipfile import ZipFile
 
-from PyQt5.Qt import (QToolButton, QAction, QIcon, QObject, QMenu,
-        QKeySequence)
+from qt.core import QAction, QIcon, QKeySequence, QMenu, QObject, QPoint, QTimer, QToolButton
 
 from calibre import prints
-from calibre.constants import isosx
+from calibre.constants import ismacos
 from calibre.gui2 import Dispatcher
 from calibre.gui2.keyboard import NameConflict
+from polyglot.builtins import string_or_bytes
+
+
+def toolbar_widgets_for_action(gui, action):
+    # Search the toolbars for the widget associated with an action, passing
+    # them to the caller for further processing
+    for x in gui.bars_manager.bars:
+        try:
+            w = x.widgetForAction(action)
+            # It seems that multiple copies of the action can exist, such as
+            # when the device-connected menu is changed while the device is
+            # connected. Use the one that has an actual position.
+            if w is None or w.pos().x() == 0:
+                continue
+            # The button might be hidden
+            if not w.isVisible():
+                continue
+            yield w
+        except Exception:
+            continue
+
+
+def show_menu_under_widget(gui, menu, action, name):
+    # First try the tool bar
+    for w in toolbar_widgets_for_action(gui, action):
+        try:
+            # The w.height() assures that the menu opens below the button.
+            menu.exec(w.mapToGlobal(QPoint(0, w.height())))
+            return
+        except Exception:
+            continue
+    # Now try the menu bar
+    for x in gui.bars_manager.menu_bar.added_actions:
+        # This depends on no two menus with the same name.
+        # I don't know if this works on a Mac
+        if x.text() == name:
+            try:
+                # The menu item might be hidden
+                if not x.isVisible():
+                    continue
+                # We can't use x.trigger() because it doesn't put the menu
+                # in the right place. Instead get the position of the menu
+                # widget on the menu bar
+                p = x.parent().menu_bar
+                r = p.actionGeometry(x)
+                # Make sure that the menu item is actually displayed in the menu
+                # and not the overflow
+                if p.geometry().width() < (r.x() + r.width()):
+                    continue
+                # Show the menu under the name in the menu bar
+                menu.exec(p.mapToGlobal(QPoint(r.x()+2, r.height()-2)))
+                return
+            except Exception:
+                continue
+    # Is it one of the status bar buttons?
+    for button in gui.status_bar_extra_buttons:
+        if name == button.action_name and button.isVisible():
+            r = button.geometry()
+            p = gui.status_bar
+            menu.exec(p.mapToGlobal(QPoint(r.x()+2, r.height()-2)))
+            return
+    # No visible button found. Fall back to displaying in upper left corner
+    # of the library view.
+    menu.exec(gui.library_view.mapToGlobal(QPoint(10, 10)))
 
 
 def menu_action_unique_name(plugin, unique_name):
-    return u'%s : menu action : %s'%(plugin.unique_name, unique_name)
+    return f'{plugin.unique_name} : menu action : {unique_name}'
 
 
 class InterfaceAction(QObject):
-
     '''
     A plugin representing an "action" that can be taken in the graphical user
     interface. All the items in the toolbar and context menus are implemented
@@ -37,8 +99,8 @@ class InterfaceAction(QObject):
     priority takes precedence.
 
     Sub-classes should implement the :meth:`genesis`, :meth:`library_changed`,
-    :meth:`location_selected` :meth:`shutting_down`
-    and :meth:`initialization_complete` methods.
+    :meth:`location_selected`, :meth:`shutting_down`,
+    :meth:`initialization_complete` and :meth:`tag_browser_context_action` methods.
 
     Once initialized, this plugin has access to the main calibre GUI via the
     :attr:`gui` member. You can access other plugins by name, for example::
@@ -64,19 +126,23 @@ class InterfaceAction(QObject):
     priority = 1
 
     #: The menu popup type for when this plugin is added to a toolbar
-    popup_type = QToolButton.MenuButtonPopup
+    popup_type = QToolButton.ToolButtonPopupMode.MenuButtonPopup
 
     #: Whether this action should be auto repeated when its shortcut
     #: key is held down.
     auto_repeat = False
 
-    #: Of the form: (text, icon_path, tooltip, keyboard shortcut)
-    #: icon, tooltip and keyboard shortcut can be None
-    #: shortcut must be a string, None or tuple of shortcuts.
+    #: Of the form: (text, icon_path, tooltip, keyboard shortcut).
+    #: icon, tooltip and keyboard shortcut can be None.
+    #: keyboard shortcut must be either a string, None or tuple of shortcuts.
     #: If None, a keyboard shortcut corresponding to the action is not
     #: registered. If you pass an empty tuple, then the shortcut is registered
     #: with no default key binding.
     action_spec = ('text', 'icon', None, None)
+
+    #: If not None, used for the name displayed to the user when customizing
+    #: the keyboard shortcuts for the above action spec instead of action_spec[0]
+    action_shortcut_name = None
 
     #: If True, a menu is automatically created and added to self.qaction
     action_add_menu = False
@@ -88,15 +154,15 @@ class InterfaceAction(QObject):
 
     #: Set of locations to which this action must not be added.
     #: See :attr:`all_locations` for a list of possible locations
-    dont_add_to = frozenset([])
+    dont_add_to = frozenset()
 
     #: Set of locations from which this action must not be removed.
     #: See :attr:`all_locations` for a list of possible locations
-    dont_remove_from = frozenset([])
+    dont_remove_from = frozenset()
 
     all_locations = frozenset(['toolbar', 'toolbar-device', 'context-menu',
         'context-menu-device', 'toolbar-child', 'menubar', 'menubar-device',
-        'context-menu-cover-browser', 'context-menu-split'])
+        'context-menu-cover-browser', 'context-menu-split', 'searchbar'])
 
     #: Type of action
     #: 'current' means acts on the current view
@@ -150,19 +216,21 @@ class InterfaceAction(QObject):
         bn = self.__class__.__name__
         if getattr(self.interface_action_base_plugin, 'name'):
             bn = self.interface_action_base_plugin.name
-        return u'Interface Action: %s (%s)'%(bn, self.name)
+        return f'Interface Action: {bn} ({self.name})'
 
-    def create_action(self, spec=None, attr='qaction', shortcut_name=None):
+    def create_action(self, spec=None, attr='qaction', shortcut_name=None, persist_shortcut=False):
         if spec is None:
             spec = self.action_spec
         text, icon, tooltip, shortcut = spec
         if icon is not None:
-            action = QAction(QIcon(I(icon)), text, self.gui)
+            action = QAction(QIcon.ic(icon), text, self.gui)
         else:
             action = QAction(text, self.gui)
         if attr == 'qaction':
-            mt = (action.text() if self.action_menu_clone_qaction is True else
-                    unicode(self.action_menu_clone_qaction))
+            if hasattr(self.action_menu_clone_qaction, 'rstrip'):
+                mt = str(self.action_menu_clone_qaction)
+            else:
+                mt = action.text()
             self.menuless_qaction = ma = QAction(action.icon(), mt, self.gui)
             ma.triggered.connect(action.trigger)
         for a in ((action, ma) if attr == 'qaction' else (action,)):
@@ -176,28 +244,32 @@ class InterfaceAction(QObject):
         if attr == 'qaction':
             shortcut_action = ma
         if shortcut is not None:
-            keys = ((shortcut,) if isinstance(shortcut, basestring) else
+            keys = ((shortcut,) if isinstance(shortcut, string_or_bytes) else
                     tuple(shortcut))
-            if shortcut_name is None and spec[0]:
-                shortcut_name = unicode(spec[0])
-
+            if shortcut_name is None:
+                if self.action_shortcut_name is not None:
+                    shortcut_name = self.action_shortcut_name
+                elif spec[0]:
+                    shortcut_name = str(spec[0])
             if shortcut_name and self.action_spec[0] and not (
-                    attr == 'qaction' and self.popup_type == QToolButton.InstantPopup):
+                    attr == 'qaction' and self.popup_type == QToolButton.ToolButtonPopupMode.InstantPopup):
                 try:
                     self.gui.keyboard.register_shortcut(self.unique_name + ' - ' + attr,
                         shortcut_name, default_keys=keys,
                         action=shortcut_action, description=desc,
-                        group=self.action_spec[0])
+                        group=self.action_spec[0],
+                        persist_shortcut=persist_shortcut)
                 except NameConflict as e:
                     try:
-                        prints(unicode(e))
-                    except:
+                        prints(str(e))
+                    except Exception:
                         pass
                     shortcut_action.setShortcuts([QKeySequence(key,
-                        QKeySequence.PortableText) for key in keys])
+                        QKeySequence.SequenceFormat.PortableText) for key in keys])
                 else:
-                    if isosx:
-                        # In Qt 5 keyboard shortcuts dont work unless the
+                    self.shortcut_action_for_context_menu = shortcut_action
+                    if ismacos:
+                        # In Qt 5 keyboard shortcuts don't work unless the
                         # action is explicitly added to the main window
                         self.gui.addAction(shortcut_action)
 
@@ -211,7 +283,7 @@ class InterfaceAction(QObject):
         return action
 
     def create_menu_action(self, menu, unique_name, text, icon=None, shortcut=None,
-            description=None, triggered=None, shortcut_name=None):
+            description=None, triggered=None, shortcut_name=None, persist_shortcut=False):
         '''
         Convenience method to easily add actions to a QMenu.
         Returns the created QAction. This action has one extra attribute
@@ -220,12 +292,12 @@ class InterfaceAction(QObject):
 
         :param menu: The QMenu the newly created action will be added to
         :param unique_name: A unique name for this action, this must be
-            globally unique, so make it as descriptive as possible. If in doubt add
-            a uuid to it.
+            globally unique, so make it as descriptive as possible. If in doubt, add
+            an UUID to it.
         :param text: The text of the action.
         :param icon: Either a QIcon or a file name. The file name is passed to
-            the I() builtin, so you do not need to pass the full path to the images
-            directory.
+            the QIcon.ic() builtin, so you do not need to pass the full path to the images
+            folder.
         :param shortcut: A string, a list of strings, None or False. If False,
             no keyboard shortcut is registered for this action. If None, a keyboard
             shortcut with no default keybinding is registered. String and list of
@@ -237,18 +309,22 @@ class InterfaceAction(QObject):
         :param shortcut_name: The text displayed to the user when customizing
             the keyboard shortcuts for this action. By default it is set to the
             value of ``text``.
+        :param persist_shortcut: Shortcuts for actions that don't
+            always appear, or are library dependent, may disappear
+            when other keyboard shortcuts are edited unless
+            ```persist_shortcut``` is set True.
 
         '''
         if shortcut_name is None:
-            shortcut_name = unicode(text)
+            shortcut_name = str(text)
         ac = menu.addAction(text)
         if icon is not None:
             if not isinstance(icon, QIcon):
-                icon = QIcon(I(icon))
+                icon = QIcon.ic(icon)
             ac.setIcon(icon)
         keys = ()
         if shortcut is not None and shortcut is not False:
-            keys = ((shortcut,) if isinstance(shortcut, basestring) else
+            keys = ((shortcut,) if isinstance(shortcut, string_or_bytes) else
                     tuple(shortcut))
         unique_name = menu_action_unique_name(self, unique_name)
         if description is not None:
@@ -260,10 +336,11 @@ class InterfaceAction(QObject):
         if shortcut is not False:
             self.gui.keyboard.register_shortcut(unique_name,
                 shortcut_name, default_keys=keys,
-                action=ac, description=description, group=self.action_spec[0])
-            # In Qt 5 keyboard shortcuts dont work unless the
+                action=ac, description=description, group=self.action_spec[0],
+                persist_shortcut=persist_shortcut)
+            # In Qt 5 keyboard shortcuts don't work unless the
             # action is explicitly added to the main window and on OSX and
-            # Unity since the menu might be exported, the shortcuts wont work
+            # Unity since the menu might be exported, the shortcuts won't work
             self.gui.addAction(ac)
         if triggered is not None:
             ac.triggered.connect(triggered)
@@ -277,7 +354,7 @@ class InterfaceAction(QObject):
         For example to load an image::
 
             pixmap = QPixmap()
-            pixmap.loadFromData(self.load_resources(['images/icon.png']).itervalues().next())
+            pixmap.loadFromData(tuple(self.load_resources(['images/icon.png']).values())[0])
             icon = QIcon(pixmap)
 
         :param names: List of paths to resources in the ZIP file using / as separator
@@ -314,6 +391,16 @@ class InterfaceAction(QObject):
         '''
         pass
 
+    def library_about_to_change(self, olddb, db):
+        '''
+        Called whenever the current library is changed.
+
+        :param olddb: The LibraryDatabase corresponding to the previous library.
+        :param db: The LibraryDatabase corresponding to the new library.
+
+        '''
+        pass
+
     def library_changed(self, db):
         '''
         Called whenever the current library is changed.
@@ -338,14 +425,54 @@ class InterfaceAction(QObject):
         '''
         pass
 
+    def tag_browser_context_action(self, index):
+        '''
+        Called when displaying the context menu in the Tag browser. ``index`` is
+        the QModelIndex that points to the Tag browser item that was right clicked.
+        Test it for validity with index.valid() and get the underlying TagTreeItem
+        object with index.data(Qt.ItemDataRole.UserRole). Any action objects
+        yielded by this method will be added to the context menu.
+        '''
+        if False:
+            yield QAction()
+
     def shutting_down(self):
         '''
         Called once per plugin when the main GUI is in the process of shutting
         down. Release any used resources, but try not to block the shutdown for
         long periods of time.
-
-        :return: False to halt the shutdown. You are responsible for telling
-                 the user why the shutdown was halted.
-
         '''
-        return True
+        pass
+
+
+class InterfaceActionWithLibraryDrop(InterfaceAction):
+    '''
+    Subclass of InterfaceAction that implements methods to execute the default action
+    by drop some books from the library.
+
+    Inside the do_drop() method, the ids of the dropped books are provided
+    by the attribute self.dropped_ids
+    '''
+
+    accepts_drops = True
+    mimetype_for_drop = 'application/calibre+from_library'
+
+    def accept_enter_event(self, event, mime_data):
+        if mime_data.hasFormat(self.mimetype_for_drop):
+            return True
+        return False
+
+    def accept_drag_move_event(self, event, mime_data):
+        if mime_data.hasFormat(self.mimetype_for_drop):
+            return True
+        return False
+
+    def drop_event(self, event, mime_data):
+        if mime_data.hasFormat(self.mimetype_for_drop):
+            self.dropped_ids = tuple(map(int, mime_data.data(self.mimetype_for_drop).data().split()))
+            QTimer.singleShot(1, self.do_drop)
+            return True
+        return False
+
+    def do_drop(self):
+        raise NotImplementedError()

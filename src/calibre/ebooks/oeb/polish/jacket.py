@@ -1,7 +1,5 @@
-#!/usr/bin/env python2
-# vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:fdm=marker:ai
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
+#!/usr/bin/env python
+
 
 __license__   = 'GPL v3'
 __copyright__ = '2013, Kovid Goyal <kovid at kovidgoyal.net>'
@@ -9,9 +7,10 @@ __docformat__ = 'restructuredtext en'
 
 from calibre.customize.ui import output_profiles
 from calibre.ebooks.conversion.config import load_defaults
-from calibre.ebooks.oeb.base import XPath, OPF
+from calibre.ebooks.oeb.base import OPF, XPath
 from calibre.ebooks.oeb.polish.cover import find_cover_page
-from calibre.ebooks.oeb.transforms.jacket import render_jacket as render, referenced_images
+from calibre.ebooks.oeb.transforms.jacket import referenced_images
+from calibre.ebooks.oeb.transforms.jacket import render_jacket as render
 
 
 def render_jacket(container, jacket):
@@ -22,7 +21,7 @@ def render_jacket(container, jacket):
     output_profile = opmap.get(op, opmap['default'])
     root = render(mi, output_profile)
     for img, path in referenced_images(root):
-        container.log('Embedding referenced image: %s into jacket' % path)
+        container.log(f'Embedding referenced image: {path} into jacket')
         ext = path.rpartition('.')[-1]
         jacket_item = container.generate_item('jacket_image.'+ext, id_prefix='jacket_img')
         name = container.href_to_name(jacket_item.get('href'), container.opf_name)
@@ -98,7 +97,7 @@ def add_or_replace_jacket(container):
     if not found:
         # Insert new jacket into spine
         index = 0
-        sp = container.abspath_to_name(container.spine_items.next())
+        sp = container.abspath_to_name(next(container.spine_items))
         if sp == find_cover_page(container):
             index = 1
         itemref = container.opf.makeelement(OPF('itemref'),
@@ -106,4 +105,3 @@ def add_or_replace_jacket(container):
         container.insert_into_xml(container.opf_xpath('//opf:spine')[0], itemref,
                               index=index)
     return found
-

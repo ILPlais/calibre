@@ -3,15 +3,17 @@
  *
  * Python module C glue code.
  */
+#define PY_SSIZE_T_CLEAN
 
 #include <Python.h>
 
 #include <mspack.h>
 #include <lzxd.h>
 
-#include <lzxmodule.h>
+extern PyObject *LZXError;
+extern PyTypeObject CompressorType;
 
-static char lzx_doc[] = 
+static char lzx_doc[] =
     "Provide basic LZX compression and decompression using the code from\n"
     "liblzxcomp and libmspack respectively.";
 
@@ -68,13 +70,13 @@ glue_read(struct mspack_file *file, void *buffer, int bytes)
 
     mem = (memory_file *)file;
     if (mem->magic != 0xB5) return -1;
-  
+
     remaining = mem->total_bytes - mem->current_bytes;
     if (!remaining) return 0;
     if (bytes > remaining) bytes = remaining;
     memcpy(buffer, (unsigned char *)mem->buffer + mem->current_bytes, bytes);
     mem->current_bytes += bytes;
-    
+
     return bytes;
 }
 
@@ -86,7 +88,7 @@ glue_write(struct mspack_file *file, void *buffer, int bytes)
 
     mem = (memory_file *)file;
     if (mem->magic != 0xB5) return -1;
-  
+
     remaining = mem->total_bytes - mem->current_bytes;
     if (bytes > remaining) {
         PyErr_SetString(LZXError,
@@ -99,7 +101,7 @@ glue_write(struct mspack_file *file, void *buffer, int bytes)
 }
 
 struct mspack_system lzxglue_system = {
-    glue_open, 
+    glue_open,
     glue_close,
     glue_read,   /* Read */
     glue_write,  /* Write */
@@ -125,7 +127,7 @@ init(PyObject *self, PyObject *args)
     if (!PyArg_ParseTuple(args, "i", &window)) {
         return NULL;
     }
-    
+
     LZXwindow = window;
     lzx_stream = NULL;
 
@@ -143,30 +145,30 @@ reset(PyObject *self, PyObject *args)
     Py_RETURN_NONE;
 }
 
-//int LZXdecompress(unsigned char *inbuf, unsigned char *outbuf, 
+//int LZXdecompress(unsigned char *inbuf, unsigned char *outbuf,
 //    unsigned int inlen, unsigned int outlen)
 static PyObject *
 decompress(PyObject *self, PyObject *args)
 {
     unsigned char *inbuf;
     unsigned char *outbuf;
-    unsigned int inlen;
+    Py_ssize_t inlen;
     unsigned int outlen;
     int err;
     memory_file source;
     memory_file dest;
     PyObject *retval = NULL;
 
-    if (!PyArg_ParseTuple(args, "s#I", &inbuf, &inlen, &outlen)) {
+    if (!PyArg_ParseTuple(args, "y#I", &inbuf, &inlen, &outlen)) {
         return NULL;
     }
 
-    retval = PyString_FromStringAndSize(NULL, outlen);
+    retval = PyBytes_FromStringAndSize(NULL, outlen);
     if (retval == NULL) {
         return NULL;
     }
-    outbuf = (unsigned char *)PyString_AS_STRING(retval);
-    
+    outbuf = (unsigned char *)PyBytes_AS_STRING(retval);
+
     source.magic = 0xB5;
     source.buffer = inbuf;
     source.current_bytes = 0;
@@ -176,9 +178,9 @@ decompress(PyObject *self, PyObject *args)
     dest.buffer = outbuf;
     dest.current_bytes = 0;
     dest.total_bytes = outlen;
-    
+
     lzx_stream = lzxd_init(&lzxglue_system, (struct mspack_file *)&source,
-        (struct mspack_file *)&dest, LZXwindow, 
+        (struct mspack_file *)&dest, LZXwindow,
         0x7fff /* Never reset, I do it */, 4096, outlen);
     err = -1;
     if (lzx_stream) err = lzxd_decompress(lzx_stream, outlen);
@@ -191,7 +193,7 @@ decompress(PyObject *self, PyObject *args)
         retval = NULL;
         PyErr_SetString(LZXError, "LZX decompression failed");
     }
-    
+
     return retval;
 }
 
@@ -202,20 +204,10 @@ static PyMethodDef lzx_methods[] = {
     { NULL }
 };
 
-CALIBRE_MODINIT_FUNC
-initlzx(void)
-{
-    PyObject *m;
+static int
+exec_module(PyObject *m) {
+    if (PyType_Ready(&CompressorType) < 0) return -1;
 
-    if (PyType_Ready(&CompressorType) < 0) {
-        return;
-    }
-
-    m = Py_InitModule3("lzx", lzx_methods, lzx_doc);
-    if (m == NULL) {
-        return;
-    }
-    
     LZXError = PyErr_NewException("lzx.LZXError", NULL, NULL);
     Py_INCREF(LZXError);
     PyModule_AddObject(m, "LZXError", LZXError);
@@ -223,5 +215,17 @@ initlzx(void)
     Py_INCREF(&CompressorType);
     PyModule_AddObject(m, "Compressor", (PyObject *)&CompressorType);
 
-    return;
+	return 0;
 }
+
+static PyModuleDef_Slot slots[] = { {Py_mod_exec, exec_module}, {0, NULL} };
+
+static struct PyModuleDef module_def = {
+    .m_base     = PyModuleDef_HEAD_INIT,
+    .m_name     = "lzx",
+    .m_doc      = lzx_doc,
+    .m_methods  = lzx_methods,
+    .m_slots    = slots,
+};
+
+CALIBRE_MODINIT_FUNC PyInit_lzx(void) { return PyModuleDef_Init(&module_def); }

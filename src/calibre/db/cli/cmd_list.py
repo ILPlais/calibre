@@ -1,25 +1,23 @@
-#!/usr/bin/env python2
-# vim:fileencoding=utf-8
+#!/usr/bin/env python
 # License: GPLv3 Copyright: 2017, Kovid Goyal <kovid at kovidgoyal.net>
 
-from __future__ import absolute_import, division, print_function, unicode_literals
 
 import json
 import os
 import sys
 from textwrap import TextWrapper
 
-from calibre import prints
 from calibre.db.cli.utils import str_width
 from calibre.ebooks.metadata import authors_to_string
 from calibre.utils.date import isoformat
+from polyglot.builtins import as_bytes, iteritems
 
 readonly = True
 version = 0  # change this if you change signature of implementation()
 FIELDS = {
     'title', 'authors', 'author_sort', 'publisher', 'rating', 'timestamp', 'size',
     'tags', 'comments', 'series', 'series_index', 'formats', 'isbn', 'uuid',
-    'pubdate', 'cover', 'last_modified', 'identifiers', 'languages'
+    'pubdate', 'cover', 'last_modified', 'identifiers', 'languages', 'template'
 }
 
 
@@ -35,26 +33,35 @@ def cover(db, book_id):
 
 
 def implementation(
-    db, notify_changes, fields, sort_by, ascending, search_text, limit
+    db, notify_changes, fields, sort_by, ascending, search_text, limit, template=None
 ):
     is_remote = notify_changes is not None
+    if is_remote:
+        # templates allow arbitrary code execution via python templates. We
+        # could possibly disallow only python templates but that is more work
+        # than I feel like doing for this, so simply ignore templates on remote
+        # connections.
+        template = None
+    formatter = None
     with db.safe_read_lock:
         fm = db.field_metadata
         afields = set(FIELDS) | {'id'}
         for k in fm.custom_field_keys():
             afields.add('*' + k[1:])
         if 'all' in fields:
-            fields = sorted(afields)
+            fields = sorted(afields if template else (afields - {'template'}))
         sort_by = sort_by or 'id'
-        if sort_by not in afields:
-            return 'Unknown sort field: {}'.format(sort_by)
+        sort_fields = sort_by.split(',')
+        for sf in sort_fields:
+            if sf not in afields:
+                return f'Unknown sort field: {sf}'
+        sort_spec = [(sf, ascending) for sf in sort_fields]
         if not set(fields).issubset(afields):
             return 'Unknown fields: {}'.format(', '.join(set(fields) - afields))
         if search_text:
-            book_ids = db.multisort([(sort_by, ascending)],
-                                    ids_to_sort=db.search(search_text))
+            book_ids = db.multisort(sort_spec, ids_to_sort=db.search(search_text))
         else:
-            book_ids = db.multisort([(sort_by, ascending)])
+            book_ids = db.multisort(sort_spec)
         if limit > -1:
             book_ids = book_ids[:limit]
         data = {}
@@ -64,7 +71,21 @@ def implementation(
                 continue
             if field == 'isbn':
                 x = db.all_field_for('identifiers', book_ids, default_value={})
-                data[field] = {k: v.get('isbn') or '' for k, v in x.iteritems()}
+                data[field] = {k: v.get('isbn') or '' for k, v in iteritems(x)}
+                continue
+            if field == 'template':
+                if not template:
+                    data['template'] = _('Template not allowed') if is_remote else _('No template specified')
+                    continue
+                vals = {}
+                global_vars = {}
+                if formatter is None:
+                    from calibre.ebooks.metadata.book.formatter import SafeFormat
+                    formatter = SafeFormat()
+                for book_id in book_ids:
+                    mi = db.get_proxy_metadata(book_id)
+                    vals[book_id] = formatter.safe_format(template, {}, 'TEMPLATE ERROR', mi, global_vars=global_vars)
+                data['template'] = vals
                 continue
             field = field.replace('*', '#')
             metadata[field] = fm[field]
@@ -76,41 +97,41 @@ def implementation(
                     data[field] = {k: cover(db, k) for k in book_ids}
                     continue
             data[field] = db.all_field_for(field, book_ids)
-    return {'book_ids': book_ids, "data": data, 'metadata': metadata, 'fields':fields}
+    return {'book_ids': book_ids, 'data': data, 'metadata': metadata, 'fields':fields}
 
 
 def stringify(data, metadata, for_machine):
-    for field, m in metadata.iteritems():
+    for field, m in iteritems(metadata):
         if field == 'authors':
             data[field] = {
                 k: authors_to_string(v)
-                for k, v in data[field].iteritems()
+                for k, v in iteritems(data[field])
             }
         else:
             dt = m['datatype']
             if dt == 'datetime':
                 data[field] = {
                     k: isoformat(v, as_utc=for_machine) if v else 'None'
-                    for k, v in data[field].iteritems()
+                    for k, v in iteritems(data[field])
                 }
             elif not for_machine:
                 ism = m['is_multiple']
                 if ism:
                     data[field] = {
                         k: ism['list_to_ui'].join(v)
-                        for k, v in data[field].iteritems()
+                        for k, v in iteritems(data[field])
                     }
                     if field == 'formats':
                         data[field] = {
                             k: '[' + v + ']'
-                            for k, v in data[field].iteritems()
+                            for k, v in iteritems(data[field])
                         }
 
 
 def as_machine_data(book_ids, data, metadata):
     for book_id in book_ids:
         ans = {'id': book_id}
-        for field, val_map in data.iteritems():
+        for field, val_map in iteritems(data):
             val = val_map.get(book_id)
             if val is not None:
                 ans[field.replace('#', '*')] = val
@@ -119,16 +140,15 @@ def as_machine_data(book_ids, data, metadata):
 
 def prepare_output_table(fields, book_ids, data, metadata):
     ans = []
-    u = type('')
     for book_id in book_ids:
         row = []
         ans.append(row)
         for field in fields:
             if field == 'id':
-                row.append(u(book_id))
+                row.append(str(book_id))
                 continue
             val = data.get(field.replace('*', '#'), {}).get(book_id)
-            row.append(u(val).replace('\n', ' '))
+            row.append(str(val).replace('\n', ' '))
     return ans
 
 
@@ -143,11 +163,24 @@ def do_list(
     separator,
     prefix,
     limit,
+    template,
+    template_file,
+    template_title,
     for_machine=False
 ):
     if sort_by is None:
         ascending = True
-    ans = dbctx.run('list', fields, sort_by, ascending, search_text, limit)
+    if dbctx.is_remote and (template or template_file):
+        raise SystemExit(_('The use of templates is disallowed when connecting to remote servers for security reasons'))
+    if 'template' in (f.strip() for f in fields):
+        if template_file:
+            with open(template_file, 'rb') as f:
+                template = f.read().decode('utf-8')
+        if not template:
+            raise SystemExit(_('You must provide a template'))
+        ans = dbctx.run('list', fields, sort_by, ascending, search_text, limit, template)
+    else:
+        ans = dbctx.run('list', fields, sort_by, ascending, search_text, limit)
     try:
         book_ids, data, metadata = ans['book_ids'], ans['data'], ans['metadata']
     except TypeError:
@@ -160,17 +193,19 @@ def do_list(
     fields = ['id'] + fields
     stringify(data, metadata, for_machine)
     if for_machine:
-        json.dump(
+        raw = json.dumps(
             list(as_machine_data(book_ids, data, metadata)),
-            sys.stdout,
             indent=2,
             sort_keys=True
         )
+        if not isinstance(raw, bytes):
+            raw = raw.encode('utf-8')
+        getattr(sys.stdout, 'buffer', sys.stdout).write(raw)
         return
     from calibre.utils.terminal import ColoredStream, geometry
 
     output_table = prepare_output_table(fields, book_ids, data, metadata)
-    widths = list(map(lambda x: 0, fields))
+    widths = [0 for x in fields]
 
     for record in output_table:
         for j in range(len(fields)):
@@ -180,7 +215,7 @@ def do_list(
     if not screen_width:
         screen_width = 80
     field_width = screen_width // len(fields)
-    base_widths = map(lambda x: min(x + 1, field_width), widths)
+    base_widths = [min(x + 1, field_width) for x in widths]
 
     while sum(base_widths) < screen_width:
         adjusted = False
@@ -196,27 +231,29 @@ def do_list(
 
     widths = list(base_widths)
     titles = map(
-        lambda x, y: '%-*s%s' % (x - len(separator), y, separator), widths,
-        fields
+        lambda x, y: '%-*s%s' % (x - len(separator), y, separator), widths,  # noqa: UP031
+        [template_title if v == 'template' else v for v in fields]
     )
     with ColoredStream(sys.stdout, fg='green'):
-        prints(''.join(titles))
+        print(''.join(titles), flush=True)
+    stdout = getattr(sys.stdout, 'buffer', sys.stdout)
+    linesep = as_bytes(os.linesep)
 
     wrappers = [TextWrapper(x - 1).wrap if x > 1 else lambda y: y for x in widths]
 
     for record in output_table:
         text = [
-            wrappers[i](record[i]) for i, field in enumerate(fields)
+            wrappers[i](record[i]) for i in range(len(fields))
         ]
         lines = max(map(len, text))
         for l in range(lines):
-            for i, field in enumerate(text):
-                ft = text[i][l] if l < len(text[i]) else u''
-                sys.stdout.write(ft.encode('utf-8'))
+            for i in range(len(text)):
+                ft = text[i][l] if l < len(text[i]) else ''
+                stdout.write(ft.encode('utf-8'))
                 if i < len(text) - 1:
-                    filler = (u'%*s' % (widths[i] - str_width(ft) - 1, u''))
-                    sys.stdout.write((filler + separator).encode('utf-8'))
-            print()
+                    filler = ' '*(widths[i] - str_width(ft) - 1)
+                    stdout.write((filler + separator).encode('utf-8'))
+            stdout.write(linesep)
 
 
 def option_parser(get_parser, args):
@@ -247,7 +284,7 @@ List the books available in the calibre database.
         '--sort-by',
         default=None,
         help=_(
-            'The field by which to sort the results.\nAvailable fields: {0}\nDefault: {1}'
+            'The field by which to sort the results. You can specify multiple fields by separating them with commas.\nAvailable fields: {0}\nDefault: {1}'
         ).format(', '.join(sorted(FIELDS)), 'id')
     )
     parser.add_option(
@@ -261,8 +298,9 @@ List the books available in the calibre database.
         '--search',
         default=None,
         help=_(
-            'Filter the results by the search query. For the format of the search query,'
-            ' please see the search related documentation in the User Manual. Default is to do no filtering.'
+            'Filter the results by the search query. For the format of the search '
+            'query, please see the search related documentation in the User '
+            'Manual. Default is to do no filtering.'
         )
     )
     parser.add_option(
@@ -297,8 +335,28 @@ List the books available in the calibre database.
         default=False,
         action='store_true',
         help=_(
-            'Generate output in JSON format, which is more suitable for machine parsing. Causes the line width and separator options to be ignored.'
+            'Generate output in JSON format, which is more suitable for machine '
+            'parsing. Causes the line width and separator options to be ignored.'
         )
+    )
+    parser.add_option(
+        '--template',
+        default=None,
+        help=_('The template to run if "{}" is in the field list. Note that templates are ignored while connecting to a calibre server.'
+               ' Default: None').format('template')
+    )
+    parser.add_option(
+        '--template_file',
+        '-t',
+        default=None,
+        help=_('Path to a file containing the template to run if "{}" is in '
+               'the field list. Default: None').format('template')
+    )
+    parser.add_option(
+        '--template_heading',
+        default='template',
+        help=_('Heading for the template column. Default: %default. This option '
+               'is ignored if the option {} is set').format('--for-machine')
     )
     return parser
 
@@ -321,6 +379,9 @@ def main(opts, args, dbctx):
         opts.separator,
         opts.prefix,
         opts.limit,
+        opts.template,
+        opts.template_file,
+        opts.template_heading,
         for_machine=opts.for_machine
     )
     return 0

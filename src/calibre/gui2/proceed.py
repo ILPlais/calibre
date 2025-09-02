@@ -1,7 +1,5 @@
-#!/usr/bin/env python2
-# vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
+#!/usr/bin/env python
+
 
 __license__   = 'GPL v3'
 __copyright__ = '2012, Kovid Goyal <kovid@kovidgoyal.net>'
@@ -9,10 +7,34 @@ __docformat__ = 'restructuredtext en'
 
 from collections import namedtuple
 
-from PyQt5.Qt import (
-    QWidget, Qt, QLabel, QVBoxLayout, QDialogButtonBox, QApplication, QTimer, QPixmap,
-    QSize, pyqtSignal, QIcon, QPlainTextEdit, QCheckBox, QPainter, QHBoxLayout, QFontMetrics,
-    QPainterPath, QRectF, pyqtProperty, QPropertyAnimation, QEasingCurve, QSizePolicy, QImage)
+from qt.core import (
+    QApplication,
+    QCheckBox,
+    QDialogButtonBox,
+    QEasingCurve,
+    QEvent,
+    QFontMetrics,
+    QHBoxLayout,
+    QIcon,
+    QImage,
+    QLabel,
+    QPainter,
+    QPainterPath,
+    QPalette,
+    QPixmap,
+    QPlainTextEdit,
+    QPropertyAnimation,
+    QRectF,
+    QSize,
+    QSizePolicy,
+    Qt,
+    QTimer,
+    QVBoxLayout,
+    QWidget,
+    pyqtProperty,
+    pyqtSignal,
+    sip,
+)
 
 from calibre.constants import __version__
 from calibre.gui2.dialogs.message_box import ViewLog
@@ -21,7 +43,7 @@ Question = namedtuple('Question', 'payload callback cancel_callback '
         'title msg html_log log_viewer_title log_is_file det_msg '
         'show_copy_button checkbox_msg checkbox_checked action_callback '
         'action_label action_icon focus_action show_det show_ok icon '
-        'log_viewer_unique_name')
+        'log_viewer_unique_name auto_hide_after')
 
 
 class Icon(QWidget):
@@ -45,12 +67,12 @@ class Icon(QWidget):
 
     def __init__(self, parent):
         QWidget.__init__(self, parent)
-        self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         self.set_icon('dialog_question.png')
         self.default_icon = self.icon
         self._fraction = 0.0
-        self.animation = a = QPropertyAnimation(self, b"fraction", self)
-        a.setDuration(2000), a.setEasingCurve(QEasingCurve.Linear)
+        self.animation = a = QPropertyAnimation(self, b'fraction', self)
+        a.setDuration(2000), a.setEasingCurve(QEasingCurve.Type.Linear)
         a.setStartValue(0.0), a.setEndValue(2.0), a.setLoopCount(10)
 
     def set_icon(self, icon):
@@ -59,7 +81,7 @@ class Icon(QWidget):
         elif icon is None:
             self.icon = self.default_icon
         else:
-            self.icon = QIcon(I(icon)).pixmap(self.sizeHint())
+            self.icon = QIcon.ic(icon).pixmap(self.sizeHint())
         self.update()
 
     def sizeHint(self):
@@ -97,11 +119,12 @@ class ProceedQuestion(QWidget):
     def __init__(self, parent):
         QWidget.__init__(self, parent)
         self.setVisible(False)
+        self.auto_hide_timer = None
         parent.installEventFilter(self)
 
         self._show_fraction = 0.0
-        self.show_animation = a = QPropertyAnimation(self, b"show_fraction", self)
-        a.setDuration(1000), a.setEasingCurve(QEasingCurve.OutQuad)
+        self.show_animation = a = QPropertyAnimation(self, b'show_fraction', self)
+        a.setDuration(1000), a.setEasingCurve(QEasingCurve.Type.OutQuad)
         a.setStartValue(0.0), a.setEndValue(1.0)
         a.finished.connect(self.stop_show_animation)
         self.rendered_pixmap = None
@@ -114,24 +137,25 @@ class ProceedQuestion(QWidget):
         self.bb = QDialogButtonBox()
         self.bb.accepted.connect(self.accept)
         self.bb.rejected.connect(self.reject)
-        self.log_button = self.bb.addButton(_('View log'), self.bb.ActionRole)
-        self.log_button.setIcon(QIcon(I('debug.png')))
+        self.log_button = self.bb.addButton(_('View log'), QDialogButtonBox.ButtonRole.ActionRole)
+        self.log_button.setIcon(QIcon.ic('debug.png'))
         self.log_button.clicked.connect(self.show_log)
         self.copy_button = self.bb.addButton(_('&Copy to clipboard'),
-                self.bb.ActionRole)
+                QDialogButtonBox.ButtonRole.ActionRole)
         self.copy_button.clicked.connect(self.copy_to_clipboard)
-        self.action_button = self.bb.addButton('', self.bb.ActionRole)
+        self.action_button = self.bb.addButton('', QDialogButtonBox.ButtonRole.ActionRole)
         self.action_button.clicked.connect(self.action_clicked)
         self.show_det_msg = _('Show &details')
         self.hide_det_msg = _('Hide &details')
-        self.det_msg_toggle = self.bb.addButton(self.show_det_msg, self.bb.ActionRole)
+        self.det_msg_toggle = self.bb.addButton(self.show_det_msg, QDialogButtonBox.ButtonRole.ActionRole)
         self.det_msg_toggle.clicked.connect(self.toggle_det_msg)
         self.det_msg_toggle.setToolTip(
                 _('Show detailed information about this error'))
         self.det_msg = PlainTextEdit(self)
         self.det_msg.setReadOnly(True)
-        self.bb.setStandardButtons(self.bb.Yes|self.bb.No|self.bb.Ok)
-        self.bb.button(self.bb.Yes).setDefault(True)
+        self.bb.setStandardButtons(
+            QDialogButtonBox.StandardButton.Yes | QDialogButtonBox.StandardButton.No | QDialogButtonBox.StandardButton.Ok)
+        self.bb.button(QDialogButtonBox.StandardButton.Yes).setDefault(True)
         self.title_label = title = QLabel('A dummy title')
         f = title.font()
         f.setBold(True)
@@ -150,16 +174,16 @@ class ProceedQuestion(QWidget):
         l.addWidget(self.bb)
 
         self.ask_question.connect(self.do_ask_question,
-                type=Qt.QueuedConnection)
-        self.setFocusPolicy(Qt.NoFocus)
+                type=Qt.ConnectionType.QueuedConnection)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         for child in self.findChildren(QWidget):
-            child.setFocusPolicy(Qt.NoFocus)
+            child.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.setFocusProxy(self.parent())
         self.resize_timer = t = QTimer(self)
         t.setSingleShot(True), t.setInterval(100), t.timeout.connect(self.parent_resized)
 
     def eventFilter(self, obj, ev):
-        if ev.type() == ev.Resize and self.isVisible():
+        if ev.type() == QEvent.Type.Resize and self.isVisible():
             self.resize_timer.start()
         return False
 
@@ -169,10 +193,7 @@ class ProceedQuestion(QWidget):
 
     def copy_to_clipboard(self, *args):
         QApplication.clipboard().setText(
-                'calibre, version %s\n%s: %s\n\n%s' %
-                (__version__, unicode(self.windowTitle()),
-                    unicode(self.msg_label.text()),
-                    unicode(self.det_msg.toPlainText())))
+                f'calibre, version {__version__}\n{self.windowTitle()!s}: {self.msg_label.text()!s}\n\n{self.det_msg.toPlainText()!s}')
         self.copy_button.setText(_('Copied'))
 
     def action_clicked(self):
@@ -182,6 +203,7 @@ class ProceedQuestion(QWidget):
         self.accept()
 
     def accept(self):
+        self.cancel_auto_hide()
         if self.questions:
             payload, callback, cancel_callback = self.questions[0][:3]
             self.questions = self.questions[1:]
@@ -192,6 +214,7 @@ class ProceedQuestion(QWidget):
         self.hide()
 
     def reject(self):
+        self.cancel_auto_hide()
         if self.questions:
             payload, callback, cancel_callback = self.questions[0][:3]
             self.questions = self.questions[1:]
@@ -210,7 +233,7 @@ class ProceedQuestion(QWidget):
         self.show_question()
 
     def toggle_det_msg(self, *args):
-        vis = unicode(self.det_msg_toggle.text()) == self.hide_det_msg
+        vis = str(self.det_msg_toggle.text()) == self.hide_det_msg
         self.det_msg_toggle.setText(self.show_det_msg if vis else
                 self.hide_det_msg)
         self.det_msg.setVisible(not vis)
@@ -224,10 +247,16 @@ class ProceedQuestion(QWidget):
         self.resize(sz)
         self.position_widget()
 
+    def cancel_auto_hide(self):
+        if self.auto_hide_timer is not None:
+            self.auto_hide_timer.stop()
+            self.auto_hide_timer = None
+
     def show_question(self):
         if not self.questions:
             return
         if not self.isVisible():
+            self.cancel_auto_hide()
             question = self.questions[0]
             self.msg_label.setText(question.msg)
             self.icon.set_icon(question.icon)
@@ -240,7 +269,7 @@ class ProceedQuestion(QWidget):
                     QIcon() if question.action_icon is None else question.action_icon)
             # Force the button box to relayout its buttons, as button text
             # might have changed
-            self.bb.setOrientation(Qt.Vertical), self.bb.setOrientation(Qt.Horizontal)
+            self.bb.setOrientation(Qt.Orientation.Vertical), self.bb.setOrientation(Qt.Orientation.Horizontal)
             self.det_msg.setPlainText(question.det_msg or '')
             self.det_msg.setVisible(False)
             self.det_msg_toggle.setVisible(bool(question.det_msg))
@@ -249,27 +278,44 @@ class ProceedQuestion(QWidget):
             if question.checkbox_msg is not None:
                 self.checkbox.setText(question.checkbox_msg)
                 self.checkbox.setChecked(question.checkbox_checked)
-            self.bb.button(self.bb.Ok).setVisible(question.show_ok)
-            self.bb.button(self.bb.Yes).setVisible(not question.show_ok)
-            self.bb.button(self.bb.No).setVisible(not question.show_ok)
+            self.bb.button(QDialogButtonBox.StandardButton.Ok).setVisible(question.show_ok)
+            self.bb.button(QDialogButtonBox.StandardButton.Yes).setVisible(not question.show_ok)
+            self.bb.button(QDialogButtonBox.StandardButton.No).setVisible(not question.show_ok)
             self.copy_button.setVisible(bool(question.show_copy_button))
             self.action_button.setVisible(question.action_callback is not None)
             self.toggle_det_msg() if question.show_det else self.do_resize()
             self.show_widget()
             button = self.action_button if question.focus_action and question.action_callback is not None else \
-                (self.bb.button(self.bb.Ok) if question.show_ok else self.bb.button(self.bb.Yes))
+                (self.bb.button(QDialogButtonBox.StandardButton.Ok) if question.show_ok else self.bb.button(QDialogButtonBox.StandardButton.Yes))
             button.setDefault(True)
-            self.raise_()
+            self.raise_without_focus()
             self.start_show_animation()
+            if question.auto_hide_after > 0:
+                self.auto_hide_timer = t = QTimer(self)
+                t.setSingleShot(True)
+                t.timeout.connect(self.auto_hide)
+                t.start(1000 * question.auto_hide_after)
+
+    def auto_hide(self):
+        self.auto_hide_timer = None
+        if not sip.isdeleted(self) and self.isVisible():
+            self.reject()
 
     def start_show_animation(self):
         if self.rendered_pixmap is not None:
             return
 
         dpr = getattr(self, 'devicePixelRatioF', self.devicePixelRatio)()
-        p = QImage(dpr * self.size(), QImage.Format_ARGB32_Premultiplied)
+        p = QImage(dpr * self.size(), QImage.Format.Format_ARGB32_Premultiplied)
         p.setDevicePixelRatio(dpr)
-        self.render(p)
+        # For some reason, Qt scrolls the book view when rendering this widget,
+        # for the very first time, so manually preserve its position
+        pr = getattr(self.parent(), 'library_view', None)
+        if not hasattr(pr, 'preserve_state'):
+            self.render(p)
+        else:
+            with pr.preserve_state():
+                self.render(p)
         self.rendered_pixmap = QPixmap.fromImage(p)
         self.original_visibility = v = []
         for child in self.findChildren(QWidget):
@@ -301,18 +347,21 @@ class ProceedQuestion(QWidget):
         self.show()
         self.position_widget()
 
-    def dummy_question(self, action_label=None):
+    def dummy_question(self, action_label=None, auto_hide_after=0):
         self(lambda *args:args, (), 'dummy log', 'Log Viewer', 'A Dummy Popup',
              'This is a dummy popup to easily test things, with a long line of text that should wrap. '
              'This is a dummy popup to easily test things, with a long line of text that should wrap',
-             checkbox_msg='A dummy checkbox',
+             checkbox_msg='A dummy checkbox', auto_hide_after=auto_hide_after,
              action_callback=lambda *args: args, action_label=action_label or 'An action')
 
-    def __call__(self, callback, payload, html_log, log_viewer_title, title,
-            msg, det_msg='', show_copy_button=False, cancel_callback=None,
-            log_is_file=False, checkbox_msg=None, checkbox_checked=False,
-            action_callback=None, action_label=None, action_icon=None, focus_action=False,
-            show_det=False, show_ok=False, icon=None, log_viewer_unique_name=None, **kw):
+    def __call__(
+        self, callback, payload, html_log, log_viewer_title, title,
+        msg, det_msg='', show_copy_button=False, cancel_callback=None,
+        log_is_file=False, checkbox_msg=None, checkbox_checked=False, auto_hide_after=0,
+        action_callback=None, action_label=None, action_icon=None, focus_action=False,
+        show_det=False, show_ok=False, icon=None, log_viewer_unique_name=None,
+        **kw
+    ):
         '''
         A non modal popup that notifies the user that a background task has
         been completed. This class guarantees that only a single popup is
@@ -337,6 +386,7 @@ class ProceedQuestion(QWidget):
                              called with both the payload and the state of the
                              checkbox as arguments.
         :param checkbox_checked: If True the checkbox is checked by default.
+        :param auto_hide_after: Number of seconds to automatically cancel this question after. Zero or less for no auto hide.
         :param action_callback: If not None, an extra button is added, which
                                 when clicked will cause action_callback to be called
                                 instead of callback. action_callback is called in
@@ -346,14 +396,14 @@ class ProceedQuestion(QWidget):
         :param focus_action: If True, the action button will be focused instead of the Yes button
         :param show_det: If True, the Detailed message will be shown initially
         :param show_ok: If True, OK will be shown instead of YES/NO
-        :param icon: The icon to be used for this popop (defaults to question mark). Can be either a QIcon or a string to be used with I()
+        :param icon: The icon to be used for this popop (defaults to question mark). Can be either a QIcon or a string to be used with QIcon.ic()
         :log_viewer_unique_name: If set, ViewLog will remember/reuse its size for this name in calibre.gui2.gprefs
         '''
         question = Question(
             payload, callback, cancel_callback, title, msg, html_log,
             log_viewer_title, log_is_file, det_msg, show_copy_button,
             checkbox_msg, checkbox_checked, action_callback, action_label,
-            action_icon, focus_action, show_det, show_ok, icon, log_viewer_unique_name)
+            action_icon, focus_action, show_det, show_ok, icon, log_viewer_unique_name, auto_hide_after)
         self.questions.append(question)
         self.show_question()
 
@@ -369,8 +419,8 @@ class ProceedQuestion(QWidget):
 
     def paintEvent(self, ev):
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing, True)
-        painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
         try:
             if self.rendered_pixmap is None:
                 self.paint_background(painter)
@@ -381,24 +431,25 @@ class ProceedQuestion(QWidget):
 
     def animated_paint(self, painter):
         top = (1 - self._show_fraction) * self.height()
-        painter.drawPixmap(0, top, self.rendered_pixmap)
+        painter.drawPixmap(0, int(top), self.rendered_pixmap)
 
     def paint_background(self, painter):
         br = 12  # border_radius
         bw = 1  # border_width
         pal = self.palette()
-        c = pal.color(pal.Window)
+        c = pal.color(QPalette.ColorRole.Window)
         c.setAlphaF(0.9)
         p = QPainterPath()
         p.addRoundedRect(QRectF(self.rect()), br, br)
         painter.fillPath(p, c)
         p.addRoundedRect(QRectF(self.rect()).adjusted(bw, bw, -bw, -bw), br, br)
-        painter.fillPath(p, pal.color(pal.WindowText))
+        painter.fillPath(p, pal.color(QPalette.ColorRole.WindowText))
 
 
 def main():
+    from qt.core import QMainWindow, QStatusBar, QTimer
+
     from calibre.gui2 import Application
-    from PyQt5.Qt import QMainWindow, QStatusBar, QTimer
     app = Application([])
     w = QMainWindow()
     s = QStatusBar(w)
@@ -408,6 +459,10 @@ def main():
     p = ProceedQuestion(w)
 
     def doit():
+        p(
+            lambda p:None, None, 'ass2', 'ass2', 'testing auto hide', 'this popup will auto hide after 2 seconds',
+            auto_hide_after=2,
+        )
         p.dummy_question()
         p.dummy_question(action_label='A very long button for testing relayout (indeed)')
         p(
@@ -415,7 +470,8 @@ def main():
             det_msg='details shown first, with a long line to test wrapping of text and width layout',
             show_det=True, show_ok=True)
     QTimer.singleShot(10, doit)
-    app.exec_()
+    app.exec()
+
 
 if __name__ == '__main__':
     main()

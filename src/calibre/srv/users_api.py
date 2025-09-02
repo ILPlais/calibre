@@ -1,8 +1,6 @@
-#!/usr/bin/env python2
-# vim:fileencoding=utf-8
+#!/usr/bin/env python
 # License: GPLv3 Copyright: 2017, Kovid Goyal <kovid at kovidgoyal.net>
 
-from __future__ import absolute_import, division, print_function, unicode_literals
 
 import json
 
@@ -10,6 +8,7 @@ from calibre import as_unicode
 from calibre.srv.errors import HTTPBadRequest, HTTPForbidden
 from calibre.srv.routes import endpoint
 from calibre.srv.users import validate_password
+from calibre.utils.localization import _
 
 
 @endpoint('/users/change-pw', methods={'POST'})
@@ -17,6 +16,8 @@ def change_pw(ctx, rd):
     user = rd.username or None
     if user is None:
         raise HTTPForbidden('Anonymous users are not allowed to change passwords')
+    if not ctx.user_manager.is_allowed_to_change_password_via_http(user):
+        raise HTTPForbidden(f'The user {user} is not allowed to change passwords')
     try:
         pw = json.loads(rd.request_body_file.read())
         oldpw, newpw = pw['oldpw'], pw['newpw']
@@ -32,4 +33,4 @@ def change_pw(ctx, rd):
     except Exception as err:
         raise HTTPBadRequest(as_unicode(err))
     ctx.log.warn('Changed password for user', user)
-    return 'password for {} changed'.format(user)
+    return f'password for {user} changed'

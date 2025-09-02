@@ -1,7 +1,3 @@
-# -*- coding: utf-8 -*-
-
-from __future__ import (unicode_literals, division, absolute_import, print_function)
-
 __license__ = 'GPL 3'
 __copyright__ = '2011, John Schember <john@nachtimwald.com>'
 __docformat__ = 'restructuredtext en'
@@ -9,20 +5,25 @@ __docformat__ = 'restructuredtext en'
 import re
 from random import shuffle
 
-from PyQt5.Qt import (Qt, QDialog, QDialogButtonBox, QTimer, QCheckBox, QLabel,
-                      QVBoxLayout, QIcon, QWidget, QTabWidget, QGridLayout)
+from qt.core import QCheckBox, QDialog, QDialogButtonBox, QGridLayout, QIcon, QLabel, QSize, QStyle, Qt, QTabWidget, QTimer, QVBoxLayout, QWidget
 
-from calibre.gui2 import JSONConfig, info_dialog, error_dialog
+from calibre.gui2 import JSONConfig, error_dialog, info_dialog
 from calibre.gui2.dialogs.choose_format import ChooseFormatDialog
 from calibre.gui2.ebook_download import show_download_info
 from calibre.gui2.progress_indicator import ProgressIndicator
 from calibre.gui2.store.config.chooser.chooser_widget import StoreChooserWidget
 from calibre.gui2.store.config.search.search_widget import StoreConfigWidget
 from calibre.gui2.store.search.adv_search_builder import AdvSearchBuilderDialog
-from calibre.gui2.store.search.download_thread import SearchThreadPool, \
-    CacheUpdateThreadPool
+from calibre.gui2.store.search.download_thread import CacheUpdateThreadPool, SearchThreadPool
 from calibre.gui2.store.search.search_ui import Ui_Dialog
 from calibre.utils.filenames import ascii_filename
+
+
+def add_items_to_context_menu(self, menu):
+    menu.addSeparator()
+    ac = menu.addAction(_('Clear search &history'))
+    ac.triggered.connect(self.clear_history)
+    return menu
 
 
 class SearchDialog(QDialog, Ui_Dialog):
@@ -33,11 +34,16 @@ class SearchDialog(QDialog, Ui_Dialog):
     def __init__(self, gui, parent=None, query=''):
         QDialog.__init__(self, parent)
         self.setupUi(self)
+        s = self.style()
+        self.close.setIcon(s.standardIcon(QStyle.StandardPixmap.SP_DialogCloseButton))
 
         self.config = JSONConfig('store/search')
         self.search_title.initialize('store_search_search_title')
         self.search_author.initialize('store_search_search_author')
         self.search_edit.initialize('store_search_search')
+        self.search_title.add_items_to_context_menu = add_items_to_context_menu
+        self.search_author.add_items_to_context_menu = add_items_to_context_menu
+        self.search_edit.add_items_to_context_menu = add_items_to_context_menu
 
         # Loads variables that store various settings.
         # This needs to be called soon in __init__ because
@@ -51,7 +57,10 @@ class SearchDialog(QDialog, Ui_Dialog):
         self.cache_pool = CacheUpdateThreadPool(self.cache_thread_count)
         self.results_view.model().cover_pool.set_thread_count(self.cover_thread_count)
         self.results_view.model().details_pool.set_thread_count(self.details_thread_count)
-        self.results_view.setCursor(Qt.PointingHandCursor)
+        self.results_view.setCursor(Qt.CursorShape.PointingHandCursor)
+        # needed for live updates of amazon_live.py
+        from calibre.live import start_worker
+        start_worker()
 
         # Check for results and hung threads.
         self.checker = QTimer()
@@ -66,7 +75,7 @@ class SearchDialog(QDialog, Ui_Dialog):
         self.setup_store_checks()
 
         # Set the search query
-        if isinstance(query, (str, unicode)):
+        if isinstance(query, (bytes, str)):
             self.search_edit.setText(query)
         elif isinstance(query, dict):
             if 'author' in query:
@@ -77,15 +86,18 @@ class SearchDialog(QDialog, Ui_Dialog):
         # Create and add the progress indicator
         self.pi = ProgressIndicator(self, 24)
         self.button_layout.takeAt(0)
-        self.button_layout.setAlignment(Qt.AlignCenter)
-        self.button_layout.insertWidget(0, self.pi, 0, Qt.AlignCenter)
+        self.button_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.button_layout.insertWidget(0, self.pi, 0, Qt.AlignmentFlag.AlignCenter)
 
-        self.adv_search_button.setIcon(QIcon(I('gear.png')))
+        self.adv_search_button.setIcon(QIcon.ic('gear.png'))
         self.adv_search_button.setToolTip(_('Advanced search'))
-        self.configure.setIcon(QIcon(I('config.png')))
+        self.configure.setIcon(QIcon.ic('config.png'))
 
         self.adv_search_button.clicked.connect(self.build_adv_search)
         self.search.clicked.connect(self.toggle_search)
+        self.search_title.returnPressed.connect(self.toggle_search)
+        self.search_author.returnPressed.connect(self.toggle_search)
+        self.search_edit.returnPressed.connect(self.toggle_search)
         self.checker.timeout.connect(self.get_results)
         self.progress_checker.timeout.connect(self.check_progress)
         self.results_view.activated.connect(self.result_item_activated)
@@ -119,7 +131,7 @@ class SearchDialog(QDialog, Ui_Dialog):
         store_list_layout = QGridLayout()
         stores_check_widget.setLayout(store_list_layout)
 
-        icon = QIcon(I('donate.png'))
+        icon = QIcon.ic('donate.png')
         for i, x in enumerate(sorted(self.gui.istores.keys(), key=lambda x: x.lower())):
             cbox = QCheckBox(x)
             cbox.setChecked(existing.get(x, first_run))
@@ -137,7 +149,7 @@ class SearchDialog(QDialog, Ui_Dialog):
 
     def build_adv_search(self):
         adv = AdvSearchBuilderDialog(self)
-        if adv.exec_() == QDialog.Accepted:
+        if adv.exec() == QDialog.DialogCode.Accepted:
             self.search_edit.setText(adv.search_string())
 
     def resize_columns(self):
@@ -146,9 +158,9 @@ class SearchDialog(QDialog, Ui_Dialog):
         self.results_view.setColumnWidth(0, 85)
         total = total - 85
         # Title / Author
-        self.results_view.setColumnWidth(1,int(total*.40))
+        self.results_view.setColumnWidth(1, int(total*.40))
         # Price
-        self.results_view.setColumnWidth(2,int(total*.12))
+        self.results_view.setColumnWidth(2, int(total*.12))
         # DRM
         self.results_view.setColumnWidth(3, int(total*.15))
         # Store / Formats
@@ -172,7 +184,7 @@ class SearchDialog(QDialog, Ui_Dialog):
         # Prevent hitting the enter key twice in quick succession causing
         # the search to start and stop
         self.search.setEnabled(False)
-        QTimer.singleShot(1000, lambda :self.search.setEnabled(True))
+        QTimer.singleShot(1000, lambda: self.search.setEnabled(True))
 
     def do_search(self):
         # Stop all running threads.
@@ -184,12 +196,12 @@ class SearchDialog(QDialog, Ui_Dialog):
         # Don't start a search if there is nothing to search for.
         query = []
         if self.search_title.text():
-            query.append(u'title2:"~%s"' % unicode(self.search_title.text()).replace('"', ' '))
+            query.append('title2:"~{}"'.format(str(self.search_title.text()).replace('"', ' ')))
         if self.search_author.text():
-            query.append(u'author2:"%s"' % unicode(self.search_author.text()).replace('"', ' '))
+            query.append('author2:"{}"'.format(str(self.search_author.text()).replace('"', ' ')))
         if self.search_edit.text():
-            query.append(unicode(self.search_edit.text()))
-        query = " ".join(query)
+            query.append(str(self.search_edit.text()))
+        query = ' '.join(query)
         if not query.strip():
             error_dialog(self, _('No query'),
                         _('You must enter a title, author or keyword to'
@@ -198,15 +210,15 @@ class SearchDialog(QDialog, Ui_Dialog):
         self.searching = True
         self.search.setText(self.STOP_TEXT)
         # Give the query to the results model so it can do
-        # futher filtering.
+        # further filtering.
         self.results_view.model().set_query(query)
 
         # Plugins are in random order that does not change.
-        # Randomize the ord of the plugin names every time
+        # Randomize the order of the plugin names every time
         # there is a search. This way plugins closer
         # to a don't have an unfair advantage over
         # plugins further from a.
-        store_names = self.store_checks.keys()
+        store_names = list(self.store_checks)
         if not store_names:
             return
         # Remove all of our internal filtering logic from the query.
@@ -232,14 +244,14 @@ class SearchDialog(QDialog, Ui_Dialog):
         query = query.replace('<', '')
         # Remove the prefix.
         for loc in ('all', 'author', 'author2', 'authors', 'title', 'title2'):
-            query = re.sub(r'%s:"(?P<a>[^\s"]+)"' % loc, '\g<a>', query)
-            query = query.replace('%s:' % loc, '')
+            query = re.sub(rf'{loc}:"(?P<a>[^\s"]+)"', r'\g<a>', query)
+            query = query.replace(f'{loc}:', '')
         # Remove the prefix and search text.
         for loc in ('cover', 'download', 'downloads', 'drm', 'format', 'formats', 'price', 'store'):
-            query = re.sub(r'%s:"[^"]"' % loc, '', query)
-            query = re.sub(r'%s:[^\s]*' % loc, '', query)
+            query = re.sub(rf'{loc}:"[^"]"', '', query)
+            query = re.sub(rf'{loc}:[^\s]*', '', query)
         # Remove logic.
-        query = re.sub(r'(^|\s|")(and|not|or|a|the|is|of)(\s|$|")', r' ', query)
+        query = re.sub(r'(^|\s|")(and|not|or|a|the|is|of)(\s|$|")', ' ', query)
         # Remove "
         query = query.replace('"', '')
         # Remove excess whitespace.
@@ -248,11 +260,11 @@ class SearchDialog(QDialog, Ui_Dialog):
         return query.encode('utf-8')
 
     def save_state(self):
-        self.config['geometry'] = bytearray(self.saveGeometry())
+        self.save_geometry(self.config, 'geometry')
         self.config['store_splitter_state'] = bytearray(self.store_splitter.saveState())
         self.config['results_view_column_width'] = [self.results_view.columnWidth(i) for i in range(self.results_view.model().columnCount())]
         self.config['sort_col'] = self.results_view.model().sort_col
-        self.config['sort_order'] = self.results_view.model().sort_order
+        self.config['sort_order'] = self.results_view.model().sort_order.value
         self.config['open_external'] = self.open_external.isChecked()
 
         store_check = {}
@@ -261,10 +273,7 @@ class SearchDialog(QDialog, Ui_Dialog):
         self.config['store_checked'] = store_check
 
     def restore_state(self):
-        geometry = self.config.get('geometry', None)
-        if geometry:
-            self.restoreGeometry(geometry)
-
+        self.restore_geometry(self.config, 'geometry')
         splitter_state = self.config.get('store_splitter_state', None)
         if splitter_state:
             self.store_splitter.restoreState(splitter_state)
@@ -287,8 +296,11 @@ class SearchDialog(QDialog, Ui_Dialog):
                     self.store_checks[n].setChecked(store_check[n])
 
         self.results_view.model().sort_col = self.config.get('sort_col', 2)
-        self.results_view.model().sort_order = self.config.get('sort_order', Qt.AscendingOrder)
-        self.results_view.header().setSortIndicator(self.results_view.model().sort_col, self.results_view.model().sort_order)
+        so = self.config.get('sort_order', Qt.SortOrder.AscendingOrder)
+        if isinstance(so, int):
+            so = Qt.SortOrder(so)
+        self.results_view.model().sort_order = so
+        self.results_view.header().setSortIndicator(self.results_view.model().sort_col, so)
 
     def load_settings(self):
         # Seconds
@@ -313,7 +325,7 @@ class SearchDialog(QDialog, Ui_Dialog):
         # Create the config dialog. It's going to put two config widgets
         # into a QTabWidget for displaying all of the settings.
         d = QDialog(self)
-        button_box = QDialogButtonBox(QDialogButtonBox.Close)
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         v = QVBoxLayout(d)
         button_box.accepted.connect(d.accept)
         button_box.rejected.connect(d.reject)
@@ -330,25 +342,24 @@ class SearchDialog(QDialog, Ui_Dialog):
         tab_widget.addTab(search_config_widget, _('Configure s&earch'))
 
         # Restore dialog state.
-        geometry = self.config.get('config_dialog_geometry', None)
-        if geometry:
-            d.restoreGeometry(geometry)
-        else:
-            d.resize(800, 600)
+        d.restore_geometry(self.config, 'config_dialog_geometry')
         tab_index = self.config.get('config_dialog_tab_index', 0)
         tab_index = min(tab_index, tab_widget.count() - 1)
         tab_widget.setCurrentIndex(tab_index)
 
-        d.exec_()
+        d.exec()
 
         # Save dialog state.
-        self.config['config_dialog_geometry'] = bytearray(d.saveGeometry())
+        d.save_geometry(self.config, 'config_dialog_geometry')
         self.config['config_dialog_tab_index'] = tab_widget.currentIndex()
 
         search_config_widget.save_settings()
         self.config_changed()
         self.gui.load_store_plugins()
         self.setup_store_checks()
+
+    def sizeHint(self):
+        return QSize(800, 600)
 
     def config_changed(self):
         self.load_settings()
@@ -377,10 +388,10 @@ class SearchDialog(QDialog, Ui_Dialog):
                 self.results_view.model().add_result(res, store_plugin)
 
         if not self.search_pool.threads_running() and not self.results_view.model().has_results():
-            info_dialog(self, _('No matches'), _('Couldn\'t find any books matching your query.'), show=True, show_copy_button=False)
+            info_dialog(self, _('No matches'), _("Couldn't find any books matching your query."), show=True, show_copy_button=False)
 
     def update_book_total(self, total):
-        self.total.setText('%s' % total)
+        self.total.setText(f'{total}')
 
     def result_item_activated(self, index):
         result = self.results_view.model().get_result(index)
@@ -391,8 +402,8 @@ class SearchDialog(QDialog, Ui_Dialog):
             self.open_store(result)
 
     def download_book(self, result):
-        d = ChooseFormatDialog(self, _('Choose format to download to your library.'), result.downloads.keys())
-        if d.exec_() == d.Accepted:
+        d = ChooseFormatDialog(self, _('Choose format to download to your library.'), list(result.downloads.keys()))
+        if d.exec() == QDialog.DialogCode.Accepted:
             ext = d.format()
             fname = result.title[:60] + '.' + ext.lower()
             fname = ascii_filename(fname)
@@ -410,7 +421,7 @@ class SearchDialog(QDialog, Ui_Dialog):
             self.searching = False
         else:
             self.searching = True
-            if unicode(self.search.text()) != self.STOP_TEXT:
+            if str(self.search.text()) != self.STOP_TEXT:
                 self.search.setText(self.STOP_TEXT)
             if not self.pi.isAnimated():
                 self.pi.startAnimation()
@@ -433,19 +444,21 @@ class SearchDialog(QDialog, Ui_Dialog):
         self.cache_pool.abort()
         self.save_state()
 
-    def exec_(self):
-        if unicode(self.search_edit.text()).strip() or unicode(self.search_title.text()).strip() or unicode(self.search_author.text()).strip():
+    def exec(self):
+        if str(self.search_edit.text()).strip() or str(self.search_title.text()).strip() or str(self.search_author.text()).strip():
             self.do_search()
-        return QDialog.exec_(self)
+        return QDialog.exec(self)
+    exec_ = exec
 
 
 if __name__ == '__main__':
+    import sys
+
     from calibre.gui2 import Application
     from calibre.gui2.preferences.main import init_gui
-    import sys
     app = Application([])
     app
     gui = init_gui()
 
     s = SearchDialog(gui, query=' '.join(sys.argv[1:]))
-    s.exec_()
+    s.exec()

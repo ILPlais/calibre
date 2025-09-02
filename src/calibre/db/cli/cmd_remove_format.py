@@ -1,10 +1,7 @@
-#!/usr/bin/env python2
-# vim:fileencoding=utf-8
+#!/usr/bin/env python
 # License: GPLv3 Copyright: 2017, Kovid Goyal <kovid at kovidgoyal.net>
 
-from __future__ import absolute_import, division, print_function, unicode_literals
 
-from calibre.db.delete_service import delete_service
 from calibre.srv.changes import formats_removed
 
 readonly = False
@@ -15,7 +12,6 @@ def implementation(db, notify_changes, book_id, fmt):
     is_remote = notify_changes is not None
     fmt_map = {book_id: (fmt, )}
     db.remove_formats(fmt_map)
-    delete_service().wait()
     if is_remote:
         notify_changes(formats_removed(fmt_map))
 

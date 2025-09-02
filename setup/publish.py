@@ -1,17 +1,20 @@
-#!/usr/bin/env python2
-# vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
-from __future__ import with_statement
-from __future__ import print_function
+#!/usr/bin/env python
+
 
 __license__ = 'GPL v3'
 __copyright__ = '2009, Kovid Goyal <kovid@kovidgoyal.net>'
 __docformat__ = 'restructuredtext en'
 
-import os, shutil, subprocess, glob, tempfile, json, time, filecmp, atexit, sys
+import filecmp
+import json
+import os
+import shutil
+import subprocess
+import sys
+import time
 
-from setup import Command, __version__, require_clean_git, require_git_master
-from setup.upload import installers
-from setup.parallel_build import parallel_build
+from setup import Command, __version__, installer_names, manual_build_dir, require_clean_git, require_git_master
+from setup.parallel_build import create_job, parallel_build
 
 
 class Stage1(Command):
@@ -19,16 +22,12 @@ class Stage1(Command):
     description = 'Stage 1 of the publish process'
 
     sub_commands = [
-        'check',
-        'test',
         'cacerts',
-        'pot',
-        'build',
         'resources',
-        'translations',
         'iso639',
         'iso3166',
         'gui',
+        'recent_uas',
     ]
 
 
@@ -37,82 +36,37 @@ class Stage2(Command):
     description = 'Stage 2 of the publish process, builds the binaries'
 
     def run(self, opts):
-        from setup.multitail import pipe, multitail
-        for x in glob.glob(os.path.join(self.d(self.SRC), 'dist', '*')):
-            os.remove(x)
-        build = os.path.join(self.d(self.SRC), 'build')
-        if os.path.exists(build):
-            shutil.rmtree(build)
-        processes = []
-        tdir = tempfile.mkdtemp('_build_logs')
-        atexit.register(shutil.rmtree, tdir)
+        base = os.path.join(self.d(self.SRC))
+        for x in ('dist', 'build'):
+            x = os.path.join(base, x)
+            if os.path.exists(x):
+                shutil.rmtree(x)
+            os.mkdir(x)
+
         self.info('Starting builds for all platforms, this will take a while...')
 
-        def kill_child_on_parent_death():
-            import ctypes, signal
-            libc = ctypes.CDLL("libc.so.6")
-            libc.prctl(1, signal.SIGTERM)
-
-        for x in ('linux', 'osx', 'win'):
-            r, w = pipe()
-            p = subprocess.Popen([sys.executable, 'setup.py', x],
-                                 stdout=w,
-                                 stderr=subprocess.STDOUT,
-                                 cwd=self.d(self.SRC),
-                                 preexec_fn=kill_child_on_parent_death)
-            p.log, p.start_time, p.bname = r, time.time(), x
-            p.save = open(os.path.join(tdir, x), 'w+b')
-            p.duration = None
-            processes.append(p)
-
-        def workers_running():
-            running = False
-            for p in processes:
-                rc = p.poll()
-                if rc is not None:
-                    if p.duration is None:
-                        p.duration = int(time.time() - p.start_time)
-                else:
-                    running = True
-            return running
-
-        stop_multitail = multitail([proc.log for proc in processes],
-                                   name_map={
-                                       proc.log: proc.bname
-                                       for proc in processes
-                                   },
-                                   copy_to=[proc.save for proc in processes])[0]
-
-        while workers_running():
-            os.waitpid(-1, 0)
-
-        stop_multitail()
-
-        failed = False
-        for p in processes:
-            if p.poll() != 0:
-                failed = True
-                log = p.save
-                log.flush()
-                log.seek(0)
-                raw = log.read()
-                self.info('Building of %s failed' % p.bname)
-                sys.stderr.write(raw)
-                sys.stderr.write(b'\n\n')
-        if failed:
-            raise SystemExit('Building of installers failed!')
-
-        for p in sorted(processes, key=lambda p: p.duration):
-            self.info(
-                'Built %s in %d minutes and %d seconds' %
-                (p.bname, p.duration // 60, p.duration % 60)
+        session = ['layout vertical']
+        platforms = 'linux64', 'linuxarm64', 'osx', 'win'
+        for x in platforms:
+            cmd = (
+                f'''{sys.executable} -c "import subprocess; subprocess.Popen(['{sys.executable}', './setup.py', '{x}']).wait() != 0 and'''
+                f''' input('Build of {x} failed, press Enter to exit');"'''
             )
+            session.append('title ' + x)
+            session.append('launch ' + cmd)
 
-        for installer in installers(include_source=False):
-            if not os.path.exists(self.j(self.d(self.SRC), installer)):
-                raise SystemExit(
-                    'The installer %s does not exist' % os.path.basename(installer)
-                )
+        p = subprocess.Popen([
+            'kitty', '-o', 'enabled_layouts=vertical,stack', '-o', 'scrollback_lines=20000',
+            '-o', 'close_on_child_death=y', '--session=-'
+        ], stdin=subprocess.PIPE)
+
+        p.communicate('\n'.join(session).encode('utf-8'))
+        p.wait()
+
+        for installer in installer_names(include_source=False):
+            installer = self.j(self.d(self.SRC), installer)
+            if not os.path.exists(installer) or os.path.getsize(installer) < 10000:
+                raise SystemExit(f'The installer {os.path.basename(installer)} does not exist')
 
 
 class Stage3(Command):
@@ -150,25 +104,56 @@ class Publish(Command):
     def pre_sub_commands(self, opts):
         require_git_master()
         require_clean_git()
+        version = tuple(map(int, __version__.split('.')))  # noqa: RUF048
+        if version[2] > 99:
+            raise SystemExit(f'The version number {__version__} indicates a preview release, did you mean to run ./setup.py publish_preview?')
         if 'PUBLISH_BUILD_DONE' not in os.environ:
+            subprocess.check_call([sys.executable, 'setup.py', 'check'])
             subprocess.check_call([sys.executable, 'setup.py', 'build'])
+            if 'SKIP_CALIBRE_TESTS' not in os.environ:
+                subprocess.check_call([sys.executable, 'setup.py', 'test'])
+            subprocess.check_call([sys.executable, 'setup.py', 'pot'])
+            subprocess.check_call([sys.executable, 'setup.py', 'translations'])
             os.environ['PUBLISH_BUILD_DONE'] = '1'
             os.execl(os.path.abspath('setup.py'), './setup.py', 'publish')
 
 
 class PublishBetas(Command):
 
-    sub_commands = ['rapydscript', 'stage2', 'sdist']
+    sub_commands = ['stage1', 'stage2', 'sdist']
 
     def pre_sub_commands(self, opts):
+        require_clean_git()
+        # require_git_master()
+
+    def run(self, opts):
+        dist = self.a(self.j(self.d(self.SRC), 'dist'))
+        subprocess.check_call((
+            f'rsync --partial -rh --info=progress2 --delete-after {dist}/ download.calibre-ebook.com:/srv/download/betas/'
+        ).split())
+
+
+class PublishPreview(Command):
+
+    sub_commands = ['stage1', 'stage2', 'sdist']
+
+    def pre_sub_commands(self, opts):
+        version = tuple(map(int, __version__.split('.')))  # noqa: RUF048
+        if version[2] < 100:
+            raise SystemExit('Must set calibre version to have patch level greater than 100')
         require_clean_git()
         require_git_master()
 
     def run(self, opts):
         dist = self.a(self.j(self.d(self.SRC), 'dist'))
+        with open(os.path.join(dist, 'README.txt'), 'w') as f:
+            print('''\
+These are preview releases of changes to calibre since the last normal release.
+Preview releases are typically released every Friday, they serve as a way
+for users to test upcoming features/fixes in the next calibre release.
+''', file=f)
         subprocess.check_call((
-            'rsync --partial -rh --progress --delete-after %s/ download.calibre-ebook.com:/srv/download/betas/'
-            % dist
+            f'rsync -rh --info=progress2 --delete-after --delete {dist}/ download.calibre-ebook.com:/srv/download/preview/'
         ).split())
 
 
@@ -194,7 +179,7 @@ class Manual(Command):
         )
 
     def run(self, opts):
-        tdir = self.j(tempfile.gettempdir(), 'user-manual-build')
+        tdir = manual_build_dir()
         if os.path.exists(tdir):
             shutil.rmtree(tdir)
         os.mkdir(tdir)
@@ -209,18 +194,22 @@ class Manual(Command):
         languages = opts.language or list(
             json.load(open(self.j(base, 'locale', 'completed.json'), 'rb'))
         )
-        languages = ['en'] + list(set(languages) - {'en'})
+        languages = set(languages) - {'en'}
+        languages.discard('ta')  # Tamil translations break Sphinx
+        languages = ['en'] + list(languages)
         os.environ['ALL_USER_MANUAL_LANGUAGES'] = ' '.join(languages)
         for language in languages:
-            jobs.append(([
+            jobs.append(create_job([
                 sys.executable, self.j(self.d(self.SRC), 'manual', 'build.py'),
                 language, self.j(tdir, language)
-            ], '\n\n**************** Building translations for: %s' % language))
-        self.info('Building manual for %d languages' % len(jobs))
-        subprocess.check_call(jobs[0][0])
+            ], f'\n\n**************** Building translations for: {language}'))
+        self.info(f'Building manual for {len(jobs)} languages')
+        subprocess.check_call(jobs[0].cmd)
         if not parallel_build(jobs[1:], self.info):
             raise SystemExit(1)
-        cwd = os.getcwdu()
+        cwd = os.getcwd()
+        with open('resources/localization/website-languages.txt') as wl:
+            languages = frozenset(filter(None, (x.strip() for x in wl.read().split())))
         try:
             os.chdir(self.j(tdir, 'en', 'html'))
             for x in os.listdir(tdir):
@@ -228,10 +217,13 @@ class Manual(Command):
                     shutil.copytree(self.j(tdir, x, 'html'), x)
                     self.replace_with_symlinks(x)
                 else:
-                    os.symlink('..', 'en')
+                    os.symlink('.', 'en')
+            for x in languages:
+                if x and not os.path.exists(x):
+                    os.symlink('.', x)
             self.info(
-                'Built manual for %d languages in %s minutes' %
-                (len(jobs), int((time.time() - st) / 60.))
+                f'Built manual for {len(jobs)} languages in {int((time.time() - st) / 60.)} minutes'
+
             )
         finally:
             os.chdir(cwd)
@@ -241,16 +233,16 @@ class Manual(Command):
 
     def serve_manual(self, root):
         os.chdir(root)
-        from polyglot.http_server import BaseHTTPServer, SimpleHTTPRequestHandler
+        from polyglot.http_server import HTTPServer, SimpleHTTPRequestHandler
         HandlerClass = SimpleHTTPRequestHandler
-        ServerClass = BaseHTTPServer.HTTPServer
-        Protocol = "HTTP/1.0"
+        ServerClass = HTTPServer
+        Protocol = 'HTTP/1.0'
         server_address = ('127.0.0.1', 8000)
 
         HandlerClass.protocol_version = Protocol
         httpd = ServerClass(server_address, HandlerClass)
 
-        print("Serving User Manual on localhost:8000")
+        print('Serving User Manual on localhost:8000')
         from calibre.gui2 import open_url
         open_url('http://localhost:8000')
         httpd.serve_forever()
@@ -264,7 +256,7 @@ class Manual(Command):
             orig = self.j(self.d(base), r)
             try:
                 sz = os.stat(orig).st_size
-            except EnvironmentError:
+            except OSError:
                 continue
             if sz == os.stat(f).st_size and filecmp._do_cmp(f, orig):
                 os.remove(f)
@@ -294,24 +286,26 @@ class ManPages(Command):
             shutil.rmtree(dest)
         os.makedirs(dest)
         base = self.j(self.d(self.SRC), 'manual')
-        languages = list(available_translations())
-        languages = ['en'] + list(set(languages) - {'en', 'en_GB'})
+        languages = set(available_translations())
+        languages.discard('ta')  # Tamil translatins are completely borked break sphinx
+        languages.discard('id')  # Indonesian man page fails to build
+        languages = ['en'] + list(languages - {'en', 'en_GB'})
         os.environ['ALL_USER_MANUAL_LANGUAGES'] = ' '.join(languages)
         try:
             os.makedirs(dest)
-        except EnvironmentError:
+        except OSError:
             pass
         jobs = []
         for l in languages:
-            jobs.append((
+            jobs.append(create_job(
                 [sys.executable, self.j(base, 'build.py'), '--man-pages', l, dest],
-                '\n\n**************** Building translations for: %s' % l)
+                f'\n\n**************** Building translations for: {l}')
             )
-        self.info('\tCreating man pages in {} for {} languages...'.format(dest, len(jobs)))
-        subprocess.check_call(jobs[0][0])
+        self.info(f'\tCreating man pages in {dest} for {len(jobs)} languages...')
+        subprocess.check_call(jobs[0].cmd)
         if not parallel_build(jobs[1:], self.info, verbose=False):
             raise SystemExit(1)
-        cwd = os.getcwdu()
+        cwd = os.getcwd()
         os.chdir(dest)
         try:
             for x in tuple(os.listdir('.')):
@@ -330,7 +324,7 @@ class ManPages(Command):
                 for dirpath, dirnames, filenames in os.walk('.'):
                     for f in filenames:
                         if f.endswith('.1'):
-                            jobs.append((['gzip', '--best', self.j(dirpath, f)], ''))
+                            jobs.append(create_job(['gzip', '--best', self.j(dirpath, f)], ''))
                 if not parallel_build(jobs, self.info, verbose=False):
                     raise SystemExit(1)
         finally:
@@ -344,6 +338,6 @@ class TagRelease(Command):
     def run(self, opts):
         self.info('Tagging release')
         subprocess.check_call(
-            'git tag -s v{0} -m "version-{0}"'.format(__version__).split()
+            f'git tag -s v{__version__} -m "version-{__version__}"'.split()
         )
-        subprocess.check_call('git push origin v{0}'.format(__version__).split())
+        subprocess.check_call(f'git push origin v{__version__}'.split())

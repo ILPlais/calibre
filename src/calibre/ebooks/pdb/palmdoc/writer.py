@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-
 '''
 Writer content to palmdoc pdb file.
 '''
@@ -12,8 +10,8 @@ import struct
 
 from calibre.ebooks.pdb.formatwriter import FormatWriter
 from calibre.ebooks.pdb.header import PdbHeaderBuilder
-from calibre.ebooks.txt.txtml import TXTMLizer
 from calibre.ebooks.txt.newlines import TxtNewlines, specified_newlines
+from calibre.ebooks.txt.txtml import TXTMLizer
 
 MAX_RECORD_SIZE = 4096
 
@@ -34,8 +32,8 @@ class Writer(FormatWriter):
 
         section_lengths = [len(header_record)]
         self.log.info('Compessing data...')
-        for i in range(0, len(txt_records)):
-            self.log.debug('\tCompressing record %i' % i)
+        for i in range(len(txt_records)):
+            self.log.debug(f'\tCompressing record {i}')
             txt_records[i] = compress_doc(txt_records[i])
             section_lengths.append(len(txt_records[i]))
 
@@ -57,13 +55,13 @@ class Writer(FormatWriter):
         txt_length = len(txt)
 
         txt_records = []
-        for i in range(0, (len(txt) / MAX_RECORD_SIZE) + 1):
+        for i in range((len(txt) // MAX_RECORD_SIZE) + 1):
             txt_records.append(txt[i * MAX_RECORD_SIZE: (i * MAX_RECORD_SIZE) + MAX_RECORD_SIZE])
 
         return txt_records, txt_length
 
     def _header_record(self, txt_length, record_count):
-        record = ''
+        record = b''
 
         record += struct.pack('>H', 2)                  # [0:2],   PalmDoc compression. (1 = No compression).
         record += struct.pack('>H', 0)                  # [2:4],   Always 0.
@@ -73,4 +71,3 @@ class Writer(FormatWriter):
         record += struct.pack('>L', 0)                  # [12-16], Current reading position, as an offset into the uncompressed text.
 
         return record
-

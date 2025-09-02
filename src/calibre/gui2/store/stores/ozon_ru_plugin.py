@@ -1,16 +1,20 @@
 ﻿# -*- coding: utf-8 -*-
+from __future__ import absolute_import, division, print_function, unicode_literals
 
-from __future__ import (unicode_literals, division, absolute_import, print_function)
 store_version = 3  # Needed for dynamic plugin loading
 
 __license__ = 'GPL 3'
 __copyright__ = '2011-2013, Roman Mukhin <ramses_ru at hotmail.com>'
 __docformat__ = 'restructuredtext en'
 
-import urllib
 from contextlib import closing
 
-from PyQt5.Qt import QUrl
+try:
+    from urllib.parse import quote_plus
+except ImportError:
+    from urllib import quote_plus
+
+from qt.core import QUrl
 
 from calibre import browser, url_slash_cleaner
 from calibre.ebooks.chardet import xml_to_unicode
@@ -34,7 +38,7 @@ def parse_html(raw):
 
 
 def search(query, max_results=15, timeout=60):
-    url = 'http://www.ozon.ru/?context=search&text=%s&store=1,0&group=div_book' % urllib.quote_plus(query)
+    url = 'http://www.ozon.ru/?context=search&text=%s&store=1,0&group=div_book' % quote_plus(query)
 
     counter = max_results
     br = browser()
@@ -67,7 +71,7 @@ class OzonRUStore(StorePlugin):
             d = WebStoreDialog(self.gui, shop_url, parent, url)
             d.setWindowTitle(self.name)
             d.set_tags(self.config.get('tags', ''))
-            d.exec_()
+            d.exec()
 
     def search(self, query, max_results=15, timeout=60):
         for s in search(query, max_results=max_results, timeout=timeout):

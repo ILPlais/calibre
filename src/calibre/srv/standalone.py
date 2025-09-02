@@ -1,7 +1,6 @@
-#!/usr/bin/env python2
-# vim:fileencoding=utf-8
+#!/usr/bin/env python
 # License: GPLv3 Copyright: 2015, Kovid Goyal <kovid at kovidgoyal.net>
-from __future__ import absolute_import, division, print_function, unicode_literals
+
 
 import json
 import os
@@ -9,21 +8,22 @@ import signal
 import sys
 
 from calibre import as_unicode
-from calibre.constants import is_running_from_develop, isosx, iswindows, plugins
-from calibre.db.delete_service import shutdown as shutdown_delete_service
+from calibre.constants import is_running_from_develop, ismacos, iswindows
 from calibre.db.legacy import LibraryDatabase
 from calibre.srv.bonjour import BonJour
 from calibre.srv.handler import Handler
 from calibre.srv.http_response import create_http_handler
 from calibre.srv.library_broker import load_gui_libraries
-from calibre.srv.loop import ServerLoop
+from calibre.srv.loop import BadIPSpec, ServerLoop
 from calibre.srv.manage_users_cli import manage_users_cli
 from calibre.srv.opts import opts_to_parser
 from calibre.srv.users import connect
-from calibre.srv.utils import RotatingLog
+from calibre.srv.utils import HandleInterrupt, RotatingLog
 from calibre.utils.config import prefs
-from calibre.utils.localization import localize_user_manual_link
+from calibre.utils.localization import _, localize_user_manual_link
 from calibre.utils.lock import singleinstance
+from calibre_extensions import speedup
+from polyglot.builtins import error_message
 
 
 def daemonize():  # {{{
@@ -33,10 +33,10 @@ def daemonize():  # {{{
             # exit first parent
             sys.exit(0)
     except OSError as e:
-        raise SystemExit('fork #1 failed: %s' % as_unicode(e))
+        raise SystemExit(f'fork #1 failed: {as_unicode(e)}')
 
     # decouple from parent environment
-    os.chdir("/")
+    os.chdir('/')
     os.setsid()
     os.umask(0)
 
@@ -47,16 +47,14 @@ def daemonize():  # {{{
             # exit from second parent
             sys.exit(0)
     except OSError as e:
-        raise SystemExit('fork #2 failed: %s' % as_unicode(e))
+        raise SystemExit(f'fork #2 failed: {as_unicode(e)}')
 
     # Redirect standard file descriptors.
-    plugins['speedup'][0].detach(os.devnull)
-
-
+    speedup.detach(os.devnull)
 # }}}
 
 
-class Server(object):
+class Server:
 
     def __init__(self, libraries, opts):
         log = access_log = None
@@ -67,11 +65,14 @@ class Server(object):
             access_log = RotatingLog(opts.access_log, max_size=log_size)
         self.handler = Handler(libraries, opts)
         if opts.custom_list_template:
-            with lopen(opts.custom_list_template, 'rb') as f:
+            with open(os.path.expanduser(opts.custom_list_template), 'rb') as f:
                 self.handler.router.ctx.custom_list_template = json.load(f)
+        if opts.search_the_net_urls:
+            with open(os.path.expanduser(opts.search_the_net_urls), 'rb') as f:
+                self.handler.router.ctx.search_the_net_urls = json.load(f)
         plugins = []
         if opts.use_bonjour:
-            plugins.append(BonJour())
+            plugins.append(BonJour(wait_for_stop=max(0, opts.shutdown_timeout - 0.2)))
         self.loop = ServerLoop(
             create_http_handler(self.handler.dispatch),
             opts=opts,
@@ -117,7 +118,15 @@ libraries that the main calibre program knows about will be used.
             ' Sharing over the net-> Book list template in calibre, create the'
             ' template and export it.'
     ))
-    if not iswindows and not isosx:
+    parser.add_option(
+        '--search-the-net-urls', help=_(
+            'Path to a JSON file containing URLs for the "Search the internet" feature.'
+            ' The easiest way to create such a file is to go to Preferences->'
+            ' Sharing over the net->Search the internet in calibre, create the'
+            ' URLs and export them.'
+    ))
+
+    if not iswindows and not ismacos:
         # Does not work on macOS because if we fork() we cannot connect to Core
         # Serives which is needed by the QApplication() constructor, which in
         # turn is needed by ensure_app()
@@ -142,7 +151,8 @@ libraries that the main calibre program knows about will be used.
         action='store_true',
         help=_(
             'Manage the database of users allowed to connect to this server.'
-            ' See also the %s option.') % '--userdb')
+            ' You can use it in automated mode by adding a --. See {0}'
+            ' for details. See also the {1} option.').format('calibre-server --manage-users -- help', '--userdb'))
     parser.get_option('--userdb').help = _(
         'Path to the user database to use for authentication. The database'
         ' is a SQLite file. To create it use {0}. You can read more'
@@ -160,7 +170,7 @@ option_parser = create_option_parser
 
 
 def ensure_single_instance():
-    if b'CALIBRE_NO_SI_DANGER_DANGER' not in os.environ and not singleinstance('db'):
+    if 'CALIBRE_NO_SI_DANGER_DANGER' not in os.environ and not singleinstance('db'):
         ext = '.exe' if iswindows else ''
         raise SystemExit(
             _(
@@ -172,16 +182,27 @@ def ensure_single_instance():
 
 def main(args=sys.argv):
     opts, args = create_option_parser().parse_args(args)
-    ensure_single_instance()
+    if opts.auto_reload and not opts.manage_users:
+        if getattr(opts, 'daemonize', False):
+            raise SystemExit(
+                'Cannot specify --auto-reload and --daemonize at the same time')
+        from calibre.srv.auto_reload import NoAutoReload, auto_reload
+        try:
+            from calibre.utils.logging import default_log
+            return auto_reload(default_log, listen_on=opts.listen_on)
+        except NoAutoReload as e:
+            raise SystemExit(error_message(e))
+
     if opts.userdb:
         opts.userdb = os.path.abspath(os.path.expandvars(os.path.expanduser(opts.userdb)))
         connect(opts.userdb, exc_class=SystemExit).close()
     if opts.manage_users:
         try:
-            manage_users_cli(opts.userdb)
+            manage_users_cli(opts.userdb, args[1:])
         except (KeyboardInterrupt, EOFError):
             raise SystemExit(_('Interrupted by user'))
         raise SystemExit(0)
+    ensure_single_instance()
 
     libraries = args[1:]
     for lib in libraries:
@@ -193,23 +214,16 @@ def main(args=sys.argv):
             raise SystemExit(_('You must specify at least one calibre library'))
         libraries = [prefs['library_path']]
 
-    if opts.auto_reload:
-        if getattr(opts, 'daemonize', False):
-            raise SystemExit(
-                'Cannot specify --auto-reload and --daemonize at the same time')
-        from calibre.srv.auto_reload import auto_reload, NoAutoReload
-        try:
-            from calibre.utils.logging import default_log
-            return auto_reload(default_log, listen_on=opts.listen_on)
-        except NoAutoReload as e:
-            raise SystemExit(e.message)
     opts.auto_reload_port = int(os.environ.get('CALIBRE_AUTORELOAD_PORT', 0))
     opts.allow_console_print = 'CALIBRE_ALLOW_CONSOLE_PRINT' in os.environ
     if opts.log and os.path.isdir(opts.log):
         raise SystemExit('The --log option must point to a file, not a directory')
     if opts.access_log and os.path.isdir(opts.access_log):
         raise SystemExit('The --access-log option must point to a file, not a directory')
-    server = Server(libraries, opts)
+    try:
+        server = Server(libraries, opts)
+    except BadIPSpec as e:
+        raise SystemExit(f'{e}')
     if getattr(opts, 'daemonize', False):
         if not opts.log and not iswindows:
             raise SystemExit(
@@ -217,15 +231,13 @@ def main(args=sys.argv):
             )
         daemonize()
     if opts.pidfile:
-        with lopen(opts.pidfile, 'wb') as f:
-            f.write(str(os.getpid()))
+        with open(opts.pidfile, 'wb') as f:
+            f.write(str(os.getpid()).encode('ascii'))
     signal.signal(signal.SIGTERM, lambda s, f: server.stop())
     if not getattr(opts, 'daemonize', False) and not iswindows:
         signal.signal(signal.SIGHUP, lambda s, f: server.stop())
     # Needed for dynamic cover generation, which uses Qt for drawing
     from calibre.gui2 import ensure_app, load_builtin_fonts
     ensure_app(), load_builtin_fonts()
-    try:
+    with HandleInterrupt(server.stop):
         server.serve_forever()
-    finally:
-        shutdown_delete_service()

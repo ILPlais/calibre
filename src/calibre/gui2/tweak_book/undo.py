@@ -1,16 +1,25 @@
-#!/usr/bin/env python2
-# vim:fileencoding=utf-8
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
+#!/usr/bin/env python
+
 
 __license__ = 'GPL v3'
 __copyright__ = '2013, Kovid Goyal <kovid at kovidgoyal.net>'
 
 import shutil
 
-from PyQt5.Qt import (
-    QAbstractListModel, Qt, QModelIndex, QApplication, QWidget,
-    QGridLayout, QListView, QStyledItemDelegate, pyqtSignal, QPushButton, QIcon)
+from qt.core import (
+    QAbstractListModel,
+    QApplication,
+    QGridLayout,
+    QIcon,
+    QItemSelectionModel,
+    QListView,
+    QModelIndex,
+    QPushButton,
+    QStyledItemDelegate,
+    Qt,
+    QWidget,
+    pyqtSignal,
+)
 
 from calibre.gui2 import error_dialog
 
@@ -23,11 +32,11 @@ def cleanup(containers):
     for container in containers:
         try:
             shutil.rmtree(container.root, ignore_errors=True)
-        except:
+        except Exception:
             pass
 
 
-class State(object):
+class State:
 
     def __init__(self, container):
         self.container = container
@@ -45,14 +54,14 @@ class GlobalUndoHistory(QAbstractListModel):
     def rowCount(self, parent=ROOT):
         return len(self.states)
 
-    def data(self, index, role=Qt.DisplayRole):
-        if role == Qt.DisplayRole:
+    def data(self, index, role=Qt.ItemDataRole.DisplayRole):
+        if role == Qt.ItemDataRole.DisplayRole:
             return self.label_for_row(index.row())
-        if role == Qt.FontRole and index.row() == self.pos:
+        if role == Qt.ItemDataRole.FontRole and index.row() == self.pos:
             f = QApplication.instance().font()
             f.setBold(True)
             return f
-        if role == Qt.UserRole:
+        if role == Qt.ItemDataRole.UserRole:
             return self.states[index.row()]
         return None
 
@@ -99,8 +108,8 @@ class GlobalUndoHistory(QAbstractListModel):
             self.states[self.pos].rewind_message = self.states[self.pos].message
             self.states[self.pos].message = message
         except IndexError:
-            raise IndexError('The checkpoint stack has an incorrect position pointer. This should never happen: self.pos = %r, len(self.states) = %r' % (
-                self.pos, len(self.states)))
+            raise IndexError('The checkpoint stack has an incorrect position pointer.'
+                             f' This should never happen: pos={self.pos!r}, len_states={len(self.states)=}')
         self.truncate()
         self.beginInsertRows(ROOT, self.pos+1, self.pos+1)
         self.states.append(State(new_container))
@@ -204,12 +213,12 @@ class CheckpointView(QWidget):
         l.addWidget(v, 0, 0, 1, -1)
         model.dataChanged.connect(self.data_changed)
 
-        self.rb = b = QPushButton(QIcon(I('edit-undo.png')), _('&Revert to'), self)
+        self.rb = b = QPushButton(QIcon.ic('edit-undo.png'), _('&Revert to'), self)
         b.setToolTip(_('Revert the book to the selected checkpoint'))
         b.clicked.connect(self.revert_clicked)
         l.addWidget(b, 1, 1)
 
-        self.cb = b = QPushButton(QIcon(I('diff.png')), _('&Compare'), self)
+        self.cb = b = QPushButton(QIcon.ic('diff.png'), _('&Compare'), self)
         b.setToolTip(_('Compare the state of the book at the selected checkpoint with the current state'))
         b.clicked.connect(self.compare_clicked)
         l.addWidget(b, 1, 0)
@@ -218,7 +227,7 @@ class CheckpointView(QWidget):
         self.view.clearSelection()
         m = self.view.model()
         sm = self.view.selectionModel()
-        sm.select(m.index(m.pos), sm.ClearAndSelect)
+        sm.select(m.index(m.pos), QItemSelectionModel.SelectionFlag.ClearAndSelect)
         self.view.setCurrentIndex(m.index(m.pos))
 
     def double_clicked(self, index):
@@ -243,4 +252,3 @@ class CheckpointView(QWidget):
             return error_dialog(self, _('Cannot compare'), _(
                 'There is no point comparing the current state to itself'), show=True)
         self.compare_requested.emit(m.states[row].container)
-

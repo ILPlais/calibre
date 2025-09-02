@@ -1,22 +1,18 @@
-#!/usr/bin/env python2
-# vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:fdm=marker:ai
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
+#!/usr/bin/env python
+
 
 __license__   = 'GPL v3'
 __copyright__ = '2012, Kovid Goyal <kovid at kovidgoyal.net>'
 __docformat__ = 'restructuredtext en'
 
-from math import sqrt
 from collections import namedtuple
+from math import sqrt
 
-from PyQt5.Qt import (
-    QBrush, QPen, Qt, QPointF, QTransform, QPaintEngine, QImage)
+from qt.core import QBrush, QImage, QPaintEngine, QPen, QPointF, Qt, QTransform
 
-from calibre.ebooks.pdf.render.common import (
-    Name, Array, fmtnum, Stream, Dictionary)
-from calibre.ebooks.pdf.render.serialize import Path
+from calibre.ebooks.pdf.render.common import Array, Dictionary, Name, Stream, fmtnum
 from calibre.ebooks.pdf.render.gradients import LinearGradientPattern
+from calibre.ebooks.pdf.render.serialize import Path
 
 
 def convert_path(path):  # {{{
@@ -43,6 +39,7 @@ def convert_path(path):  # {{{
                 raise ValueError('Invalid curve to operation')
     return p
 # }}}
+
 
 Brush = namedtuple('Brush', 'origin brush color')
 
@@ -73,158 +70,158 @@ class TilingPattern(Stream):
 class QtPattern(TilingPattern):
 
     qt_patterns = (  # {{{
-        "0 J\n"
-        "6 w\n"
-        "[] 0 d\n"
-        "4 0 m\n"
-        "4 8 l\n"
-        "0 4 m\n"
-        "8 4 l\n"
-        "S\n",  # Dense1Pattern
+        '0 J\n'
+        '6 w\n'
+        '[] 0 d\n'
+        '4 0 m\n'
+        '4 8 l\n'
+        '0 4 m\n'
+        '8 4 l\n'
+        'S\n',  # Dense1Pattern
 
-        "0 J\n"
-        "2 w\n"
-        "[6 2] 1 d\n"
-        "0 0 m\n"
-        "0 8 l\n"
-        "8 0 m\n"
-        "8 8 l\n"
-        "S\n"
-        "[] 0 d\n"
-        "2 0 m\n"
-        "2 8 l\n"
-        "6 0 m\n"
-        "6 8 l\n"
-        "S\n"
-        "[6 2] -3 d\n"
-        "4 0 m\n"
-        "4 8 l\n"
-        "S\n",  # Dense2Pattern
+        '0 J\n'
+        '2 w\n'
+        '[6 2] 1 d\n'
+        '0 0 m\n'
+        '0 8 l\n'
+        '8 0 m\n'
+        '8 8 l\n'
+        'S\n'
+        '[] 0 d\n'
+        '2 0 m\n'
+        '2 8 l\n'
+        '6 0 m\n'
+        '6 8 l\n'
+        'S\n'
+        '[6 2] -3 d\n'
+        '4 0 m\n'
+        '4 8 l\n'
+        'S\n',  # Dense2Pattern
 
-        "0 J\n"
-        "2 w\n"
-        "[6 2] 1 d\n"
-        "0 0 m\n"
-        "0 8 l\n"
-        "8 0 m\n"
-        "8 8 l\n"
-        "S\n"
-        "[2 2] -1 d\n"
-        "2 0 m\n"
-        "2 8 l\n"
-        "6 0 m\n"
-        "6 8 l\n"
-        "S\n"
-        "[6 2] -3 d\n"
-        "4 0 m\n"
-        "4 8 l\n"
-        "S\n",  # Dense3Pattern
+        '0 J\n'
+        '2 w\n'
+        '[6 2] 1 d\n'
+        '0 0 m\n'
+        '0 8 l\n'
+        '8 0 m\n'
+        '8 8 l\n'
+        'S\n'
+        '[2 2] -1 d\n'
+        '2 0 m\n'
+        '2 8 l\n'
+        '6 0 m\n'
+        '6 8 l\n'
+        'S\n'
+        '[6 2] -3 d\n'
+        '4 0 m\n'
+        '4 8 l\n'
+        'S\n',  # Dense3Pattern
 
-        "0 J\n"
-        "2 w\n"
-        "[2 2] 1 d\n"
-        "0 0 m\n"
-        "0 8 l\n"
-        "8 0 m\n"
-        "8 8 l\n"
-        "S\n"
-        "[2 2] -1 d\n"
-        "2 0 m\n"
-        "2 8 l\n"
-        "6 0 m\n"
-        "6 8 l\n"
-        "S\n"
-        "[2 2] 1 d\n"
-        "4 0 m\n"
-        "4 8 l\n"
-        "S\n",  # Dense4Pattern
+        '0 J\n'
+        '2 w\n'
+        '[2 2] 1 d\n'
+        '0 0 m\n'
+        '0 8 l\n'
+        '8 0 m\n'
+        '8 8 l\n'
+        'S\n'
+        '[2 2] -1 d\n'
+        '2 0 m\n'
+        '2 8 l\n'
+        '6 0 m\n'
+        '6 8 l\n'
+        'S\n'
+        '[2 2] 1 d\n'
+        '4 0 m\n'
+        '4 8 l\n'
+        'S\n',  # Dense4Pattern
 
-        "0 J\n"
-        "2 w\n"
-        "[2 6] -1 d\n"
-        "0 0 m\n"
-        "0 8 l\n"
-        "8 0 m\n"
-        "8 8 l\n"
-        "S\n"
-        "[2 2] 1 d\n"
-        "2 0 m\n"
-        "2 8 l\n"
-        "6 0 m\n"
-        "6 8 l\n"
-        "S\n"
-        "[2 6] 3 d\n"
-        "4 0 m\n"
-        "4 8 l\n"
-        "S\n",  # Dense5Pattern
+        '0 J\n'
+        '2 w\n'
+        '[2 6] -1 d\n'
+        '0 0 m\n'
+        '0 8 l\n'
+        '8 0 m\n'
+        '8 8 l\n'
+        'S\n'
+        '[2 2] 1 d\n'
+        '2 0 m\n'
+        '2 8 l\n'
+        '6 0 m\n'
+        '6 8 l\n'
+        'S\n'
+        '[2 6] 3 d\n'
+        '4 0 m\n'
+        '4 8 l\n'
+        'S\n',  # Dense5Pattern
 
-        "0 J\n"
-        "2 w\n"
-        "[2 6] -1 d\n"
-        "0 0 m\n"
-        "0 8 l\n"
-        "8 0 m\n"
-        "8 8 l\n"
-        "S\n"
-        "[2 6] 3 d\n"
-        "4 0 m\n"
-        "4 8 l\n"
-        "S\n",  # Dense6Pattern
+        '0 J\n'
+        '2 w\n'
+        '[2 6] -1 d\n'
+        '0 0 m\n'
+        '0 8 l\n'
+        '8 0 m\n'
+        '8 8 l\n'
+        'S\n'
+        '[2 6] 3 d\n'
+        '4 0 m\n'
+        '4 8 l\n'
+        'S\n',  # Dense6Pattern
 
-        "0 J\n"
-        "2 w\n"
-        "[2 6] -1 d\n"
-        "0 0 m\n"
-        "0 8 l\n"
-        "8 0 m\n"
-        "8 8 l\n"
-        "S\n",  # Dense7Pattern
+        '0 J\n'
+        '2 w\n'
+        '[2 6] -1 d\n'
+        '0 0 m\n'
+        '0 8 l\n'
+        '8 0 m\n'
+        '8 8 l\n'
+        'S\n',  # Dense7Pattern
 
-        "1 w\n"
-        "0 4 m\n"
-        "8 4 l\n"
-        "S\n",  # HorPattern
+        '1 w\n'
+        '0 4 m\n'
+        '8 4 l\n'
+        'S\n',  # HorPattern
 
-        "1 w\n"
-        "4 0 m\n"
-        "4 8 l\n"
-        "S\n",  # VerPattern
+        '1 w\n'
+        '4 0 m\n'
+        '4 8 l\n'
+        'S\n',  # VerPattern
 
-        "1 w\n"
-        "4 0 m\n"
-        "4 8 l\n"
-        "0 4 m\n"
-        "8 4 l\n"
-        "S\n",  # CrossPattern
+        '1 w\n'
+        '4 0 m\n'
+        '4 8 l\n'
+        '0 4 m\n'
+        '8 4 l\n'
+        'S\n',  # CrossPattern
 
-        "1 w\n"
-        "-1 5 m\n"
-        "5 -1 l\n"
-        "3 9 m\n"
-        "9 3 l\n"
-        "S\n",  # BDiagPattern
+        '1 w\n'
+        '-1 5 m\n'
+        '5 -1 l\n'
+        '3 9 m\n'
+        '9 3 l\n'
+        'S\n',  # BDiagPattern
 
-        "1 w\n"
-        "-1 3 m\n"
-        "5 9 l\n"
-        "3 -1 m\n"
-        "9 5 l\n"
-        "S\n",  # FDiagPattern
+        '1 w\n'
+        '-1 3 m\n'
+        '5 9 l\n'
+        '3 -1 m\n'
+        '9 5 l\n'
+        'S\n',  # FDiagPattern
 
-        "1 w\n"
-        "-1 3 m\n"
-        "5 9 l\n"
-        "3 -1 m\n"
-        "9 5 l\n"
-        "-1 5 m\n"
-        "5 -1 l\n"
-        "3 9 m\n"
-        "9 3 l\n"
-        "S\n",  # DiagCrossPattern
+        '1 w\n'
+        '-1 3 m\n'
+        '5 9 l\n'
+        '3 -1 m\n'
+        '9 5 l\n'
+        '-1 5 m\n'
+        '5 -1 l\n'
+        '3 9 m\n'
+        '9 3 l\n'
+        'S\n',  # DiagCrossPattern
     )  # }}}
 
     def __init__(self, pattern_num, matrix):
-        super(QtPattern, self).__init__(pattern_num, matrix)
+        super().__init__(pattern_num, matrix)
         self.write(self.qt_patterns[pattern_num-2])
 
 
@@ -235,29 +232,29 @@ class TexturePattern(TilingPattern):
             image = pixmap.toImage()
             cache_key = pixmap.cacheKey()
             imgref = pdf.add_image(image, cache_key)
-            paint_type = (2 if image.format() in {QImage.Format_MonoLSB,
-                                                QImage.Format_Mono} else 1)
-            super(TexturePattern, self).__init__(
+            paint_type = (2 if image.format() in {QImage.Format.Format_MonoLSB,
+                                                QImage.Format.Format_Mono} else 1)
+            super().__init__(
                 cache_key, matrix, w=image.width(), h=image.height(),
                 paint_type=paint_type)
             m = (self.w, 0, 0, -self.h, 0, self.h)
             self.resources['XObject'] = Dictionary({'Texture':imgref})
-            self.write_line('%s cm /Texture Do'%(' '.join(map(fmtnum, m))))
+            self.write_line('{} cm /Texture Do'.format(' '.join(map(fmtnum, m))))
         else:
-            super(TexturePattern, self).__init__(
+            super().__init__(
                 clone.cache_key[1], matrix, w=clone.w, h=clone.h,
                 paint_type=clone.paint_type)
             self.resources['XObject'] = Dictionary(clone.resources['XObject'])
             self.write(clone.getvalue())
 
 
-class GraphicsState(object):
+class GraphicsState:
 
     FIELDS = ('fill', 'stroke', 'opacity', 'transform', 'brush_origin',
                   'clip_updated', 'do_fill', 'do_stroke')
 
     def __init__(self):
-        self.fill = QBrush(Qt.white)
+        self.fill = QBrush(Qt.GlobalColor.white)
         self.stroke = QPen()
         self.opacity = 1.0
         self.transform = QTransform()
@@ -285,7 +282,7 @@ class GraphicsState(object):
         return ans
 
 
-class Graphics(object):
+class Graphics:
 
     def __init__(self, page_width_px, page_height_px):
         self.base_state = GraphicsState()
@@ -303,22 +300,22 @@ class Graphics(object):
 
         s = self.pending_state
 
-        if flags & QPaintEngine.DirtyTransform:
+        if flags & QPaintEngine.DirtyFlag.DirtyTransform:
             s.transform = state.transform()
 
-        if flags & QPaintEngine.DirtyBrushOrigin:
+        if flags & QPaintEngine.DirtyFlag.DirtyBrushOrigin:
             s.brush_origin = state.brushOrigin()
 
-        if flags & QPaintEngine.DirtyBrush:
+        if flags & QPaintEngine.DirtyFlag.DirtyBrush:
             s.fill = state.brush()
 
-        if flags & QPaintEngine.DirtyPen:
+        if flags & QPaintEngine.DirtyFlag.DirtyPen:
             s.stroke = state.pen()
 
-        if flags & QPaintEngine.DirtyOpacity:
+        if flags & QPaintEngine.DirtyFlag.DirtyOpacity:
             s.opacity = state.opacity()
 
-        if flags & QPaintEngine.DirtyClipPath or flags & QPaintEngine.DirtyClipRegion:
+        if flags & QPaintEngine.DirtyFlag.DirtyClipPath or flags & QPaintEngine.DirtyFlag.DirtyClipRegion:
             s.clip_updated = True
 
     def reset(self):
@@ -354,8 +351,8 @@ class Graphics(object):
             path = painter.clipPath()
             if not path.isEmpty():
                 p = convert_path(path)
-                fill_rule = {Qt.OddEvenFill:'evenodd',
-                            Qt.WindingFill:'winding'}[path.fillRule()]
+                fill_rule = {Qt.FillRule.OddEvenFill:'evenodd',
+                            Qt.FillRule.WindingFill:'winding'}[path.fillRule()]
                 pdf.add_clip(p, fill_rule=fill_rule)
 
         self.current_state = self.pending_state
@@ -375,26 +372,26 @@ class Graphics(object):
         vals = list(brush.color().getRgbF())
         self.brushobj = None
 
-        if style <= Qt.DiagCrossPattern:
+        if style <= Qt.BrushStyle.DiagCrossPattern:
             opacity *= vals[-1]
             color = vals[:3]
 
-            if style > Qt.SolidPattern:
+            if style > Qt.BrushStyle.SolidPattern:
                 pat = QtPattern(style, matrix)
 
-        elif style == Qt.TexturePattern:
+        elif style == Qt.BrushStyle.TexturePattern:
             pat = TexturePattern(brush.texture(), matrix, pdf)
             if pat.paint_type == 2:
                 opacity *= vals[-1]
                 color = vals[:3]
 
-        elif style == Qt.LinearGradientPattern:
+        elif style == Qt.BrushStyle.LinearGradientPattern:
             pat = LinearGradientPattern(brush, matrix, pdf, self.page_width_px,
                                         self.page_height_px)
             opacity *= pat.const_opacity
         # TODO: Add support for radial/conical gradient fills
 
-        if opacity < 1e-4 or style == Qt.NoBrush:
+        if opacity < 1e-4 or style == Qt.BrushStyle.NoBrush:
             do_fill = False
         self.brushobj = Brush(brush_origin, pat, color)
 
@@ -420,19 +417,22 @@ class Graphics(object):
         pdf.current_page.write(' w ')
 
         # Line cap
-        cap = {Qt.FlatCap:0, Qt.RoundCap:1, Qt.SquareCap:
+        cap = {Qt.PenCapStyle.FlatCap:0, Qt.PenCapStyle.RoundCap:1, Qt.PenCapStyle.SquareCap:
                2}.get(pen.capStyle(), 0)
-        pdf.current_page.write('%d J '%cap)
+        pdf.current_page.write(f'{cap} J ')
 
         # Line join
-        join = {Qt.MiterJoin:0, Qt.RoundJoin:1,
-                Qt.BevelJoin:2}.get(pen.joinStyle(), 0)
-        pdf.current_page.write('%d j '%join)
+        join = {Qt.PenJoinStyle.MiterJoin:0, Qt.PenJoinStyle.RoundJoin:1,
+                Qt.PenJoinStyle.BevelJoin:2}.get(pen.joinStyle(), 0)
+        pdf.current_page.write(f'{join} j ')
 
         # Dash pattern
-        ps = {Qt.DashLine:[3], Qt.DotLine:[1,2], Qt.DashDotLine:[3,2,1,2],
-              Qt.DashDotDotLine:[3, 2, 1, 2, 1, 2]}.get(pen.style(), [])
-        if ps:
+        if pen.style() == Qt.PenStyle.CustomDashLine:
+            pdf.serialize(Array(pen.dashPattern()))
+            pdf.current_page.write(f' {pen.dashOffset()} d ')
+        else:
+            ps = {Qt.PenStyle.DashLine:[3], Qt.PenStyle.DotLine:[1,2], Qt.PenStyle.DashDotLine:[3,2,1,2],
+                  Qt.PenStyle.DashDotDotLine:[3, 2, 1, 2, 1, 2]}.get(pen.style(), [])
             pdf.serialize(Array(ps))
             pdf.current_page.write(' 0 d ')
 
@@ -441,7 +441,7 @@ class Graphics(object):
             pen.brush(), state.brush_origin, state.opacity, pdf_system,
             painter.transform())
         self.pdf.apply_stroke(color, pattern, opacity)
-        if pen.style() == Qt.NoPen:
+        if pen.style() == Qt.PenStyle.NoPen:
             self.pending_state.do_stroke = False
 
     def apply_fill(self, state, pdf_system, painter):
@@ -482,5 +482,3 @@ class Graphics(object):
             pat = TexturePattern(None, matrix, self.pdf, clone=self.last_fill.brush)
             pattern = self.pdf.add_pattern(pat)
             self.pdf.apply_fill(self.last_fill.color, pattern)
-
-

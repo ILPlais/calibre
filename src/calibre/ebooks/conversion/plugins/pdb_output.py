@@ -1,14 +1,11 @@
-# -*- coding: utf-8 -*-
-
 __license__ = 'GPL 3'
 __copyright__ = '2009, John Schember <john@nachtimwald.com>'
 __docformat__ = 'restructuredtext en'
 
 import os
 
-from calibre.customize.conversion import OutputFormatPlugin, \
-    OptionRecommendation
-from calibre.ebooks.pdb import PDBError, get_writer, ALL_FORMAT_WRITERS
+from calibre.customize.conversion import OptionRecommendation, OutputFormatPlugin
+from calibre.ebooks.pdb import ALL_FORMAT_WRITERS, PDBError, get_writer
 
 
 class PDBOutput(OutputFormatPlugin):
@@ -17,13 +14,13 @@ class PDBOutput(OutputFormatPlugin):
     author = 'John Schember'
     file_type = 'pdb'
     commit_name = 'pdb_output'
-    ui_data = {'formats': tuple(ALL_FORMAT_WRITERS)}
+    ui_data = {'formats': ALL_FORMAT_WRITERS}
 
     options = {
         OptionRecommendation(name='format', recommended_value='doc',
             level=OptionRecommendation.LOW,
-            short_switch='f', choices=list(ALL_FORMAT_WRITERS),
-            help=(_('Format to use inside the pdb container. Choices are:') + ' %s' % sorted(ALL_FORMAT_WRITERS))),
+            short_switch='f', choices=ALL_FORMAT_WRITERS,
+            help=(_('Format to use inside the PDB container. Choices are: ') + ', '.join(ALL_FORMAT_WRITERS))),
         OptionRecommendation(name='pdb_output_encoding', recommended_value='cp1252',
             level=OptionRecommendation.LOW,
             help=_('Specify the character encoding of the output document. '
@@ -38,7 +35,7 @@ class PDBOutput(OutputFormatPlugin):
         close = False
         if not hasattr(output_path, 'write'):
             close = True
-            if not os.path.exists(os.path.dirname(output_path)) and os.path.dirname(output_path) != '':
+            if not os.path.exists(os.path.dirname(output_path)) and os.path.dirname(output_path):
                 os.makedirs(os.path.dirname(output_path))
             out_stream = open(output_path, 'wb')
         else:
@@ -47,7 +44,7 @@ class PDBOutput(OutputFormatPlugin):
         Writer = get_writer(opts.format)
 
         if Writer is None:
-            raise PDBError('No writer available for format %s.' % format)
+            raise PDBError(f'No writer available for format {format}.')
 
         setattr(opts, 'max_line_length', 0)
         setattr(opts, 'force_max_line_length', False)

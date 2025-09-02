@@ -1,23 +1,23 @@
-#!/usr/bin/env python2
-# vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
+#!/usr/bin/env python
+
 
 __license__   = 'GPL v3'
 __copyright__ = '2010, Kovid Goyal <kovid@kovidgoyal.net>'
 __docformat__ = 'restructuredtext en'
 
+import numbers
 import os
 from functools import partial
-from polyglot.builtins import map
 
-
-from calibre.utils.config import prefs
-from calibre.gui2 import error_dialog, Dispatcher, choose_dir
+from calibre.gui2 import Dispatcher, choose_dir, error_dialog
 from calibre.gui2.actions import InterfaceAction
+from calibre.utils.config import prefs
+from polyglot.builtins import itervalues
 
 
 class SaveToDiskAction(InterfaceAction):
 
-    name = "Save To Disk"
+    name = 'Save To Disk'
     action_spec = (_('Save to disk'), 'save.png',
                    _('Export e-book files from the calibre library'), _('S'))
     action_type = 'current'
@@ -28,13 +28,13 @@ class SaveToDiskAction(InterfaceAction):
         self.qaction.triggered.connect(self.save_to_disk)
         self.save_menu = self.qaction.menu()
         cm = partial(self.create_menu_action, self.save_menu)
-        cm('single dir', _('Save to disk in a single directory'),
+        cm('single dir', _('Save to disk in a single folder'),
                 triggered=partial(self.save_to_single_dir, False))
         cm('single format', _('Save only %s format to disk')%
                 prefs['output_format'].upper(),
                 triggered=partial(self.save_single_format_to_disk, False))
         cm('single dir and format',
-                _('Save only %s format to disk in a single directory')%
+                _('Save only %s format to disk in a single folder')%
                 prefs['output_format'].upper(),
                 triggered=partial(self.save_single_fmt_to_single_dir, False))
         cm('specific format', _('Save single format to disk...'),
@@ -50,7 +50,7 @@ class SaveToDiskAction(InterfaceAction):
             _('Save only %s format to disk')%
             prefs['output_format'].upper())
         self.save_menu.actions()[3].setText(
-            _('Save only %s format to disk in a single directory')%
+            _('Save only %s format to disk in a single folder')%
             prefs['output_format'].upper())
 
     def save_single_format_to_disk(self, checked):
@@ -63,10 +63,11 @@ class SaveToDiskAction(InterfaceAction):
             return
         fmts = rb._get_selected_formats(
                 _('Choose format to save to disk'), ids,
-                single=True)
+                single=True, add_cover=True)
         if not fmts:
             return
-        self.save_to_disk(False, False, list(fmts)[0])
+        fmt = list(fmts)[0]
+        self.save_to_disk(False, False, fmt)
 
     def save_to_single_dir(self, checked):
         self.save_to_disk(checked, True)
@@ -83,7 +84,7 @@ class SaveToDiskAction(InterfaceAction):
             return error_dialog(self.gui, _('Cannot save to disk'),
                     _('No books selected'), show=True)
         path = choose_dir(self.gui, 'save to disk dialog',
-                _('Choose destination directory'))
+                _('Choose destination folder'))
         if not path:
             return
         dpath = os.path.abspath(path).replace('/', os.sep)+os.sep
@@ -107,7 +108,10 @@ class SaveToDiskAction(InterfaceAction):
                     opts.to_lowercase = False
                     opts.save_cover = False
                     opts.write_opf = False
+                    opts.save_extra_files = False
                     opts.template = opts.send_template
+                elif single_format == '..cover..':
+                    opts.save_cover = True
             opts.single_dir = single_dir
             if write_opf is not None:
                 opts.write_opf = write_opf
@@ -121,9 +125,9 @@ class SaveToDiskAction(InterfaceAction):
                     Dispatcher(self.books_saved), paths, path)
 
     def save_library_format_by_ids(self, book_ids, fmt, single_dir=True):
-        if isinstance(book_ids, int):
+        if isinstance(book_ids, numbers.Integral):
             book_ids = [book_ids]
-        rows = list(self.gui.library_view.ids_to_rows(book_ids).itervalues())
+        rows = list(itervalues(self.gui.library_view.ids_to_rows(book_ids)))
         rows = [self.gui.library_view.model().index(r, 0) for r in rows]
         self.save_to_disk(True, single_dir=single_dir, single_format=fmt,
                 rows=rows, write_opf=False, save_cover=False)

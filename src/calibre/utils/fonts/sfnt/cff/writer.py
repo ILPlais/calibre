@@ -1,14 +1,12 @@
-#!/usr/bin/env python2
-# vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:fdm=marker:ai
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
+#!/usr/bin/env python
+
 
 __license__   = 'GPL v3'
 __copyright__ = '2012, Kovid Goyal <kovid at kovidgoyal.net>'
 __docformat__ = 'restructuredtext en'
 
-from struct import pack
 from collections import OrderedDict
+from struct import pack
 
 from calibre.utils.fonts.sfnt.cff.constants import cff_standard_strings
 
@@ -43,7 +41,7 @@ class Index(list):
                 offsets = b''.join(pack(b'>L', x)[1:] for x in offsets)
             else:
                 fmt = {1:'B', 2:'H', 4:'L'}[offsize]
-                offsets = pack(('>%d%s'%(len(offsets), fmt)).encode('ascii'),
+                offsets = pack(f'>{len(offsets)}{fmt}'.encode('ascii'),
                         *offsets)
 
             self.raw = prefix + offsets + obj_data
@@ -76,7 +74,7 @@ class Dict(Index):
         Index.compile(self)
 
 
-class PrivateDict(object):
+class PrivateDict:
 
     def __init__(self, src, subrs, strings):
         self.src, self.strings = src, strings
@@ -104,12 +102,12 @@ class Charsets(list):
     def compile(self):
         ans = pack(b'>B', 0)
         sids = [self.strings(x) for x in self]
-        ans += pack(('>%dH'%len(self)).encode('ascii'), *sids)
+        ans += pack(f'>{len(self)}H'.encode('ascii'), *sids)
         self.raw = ans
         return ans
 
 
-class Subset(object):
+class Subset:
 
     def __init__(self, cff, keep_charnames):
         self.cff = cff
@@ -131,7 +129,7 @@ class Subset(object):
         charsets.extend(cff.charset[1:])  # .notdef is not included
 
         endchar_operator = bytes(bytearray([14]))
-        for i in xrange(self.cff.num_glyphs):
+        for i in range(self.cff.num_glyphs):
             cname = self.cff.charset.safe_lookup(i)
             ok = cname in keep_charnames
             cs = self.cff.char_strings[i] if ok else endchar_operator
@@ -189,5 +187,3 @@ class Subset(object):
             self.raw += private_dict.raw
             if private_dict.subrs is not None:
                 self.raw += private_dict.subrs.raw
-
-

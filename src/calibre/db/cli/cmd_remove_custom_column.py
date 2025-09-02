@@ -1,8 +1,8 @@
-#!/usr/bin/env python2
-# vim:fileencoding=utf-8
+#!/usr/bin/env python
 # License: GPLv3 Copyright: 2017, Kovid Goyal <kovid at kovidgoyal.net>
 
-from __future__ import absolute_import, division, print_function, unicode_literals
+
+import sys
 
 from calibre import prints
 from calibre.db.legacy import LibraryDatabase
@@ -37,9 +37,16 @@ columns with the custom_columns command.
     return parser
 
 
+def input_unicode(prompt):
+    ans = input(prompt)
+    if isinstance(ans, bytes):
+        ans = ans.decode(sys.stdin.encoding)
+    return ans
+
+
 def do_remove_custom_column(db, label, force):
     if not force:
-        q = raw_input(
+        q = input_unicode(
             _('You will lose all data in the column: %s.'
               ' Are you sure (y/n)? ') % label
         )
@@ -54,7 +61,7 @@ def do_remove_custom_column(db, label, force):
                 ' Use calibredb custom_columns to get a list of labels.'
             ) % label
         )
-    prints('Column %r removed.' % label)
+    prints(f'Column {label!r} removed.')
 
 
 def main(opts, args, dbctx):

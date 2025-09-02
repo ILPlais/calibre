@@ -1,15 +1,16 @@
-# -*- coding: utf-8 -*-
 '''
 Defines the plugin system for conversions.
 '''
-import re, os, shutil
+import numbers
+import os
+import re
+import shutil
 
 from calibre import CurrentDir
 from calibre.customize import Plugin
 
 
-class ConversionOption(object):
-
+class ConversionOption:
     '''
     Class representing conversion options
     '''
@@ -40,7 +41,7 @@ class ConversionOption(object):
         return hash(self.name)
 
     def __eq__(self, other):
-        return hash(self) == hash(other)
+        return self.name == getattr(other, 'name', other)
 
     def clone(self):
         return ConversionOption(name=self.name, help=self.help,
@@ -48,7 +49,7 @@ class ConversionOption(object):
                 choices=self.choices)
 
 
-class OptionRecommendation(object):
+class OptionRecommendation:
     LOW  = 1
     MED  = 2
     HIGH = 3
@@ -77,14 +78,13 @@ class OptionRecommendation(object):
     def validate_parameters(self):
         if self.option.choices and self.recommended_value not in \
                                                     self.option.choices:
-            raise ValueError('OpRec: %s: Recommended value not in choices'%
-                             self.option.name)
-        if not (isinstance(self.recommended_value, (int, float, str, unicode)) or self.recommended_value is None):
-            raise ValueError('OpRec: %s:'%self.option.name + repr(
+            raise ValueError(f'OpRec: {self.option.name}: Recommended value not in choices')
+        if not (isinstance(self.recommended_value, (numbers.Number, bytes, str)) or self.recommended_value is None):
+            raise ValueError(f'OpRec: {self.option.name}:' + repr(
                 self.recommended_value) + ' is not a string or a number')
 
 
-class DummyReporter(object):
+class DummyReporter:
 
     def __init__(self):
         self.cancel_requested = False
@@ -106,7 +106,7 @@ def gui_configuration_widget(name, parent, get_option_by_name,
             output_widget = importlib.import_module(
                     'calibre.gui2.convert.'+name)
             pw = output_widget.PluginWidget
-            pw.ICON = I('back.png')
+            pw.ICON = 'back.png'
             pw.HELP = _('Options specific to the output format.')
             return widget_factory(pw)
         except ImportError:
@@ -116,7 +116,7 @@ def gui_configuration_widget(name, parent, get_option_by_name,
             input_widget = importlib.import_module(
                     'calibre.gui2.convert.'+name)
             pw = input_widget.PluginWidget
-            pw.ICON = I('forward.png')
+            pw.ICON = 'forward.png'
             pw.HELP = _('Options specific to the input format.')
             return widget_factory(pw)
         except ImportError:
@@ -125,7 +125,6 @@ def gui_configuration_widget(name, parent, get_option_by_name,
 
 
 class InputFormatPlugin(Plugin):
-
     '''
     InputFormatPlugins are responsible for converting a document into
     HTML+OPF+CSS+etc.
@@ -141,7 +140,7 @@ class InputFormatPlugin(Plugin):
 
     #: Set of file types for which this plugin should be run
     #: For example: ``set(['azw', 'mobi', 'prc'])``
-    file_types     = set([])
+    file_types     = set()
 
     #: If True, this input plugin generates a collection of images,
     #: one per HTML file. This can be set dynamically, in the convert method
@@ -178,11 +177,11 @@ class InputFormatPlugin(Plugin):
 
     #: Options to customize the behavior of this plugin. Every option must be an
     #: instance of :class:`OptionRecommendation`.
-    options = set([])
+    options = set()
 
     #: A set of 3-tuples of the form
     #: (option_name, recommended_value, recommendation_level)
-    recommendations = set([])
+    recommendations = set()
 
     def __init__(self, *args):
         Plugin.__init__(self, *args)
@@ -200,9 +199,9 @@ class InputFormatPlugin(Plugin):
         '''
         This method must be implemented in sub-classes. It must return
         the path to the created OPF file or an :class:`OEBBook` instance.
-        All output should be contained in the current directory.
+        All output should be contained in the current folder.
         If this plugin creates files outside the current
-        directory they must be deleted/marked for deletion before this method
+        folder they must be deleted/marked for deletion before this method
         returns.
 
         :param stream:   A file like object that contains the input file.
@@ -219,24 +218,24 @@ class InputFormatPlugin(Plugin):
                          by this plugin.
         :param log: A :class:`calibre.utils.logging.Log` object. All output
                     should use this object.
-        :param accelarators: A dictionary of various information that the input
+        :param accelerators: A dictionary of various information that the input
                              plugin can get easily that would speed up the
                              subsequent stages of the conversion.
 
         '''
-        raise NotImplementedError
+        raise NotImplementedError()
 
     def __call__(self, stream, options, file_ext, log,
                  accelerators, output_dir):
         try:
-            log('InputFormatPlugin: %s running'%self.name)
+            log(f'InputFormatPlugin: {self.name} running')
             if hasattr(stream, 'name'):
                 log('on', stream.name)
-        except:
+        except Exception:
             # In case stdout is broken
             pass
 
-        with CurrentDir(output_dir, workaround_temp_folder_permissions=True):
+        with CurrentDir(output_dir):
             for x in os.listdir('.'):
                 shutil.rmtree(x) if os.path.isdir(x) else os.remove(x)
 
@@ -273,7 +272,6 @@ class InputFormatPlugin(Plugin):
 
 
 class OutputFormatPlugin(Plugin):
-
     '''
     OutputFormatPlugins are responsible for converting an OEB document
     (OPF+HTML) into an output e-book.
@@ -313,7 +311,7 @@ class OutputFormatPlugin(Plugin):
 
     @property
     def description(self):
-        return _('Convert e-books to the %s format')%self.file_type
+        return _('Convert e-books to the %s format')%self.file_type.upper()
 
     def __init__(self, *args):
         Plugin.__init__(self, *args)
@@ -325,8 +323,8 @@ class OutputFormatPlugin(Plugin):
         :class:`calibre.ebooks.oeb.OEBBook`) to the file specified by output.
 
         :param output: Either a file like object or a string. If it is a string
-                       it is the path to a directory that may or may not exist. The output
-                       plugin should write its output into that directory. If it is a file like
+                       it is the path to a folder that may or may not exist. The output
+                       plugin should write its output into that folder. If it is a file like
                        object, the output plugin should write its output into the file.
         :param input_plugin: The input plugin that was used at the beginning of
                              the conversion pipeline.
@@ -335,12 +333,12 @@ class OutputFormatPlugin(Plugin):
         :param log: The logger. Print debug/info messages etc. using this.
 
         '''
-        raise NotImplementedError
+        raise NotImplementedError()
 
     @property
     def is_periodical(self):
         return self.oeb.metadata.publication_type and \
-            unicode(self.oeb.metadata.publication_type[0]).startswith('periodical:')
+            str(self.oeb.metadata.publication_type[0]).startswith('periodical:')
 
     def specialize_options(self, log, opts, input_fmt):
         '''
@@ -351,7 +349,7 @@ class OutputFormatPlugin(Plugin):
 
     def specialize_css_for_output(self, log, opts, item, stylizer):
         '''
-        Can be used to make changes to the css during the CSS flattening
+        Can be used to make changes to the CSS during the CSS flattening
         process.
 
         :param item: The item (HTML file) being processed

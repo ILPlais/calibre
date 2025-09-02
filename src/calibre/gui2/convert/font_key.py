@@ -1,12 +1,11 @@
-#!/usr/bin/env python2
-# vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
-from __future__ import with_statement
+#!/usr/bin/env python
+
 
 __license__   = 'GPL v3'
 __copyright__ = '2009, Kovid Goyal <kovid@kovidgoyal.net>'
 __docformat__ = 'restructuredtext en'
 
-from PyQt5.Qt import QDialog
+from qt.core import QDialog, QDialogButtonBox
 
 from calibre.gui2.convert.font_key_ui import Ui_Dialog
 from calibre.utils.localization import localize_user_manual_link
@@ -47,7 +46,7 @@ class FontKeyChooser(QDialog, Ui_Dialog):
         self.calculate()
 
     def button_clicked(self, button):
-        if button is self.buttonBox.button(self.buttonBox.RestoreDefaults):
+        if button is self.buttonBox.button(QDialogButtonBox.StandardButton.RestoreDefaults):
             self.output_base_font_size.setValue(0.0)
             self.font_size_key.setText('')
         self.calculate()
@@ -66,7 +65,7 @@ class FontKeyChooser(QDialog, Ui_Dialog):
 
     @property
     def fsizes(self):
-        key = unicode(self.font_size_key.text()).strip()
+        key = str(self.font_size_key.text()).strip()
         return [float(x.strip()) for x in key.split(',' if ',' in key else ' ') if x.strip()]
 
     @property
@@ -79,7 +78,7 @@ class FontKeyChooser(QDialog, Ui_Dialog):
         fsize = self.input_font_size.value()
         try:
             fsizes = self.fsizes
-        except:
+        except Exception:
             return
 
         if dbase == 0.0 or not fsizes:
@@ -92,17 +91,17 @@ class FontKeyChooser(QDialog, Ui_Dialog):
         from calibre.ebooks.oeb.transforms.flatcss import KeyMapper
         mapper = KeyMapper(sbase, dbase, fsizes)
         msize = mapper[fsize]
-        self.input_mapped_font_size.setText('%.1f pt'%msize)
+        self.input_mapped_font_size.setText(f'{msize:.1f} pt')
 
     def use_default(self):
         dbase, fsizes = self.get_profile_values()
         self.output_base_font_size.setValue(dbase)
-        self.font_size_key.setText(', '.join(['%.1f'%x for x in fsizes]))
+        self.font_size_key.setText(', '.join([f'{x:.1f}' for x in fsizes]))
 
 
 if __name__ == '__main__':
-    from PyQt5.Qt import QApplication
+    from qt.core import QApplication
     app = QApplication([])
     d = FontKeyChooser()
-    d.exec_()
+    d.exec()
     del app

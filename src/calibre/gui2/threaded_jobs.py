@@ -1,19 +1,20 @@
-#!/usr/bin/env python2
-# vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
+#!/usr/bin/env python
+
 
 __license__   = 'GPL v3'
 __copyright__ = '2011, Kovid Goyal <kovid@kovidgoyal.net>'
 __docformat__ = 'restructuredtext en'
 
-import os, time, tempfile, json
-from threading import Thread, RLock, Event
-from Queue import Queue
+import json
+import os
+import tempfile
+import time
+from threading import Event, RLock, Thread
 
+from calibre.ptempfile import base_dir
 from calibre.utils.ipc.job import BaseJob
 from calibre.utils.logging import GUILog
-from calibre.ptempfile import base_dir
+from polyglot.queue import Queue
 
 
 class ThreadedJob(BaseJob):
@@ -55,7 +56,7 @@ class ThreadedJob(BaseJob):
         Note that it is not called if the user kills the job. Check job.failed
         to see if the job succeeded or not. And use job.log to get the job log.
 
-        :param killable: If False the GUI wont let the user kill this job
+        :param killable: If False the GUI won't let the user kill this job
 
         :param log: Must be a subclass of GUILog or None. If None a default
         GUILog is created.
@@ -85,13 +86,13 @@ class ThreadedJob(BaseJob):
         except Exception as e:
             self.exception = e
             self.failed = True
-            self.log.exception('Job: "%s" failed with error:'%self.description)
+            self.log.exception(f'Job: "{self.description}" failed with error:')
             self.log.debug('Called with args:', self.args, self.kwargs)
 
         self.duration = time.time() - self.start_time
         try:
             self.callback(self)
-        except:
+        except Exception:
             import traceback
             traceback.print_exc()
         self._cleanup()
@@ -100,7 +101,7 @@ class ThreadedJob(BaseJob):
 
         try:
             self.consolidate_log()
-        except:
+        except Exception:
             if self.log is not None:
                 self.log.exception('Log consolidation failed')
 
@@ -129,9 +130,11 @@ class ThreadedJob(BaseJob):
         if not os.path.exists(log_dir):
             os.makedirs(log_dir)
         fd, path = tempfile.mkstemp(suffix='.json', prefix='log-', dir=log_dir)
+        data = json.dumps(logs, ensure_ascii=False, indent=2)
+        if not isinstance(data, bytes):
+            data = data.encode('utf-8')
         with os.fdopen(fd, 'wb') as f:
-            f.write(json.dumps(logs, ensure_ascii=False,
-                indent=2).encode('utf-8'))
+            f.write(data)
         self.consolidated_log = path
         self.log = None
 
@@ -162,8 +165,9 @@ class ThreadedJobWorker(Thread):
     def run(self):
         try:
             self.job.start_work()
-        except:
+        except Exception:
             import traceback
+
             from calibre import prints
             prints('Job had unhandled exception:', self.job.description)
             traceback.print_exc()
@@ -195,7 +199,7 @@ class ThreadedJobServer(Thread):
         while self.keep_going:
             try:
                 self.run_once()
-            except:
+            except Exception:
                 import traceback
                 traceback.print_exc()
             time.sleep(0.1)
@@ -245,5 +249,3 @@ class ThreadedJobServer(Thread):
                 queued_types.append(job.type)
                 ans.append(job)
         return ans
-
-

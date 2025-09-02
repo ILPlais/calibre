@@ -1,22 +1,22 @@
-#!/usr/bin/env python2
-# vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
-from __future__ import with_statement
+#!/usr/bin/env python
+
 
 __license__   = 'GPL v3'
 __copyright__ = '2009, Kovid Goyal <kovid@kovidgoyal.net>'
 __docformat__ = 'restructuredtext en'
 
 
-from PyQt5.Qt import QDialog, QVBoxLayout, QPlainTextEdit, QTimer, \
-    QDialogButtonBox, QPushButton, QApplication, QIcon, QMessageBox
+import numbers
+
+from qt.core import QApplication, QDialog, QDialogButtonBox, QIcon, QMessageBox, QPlainTextEdit, QPushButton, QTimer, QVBoxLayout
 
 
 def step_dialog(parent, title, msg, det_msg=''):
     d = QMessageBox(parent)
     d.setWindowTitle(title)
     d.setText(msg)
-    d.setStandardButtons(QMessageBox.Ok | QMessageBox.Cancel)
-    return d.exec_() & QMessageBox.Cancel
+    d.setStandardButtons(QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel)
+    return d.exec() & QMessageBox.StandardButton.Cancel
 
 
 class UserDefinedDevice(QDialog):
@@ -31,14 +31,14 @@ class UserDefinedDevice(QDialog):
         self.copy = QPushButton(_('Copy to &clipboard'))
         self.copy.setDefault(True)
         self.setWindowTitle(_('User-defined device information'))
-        self.setWindowIcon(QIcon(I('debug.png')))
+        self.setWindowIcon(QIcon.ic('debug.png'))
         self.copy.clicked.connect(self.copy_to_clipboard)
         self.ok = QPushButton('&OK')
         self.ok.setAutoDefault(False)
         self.ok.clicked.connect(self.accept)
         self.bbox = QDialogButtonBox(self)
-        self.bbox.addButton(self.copy, QDialogButtonBox.ActionRole)
-        self.bbox.addButton(self.ok, QDialogButtonBox.AcceptRole)
+        self.bbox.addButton(self.copy, QDialogButtonBox.ButtonRole.ActionRole)
+        self.bbox.addButton(self.ok, QDialogButtonBox.ButtonRole.AcceptRole)
         self._layout.addWidget(self.bbox)
         self.resize(750, 500)
         self.bbox.setEnabled(False)
@@ -63,7 +63,8 @@ class UserDefinedDevice(QDialog):
             res = ''
             if len(new_devices) == 1:
                 def fmtid(x):
-                    if isinstance(x, (int, long)):
+                    x = x or 0
+                    if isinstance(x, numbers.Integral):
                         x = hex(x)
                     if not x.startswith('0x'):
                         x = '0x' + x
@@ -94,4 +95,4 @@ class UserDefinedDevice(QDialog):
 if __name__ == '__main__':
     app = QApplication([])
     d = UserDefinedDevice()
-    d.exec_()
+    d.exec()

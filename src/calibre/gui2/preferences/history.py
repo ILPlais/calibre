@@ -1,6 +1,5 @@
-#!/usr/bin/env python2
-# vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
-from __future__ import with_statement
+#!/usr/bin/env python
+
 
 __license__   = 'GPL v3'
 __copyright__ = '2009, Kovid Goyal <kovid@kovidgoyal.net>'
@@ -8,7 +7,7 @@ __docformat__ = 'restructuredtext en'
 
 import textwrap
 
-from PyQt5.Qt import QComboBox, Qt
+from qt.core import QComboBox, Qt
 
 from calibre.gui2 import config as gui_conf
 
@@ -34,17 +33,14 @@ class HistoryBox(QComboBox):
             history.append(val)
         self.clear()
         self.addItems(history)
-        self.setCurrentIndex(self.findText(val, Qt.MatchFixedString))
+        self.setCurrentIndex(self.findText(val, Qt.MatchFlag.MatchFixedString))
 
     def save_history(self, opt_name):
-        history = [unicode(self.itemText(i)) for i in range(self.count())]
+        history = [str(self.itemText(i)) for i in range(self.count())]
         ct = self.text()
         if ct not in history:
             history = [ct] + history
         gui_conf[opt_name] = history[:10]
 
     def text(self):
-        return unicode(self.currentText()).strip()
-
-
-
+        return str(self.currentText()).strip()

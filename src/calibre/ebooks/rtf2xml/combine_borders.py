@@ -15,12 +15,14 @@ import os
 from calibre.ebooks.rtf2xml import copy
 from calibre.ptempfile import better_mktemp
 
+from . import open_for_read, open_for_write
+
 
 class CombineBorders:
-    """Combine borders in RTF tokens to make later processing easier"""
+    '''Combine borders in RTF tokens to make later processing easier'''
 
     def __init__(self,
-            in_file ,
+            in_file,
             bug_handler,
             copy=None,
             run_level=1,
@@ -46,10 +48,9 @@ class CombineBorders:
         return line
 
     def end_border(self, line, write_obj):
-        border_string = "|".join(self.__bord_att)
+        border_string = '|'.join(self.__bord_att)
         self.__bord_att = []
-        write_obj.write('cw<bd<%s<nu<%s\n' % (self.__bord_pos,
-                                                border_string))
+        write_obj.write(f'cw<bd<{self.__bord_pos}<nu<{border_string}\n')
         self.__state = 'default'
         self.__bord_string = ''
         if self.__first_five == 'cw<bd':
@@ -76,8 +77,8 @@ class CombineBorders:
             self.add_to_border_desc(line)
 
     def combine_borders(self):
-        with open(self.__file, 'r') as read_obj:
-            with open(self.__write_to, 'w') as write_obj:
+        with open_for_read(self.__file) as read_obj:
+            with open_for_write(self.__write_to) as write_obj:
                 for line in read_obj:
                     self.__first_five = line[0:5]
                     if self.__state == 'border':
@@ -86,6 +87,6 @@ class CombineBorders:
                         write_obj.write(self.__default_func(line))
         copy_obj = copy.Copy(bug_handler=self.__bug_handler)
         if self.__copy:
-            copy_obj.copy_file(self.__write_to, "combine_borders.data")
+            copy_obj.copy_file(self.__write_to, 'combine_borders.data')
         copy_obj.rename(self.__write_to, self.__file)
         os.remove(self.__write_to)

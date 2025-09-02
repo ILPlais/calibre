@@ -1,30 +1,41 @@
-#!/usr/bin/env python2
-# vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:fdm=marker:ai
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
+#!/usr/bin/env python
+
 
 __license__   = 'GPL v3'
 __copyright__ = '2013, Kovid Goyal <kovid at kovidgoyal.net>'
 __docformat__ = 'restructuredtext en'
 
-import sys, shutil, os
+import os
+import shutil
+import sys
 from threading import Thread
-from glob import glob
 
-from PyQt5.Qt import (
-    QDialog, QApplication, QLabel, QVBoxLayout, QDialogButtonBox, Qt,
-    pyqtSignal, QListWidget, QListWidgetItem, QSize, QPixmap, QStyledItemDelegate
+from qt.core import (
+    QAbstractItemView,
+    QApplication,
+    QDialog,
+    QDialogButtonBox,
+    QLabel,
+    QListView,
+    QListWidget,
+    QListWidgetItem,
+    QPixmap,
+    QSize,
+    QStyledItemDelegate,
+    Qt,
+    QTimer,
+    QVBoxLayout,
+    pyqtSignal,
+    sip,
 )
-try:
-    from PyQt5 import sip
-except ImportError:
-    import sip
 
 from calibre import as_unicode
+from calibre.ebooks.metadata.archive import get_comic_images
 from calibre.ebooks.metadata.pdf import page_images
 from calibre.gui2 import error_dialog, file_icon_provider
-from calibre.ptempfile import PersistentTemporaryDirectory
 from calibre.gui2.progress_indicator import WaitLayout
+from calibre.libunzip import comic_exts
+from calibre.ptempfile import PersistentTemporaryDirectory
 
 
 class CoverDelegate(QStyledItemDelegate):
@@ -33,8 +44,8 @@ class CoverDelegate(QStyledItemDelegate):
         QStyledItemDelegate.paint(self, painter, option, index)
         style = QApplication.style()
         # Ensure the cover is rendered over any selection rect
-        style.drawItemPixmap(painter, option.rect, Qt.AlignTop|Qt.AlignHCenter,
-            QPixmap(index.data(Qt.DecorationRole)))
+        style.drawItemPixmap(painter, option.rect, Qt.AlignmentFlag.AlignTop|Qt.AlignmentFlag.AlignHCenter,
+            QPixmap(index.data(Qt.ItemDataRole.DecorationRole)))
 
 
 PAGES_PER_RENDER = 10
@@ -48,54 +59,55 @@ class PDFCovers(QDialog):
     def __init__(self, pdfpath, parent=None):
         QDialog.__init__(self, parent)
         self.pdfpath = pdfpath
-        self.stack = WaitLayout(_('Rendering PDF pages, please wait...'), parent=self)
+        self.ext = os.path.splitext(pdfpath)[1][1:].lower()
+        self.is_pdf = self.ext == 'pdf'
+        self.stack = WaitLayout(_('Rendering {} pages, please wait...').format('PDF' if self.is_pdf else _('comic book')), parent=self)
         self.container = self.stack.after
 
         self.container.l = l = QVBoxLayout(self.container)
-        self.la = la = QLabel(_('Choose a cover from the list of PDF pages below'))
+        self.la = la = QLabel(_('Choose a cover from the list of pages below'))
         l.addWidget(la)
         self.covers = c = QListWidget(self)
         l.addWidget(c)
         self.item_delegate = CoverDelegate(self)
         c.setItemDelegate(self.item_delegate)
         c.setIconSize(QSize(120, 160))
-        c.setSelectionMode(c.SingleSelection)
-        c.setViewMode(c.IconMode)
+        c.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        c.setViewMode(QListView.ViewMode.IconMode)
         c.setUniformItemSizes(True)
-        c.setResizeMode(c.Adjust)
-        c.itemDoubleClicked.connect(self.accept, type=Qt.QueuedConnection)
+        c.setResizeMode(QListView.ResizeMode.Adjust)
+        c.itemDoubleClicked.connect(self.accept, type=Qt.ConnectionType.QueuedConnection)
 
-        self.bb = bb = QDialogButtonBox(QDialogButtonBox.Ok|QDialogButtonBox.Cancel)
+        self.bb = bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok|QDialogButtonBox.StandardButton.Cancel)
         bb.accepted.connect(self.accept)
         bb.rejected.connect(self.reject)
-        self.more_pages = b = bb.addButton(_('&More pages'), QDialogButtonBox.ActionRole)
+        self.more_pages = b = bb.addButton(_('&More pages'), QDialogButtonBox.ButtonRole.ActionRole)
         b.clicked.connect(self.start_rendering)
         l.addWidget(bb)
-        self.rendering_done.connect(self.show_pages, type=Qt.QueuedConnection)
+        self.rendering_done.connect(self.show_pages, type=Qt.ConnectionType.QueuedConnection)
         self.first = 1
-        self.setWindowTitle(_('Choose cover from PDF'))
-        self.setWindowIcon(file_icon_provider().icon_from_ext('pdf'))
+        self.setWindowTitle(_('Choose cover from book'))
+        self.setWindowIcon(file_icon_provider().icon_from_ext(self.ext))
         self.resize(QSize(800, 600))
         self.tdir = PersistentTemporaryDirectory('_pdf_covers')
-        self.start_rendering()
+        QTimer.singleShot(0, self.start_rendering)
 
     def start_rendering(self):
         self.hide_pages()
-        self.thread = Thread(target=self.render)
-        self.thread.daemon = True
+        self.thread = Thread(target=self.render, daemon=True, name='RenderPages')
         self.thread.start()
 
     @property
     def cover_path(self):
         for item in self.covers.selectedItems():
-            return unicode(item.data(Qt.UserRole) or '')
+            return str(item.data(Qt.ItemDataRole.UserRole) or '')
         if self.covers.count() > 0:
-            return unicode(self.covers.item(0).data(Qt.UserRole) or '')
+            return str(self.covers.item(0).data(Qt.ItemDataRole.UserRole) or '')
 
     def cleanup(self):
         try:
             shutil.rmtree(self.tdir)
-        except EnvironmentError:
+        except OSError:
             pass
 
     def render(self):
@@ -103,11 +115,14 @@ class PDFCovers(QDialog):
         self.error = None
         try:
             os.mkdir(self.current_tdir)
-            page_images(self.pdfpath, self.current_tdir, first=self.first, last=self.first + PAGES_PER_RENDER - 1)
-        except Exception as e:
-            if self.covers.count():
-                pass
+            if self.is_pdf:
+                page_images(self.pdfpath, self.current_tdir, first=self.first, last=self.first + PAGES_PER_RENDER - 1)
             else:
+                get_comic_images(self.pdfpath, self.current_tdir, first=self.first, last=self.first + PAGES_PER_RENDER - 1)
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            if not self.covers.count():
                 self.error = as_unicode(e)
         if not sip.isdeleted(self) and self.isVisible():
             self.rendering_done.emit()
@@ -119,14 +134,14 @@ class PDFCovers(QDialog):
     def show_pages(self):
         if self.error is not None:
             error_dialog(self, _('Failed to render'),
-                _('Could not render this PDF file'), show=True, det_msg=self.error)
+                _('Could not render this file'), show=True, det_msg=self.error)
             self.reject()
             return
         self.stack.stop()
-        files = glob(os.path.join(self.current_tdir, '*.jpg')) + glob(os.path.join(self.current_tdir, '*.jpeg'))
+        files = tuple(x for x in os.listdir(self.current_tdir) if os.path.splitext(x)[1][1:].lower() in comic_exts)
         if not files and not self.covers.count():
             error_dialog(self, _('Failed to render'),
-                _('This PDF has no pages'), show=True)
+                _('This book has no pages'), show=True)
             self.reject()
             return
 
@@ -136,11 +151,14 @@ class PDFCovers(QDialog):
             dpr = self.devicePixelRatio()
 
         for i, f in enumerate(sorted(files)):
-            p = QPixmap(f).scaled(self.covers.iconSize()*dpr, aspectRatioMode=Qt.IgnoreAspectRatio, transformMode=Qt.SmoothTransformation)
+            path = os.path.join(self.current_tdir, f)
+            p = QPixmap(path).scaled(
+                self.covers.iconSize()*dpr, aspectRatioMode=Qt.AspectRatioMode.IgnoreAspectRatio,
+                transformMode=Qt.TransformationMode.SmoothTransformation)
             p.setDevicePixelRatio(dpr)
             i = QListWidgetItem(_('page %d') % (self.first + i))
-            i.setData(Qt.DecorationRole, p)
-            i.setData(Qt.UserRole, f)
+            i.setData(Qt.ItemDataRole.DecorationRole, p)
+            i.setData(Qt.ItemDataRole.UserRole, path)
             self.covers.addItem(i)
         self.first += len(files)
         if len(files) == PAGES_PER_RENDER:
@@ -151,6 +169,6 @@ if __name__ == '__main__':
     from calibre.gui2 import Application
     app = Application([])
     d = PDFCovers(sys.argv[-1])
-    d.exec_()
-    print (d.cover_path)
+    d.exec()
+    print(d.cover_path)
     del app

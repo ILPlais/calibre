@@ -1,7 +1,5 @@
-#!/usr/bin/env python2
-# vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
+#!/usr/bin/env python
+
 
 __license__   = 'GPL v3'
 __copyright__ = '2012, Kovid Goyal <kovid@kovidgoyal.net>'
@@ -10,9 +8,10 @@ __docformat__ = 'restructuredtext en'
 import re
 
 from calibre import guess_type
+from polyglot.builtins import iteritems
 
 
-class EntityDeclarationProcessor(object):  # {{{
+class EntityDeclarationProcessor:  # {{{
 
     def __init__(self, html):
         self.declared_entities = {}
@@ -21,8 +20,8 @@ class EntityDeclarationProcessor(object):  # {{{
             if len(tokens) > 1:
                 self.declared_entities[tokens[0].strip()] = tokens[1].strip().replace('"', '')
         self.processed_html = html
-        for key, val in self.declared_entities.iteritems():
-            self.processed_html = self.processed_html.replace('&%s;'%key, val)
+        for key, val in iteritems(self.declared_entities):
+            self.processed_html = self.processed_html.replace(f'&{key};', val)
 # }}}
 
 
@@ -30,7 +29,7 @@ def self_closing_sub(match):
     tag = match.group(1)
     if tag.lower().strip() == 'br':
         return match.group()
-    return '<%s%s></%s>'%(match.group(1), match.group(2), match.group(1))
+    return f'<{match.group(1)}{match.group(2)}></{match.group(1)}>'
 
 
 def cleanup_html(html):
@@ -50,7 +49,7 @@ def load_as_html(html):
 def load_html(path, view, codec='utf-8', mime_type=None,
               pre_load_callback=lambda x:None, path_is_html=False,
               force_as_html=False, loading_url=None):
-    from PyQt5.Qt import QUrl, QByteArray
+    from qt.core import QByteArray, QUrl
     if mime_type is None:
         mime_type = guess_type(path)[0]
         if not mime_type:

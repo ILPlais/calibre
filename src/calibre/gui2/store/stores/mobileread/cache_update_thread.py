@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
-
-from __future__ import (unicode_literals, division, absolute_import, print_function)
+from __future__ import absolute_import, division, print_function, unicode_literals
 
 __license__ = 'GPL 3'
 __copyright__ = '2011, John Schember <john@nachtimwald.com>'
@@ -11,8 +10,7 @@ from contextlib import closing
 from threading import Thread
 
 from lxml import html
-
-from PyQt5.Qt import (pyqtSignal, QObject)
+from qt.core import QObject, pyqtSignal
 
 from calibre import browser
 from calibre.gui2.store.search_result import SearchResult
@@ -22,7 +20,7 @@ class CacheUpdateThread(Thread, QObject):
 
     total_changed = pyqtSignal(int)
     update_progress = pyqtSignal(int)
-    update_details = pyqtSignal(unicode)
+    update_details = pyqtSignal(type(u''))
 
     def __init__(self, config, seralize_books_function, timeout):
         Thread.__init__(self)
@@ -53,7 +51,7 @@ class CacheUpdateThread(Thread, QObject):
         try:
             with closing(br.open(url, timeout=self.timeout)) as f:
                 raw_data = f.read()
-        except:
+        except Exception:
             return
 
         if not raw_data or not self._run:
@@ -88,7 +86,7 @@ class CacheUpdateThread(Thread, QObject):
                     break
                 else:
                     self.update_progress.emit(i)
-        except:
+        except Exception:
             pass
 
         # Save the book list and it's create time.

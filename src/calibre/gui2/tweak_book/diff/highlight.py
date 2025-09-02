@@ -1,19 +1,19 @@
-#!/usr/bin/env python2
-# vim:fileencoding=utf-8
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
+#!/usr/bin/env python
+
 
 __license__ = 'GPL v3'
 __copyright__ = '2014, Kovid Goyal <kovid at kovidgoyal.net>'
 
 import os
 
-from PyQt5.Qt import QTextDocument, QTextCursor, QPlainTextDocumentLayout
+from qt.core import QPlainTextDocumentLayout, QTextCursor, QTextDocument
 
 from calibre.gui2.tweak_book import tprefs
-from calibre.gui2.tweak_book.editor.text import get_highlighter as calibre_highlighter, SyntaxHighlighter
+from calibre.gui2.tweak_book.editor.syntax.utils import NULL_FMT, format_for_pygments_token
+from calibre.gui2.tweak_book.editor.text import SyntaxHighlighter
+from calibre.gui2.tweak_book.editor.text import get_highlighter as calibre_highlighter
 from calibre.gui2.tweak_book.editor.themes import get_theme, highlight_to_char_format
-from calibre.gui2.tweak_book.editor.syntax.utils import format_for_pygments_token, NULL_FMT
+from polyglot.builtins import iteritems
 
 
 class QtHighlighter(QTextDocument):
@@ -41,25 +41,25 @@ class QtHighlighter(QTextDocument):
                 dest_block = cursor.block()
                 c = QTextCursor(dest_block)
                 try:
-                    afs = block.layout().additionalFormats()
+                    afs = block.layout().formats()
                 except AttributeError:
                     afs = ()
                 for af in afs:
                     start = dest_block.position() + af.start
-                    c.setPosition(start), c.setPosition(start + af.length, c.KeepAnchor)
+                    c.setPosition(start), c.setPosition(start + af.length, QTextCursor.MoveMode.KeepAnchor)
                     c.setCharFormat(af.format)
                 cursor.insertBlock()
                 cursor.setCharFormat(NULL_FMT)
                 block = block.next()
 
 
-class NullHighlighter(object):
+class NullHighlighter:
 
     def __init__(self, text):
         self.lines = text.splitlines()
 
     def copy_lines(self, lo, hi, cursor):
-        for i in xrange(lo, hi):
+        for i in range(lo, hi):
             cursor.insertText(self.lines[i])
             cursor.insertBlock()
 
@@ -70,7 +70,8 @@ def pygments_lexer(filename):
         from pygments.util import ClassNotFound
     except ImportError:
         return None
-    glff = lambda n: get_lexer_for_filename(n, stripnl=False)
+    def glff(n):
+        return get_lexer_for_filename(n, stripnl=False)
     try:
         return glff(filename)
     except ClassNotFound:
@@ -79,11 +80,11 @@ def pygments_lexer(filename):
         return None
 
 
-class PygmentsHighlighter(object):
+class PygmentsHighlighter:
 
     def __init__(self, text, lexer):
         theme, cache = get_theme(tprefs['editor_theme']), {}
-        theme = {k:highlight_to_char_format(v) for k, v in theme.iteritems()}
+        theme = {k:highlight_to_char_format(v) for k, v in iteritems(theme)}
         theme[None] = NULL_FMT
 
         def fmt(token):
@@ -101,7 +102,7 @@ class PygmentsHighlighter(object):
                     continue
 
     def copy_lines(self, lo, hi, cursor):
-        for i in xrange(lo, hi):
+        for i in range(lo, hi):
             for fmt, text in self.lines[i]:
                 cursor.insertText(text, fmt)
             cursor.setCharFormat(NULL_FMT)

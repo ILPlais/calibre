@@ -1,26 +1,27 @@
-#!/usr/bin/env python2
-# vim:fileencoding=utf-8
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
+#!/usr/bin/env python
+
 
 __license__ = 'GPL v3'
 __copyright__ = '2013, Kovid Goyal <kovid at kovidgoyal.net>'
 
-import sys, os, shutil
+import os
+import shutil
+import sys
 
 from lxml import etree
 
 from calibre import walk
+from calibre.utils.xml_parse import safe_xml_fromstring
 from calibre.utils.zipfile import ZipFile
 
 
 def pretty_all_xml_in_dir(path):
     for f in walk(path):
-        if f.endswith('.xml') or f.endswith('.rels'):
+        if f.endswith(('.xml', '.rels')):
             with open(f, 'r+b') as stream:
                 raw = stream.read()
                 if raw:
-                    root = etree.fromstring(raw)
+                    root = safe_xml_fromstring(raw)
                     stream.seek(0)
                     stream.truncate()
                     stream.write(etree.tostring(root, pretty_print=True, encoding='utf-8', xml_declaration=True))

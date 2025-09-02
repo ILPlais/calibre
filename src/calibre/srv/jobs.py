@@ -1,19 +1,19 @@
-#!/usr/bin/env python2
-# vim:fileencoding=utf-8
+#!/usr/bin/env python
 # License: GPLv3 Copyright: 2016, Kovid Goyal <kovid at kovidgoyal.net>
 
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
-import os, time
-from itertools import count
-from collections import namedtuple, deque
+
+import os
+import time
+from collections import deque, namedtuple
 from functools import partial
-from threading import RLock, Thread, Event
-from Queue import Queue, Empty
+from itertools import count
+from threading import Event, RLock, Thread
 
 from calibre import detect_ncpus, force_unicode
+from calibre.utils.ipc.simple_worker import WorkerError, fork_job
 from calibre.utils.monotonic import monotonic
-from calibre.utils.ipc.simple_worker import fork_job, WorkerError
+from polyglot.builtins import iteritems, itervalues
+from polyglot.queue import Empty, Queue
 
 StartEvent = namedtuple('StartEvent', 'job_id name module function args kwargs callback data')
 DoneEvent = namedtuple('DoneEvent', 'job_id')
@@ -24,7 +24,7 @@ class Job(Thread):
     daemon = True
 
     def __init__(self, start_event, events_queue):
-        Thread.__init__(self, name='JobsMonitor%s' % start_event.job_id)
+        Thread.__init__(self, name=f'JobsMonitor{start_event.job_id}')
         self.abort_event = Event()
         self.events_queue = events_queue
         self.job_name = start_event.name
@@ -66,23 +66,23 @@ class Job(Thread):
         if lp:
             try:
                 os.remove(lp)
-            except EnvironmentError:
+            except OSError:
                 pass
 
     def read_log(self):
         ans = ''
         if self.log_path is not None:
             try:
-                with lopen(self.log_path, 'rb') as f:
+                with open(self.log_path, 'rb') as f:
                     ans = f.read()
-            except EnvironmentError:
+            except OSError:
                 pass
         if isinstance(ans, bytes):
             ans = force_unicode(ans, 'utf-8')
         return ans
 
 
-class JobsManager(object):
+class JobsManager:
 
     def __init__(self, opts, log):
         mj = opts.max_jobs
@@ -145,12 +145,12 @@ class JobsManager(object):
     def shutdown(self, timeout=5.0):
         with self.lock:
             self.shutting_down = True
-            for job in self.jobs.itervalues():
+            for job in itervalues(self.jobs):
                 job.abort_event.set()
             self.events.put(False)
 
     def wait_for_shutdown(self, wait_till):
-        for job in self.jobs.itervalues():
+        for job in itervalues(self.jobs):
             delta = wait_till - monotonic()
             if delta > 0:
                 job.join(delta)
@@ -194,7 +194,7 @@ class JobsManager(object):
         with self.lock:
             mb = None
             now = monotonic()
-            for job in self.jobs.itervalues():
+            for job in itervalues(self.jobs):
                 if not job.done and not job.abort_event.is_set():
                     delta = self.max_job_time - (now - job.start_time)
                     if delta <= 0:
@@ -209,7 +209,7 @@ class JobsManager(object):
     def abort_hanging_jobs(self):
         now = monotonic()
         found = False
-        for job in self.jobs.itervalues():
+        for job in itervalues(self.jobs):
             if not job.done and not job.abort_event.is_set():
                 delta = self.max_job_time - (now - job.start_time)
                 if delta <= 0:
@@ -226,11 +226,11 @@ class JobsManager(object):
                     job.callback(job)
                 except Exception:
                     import traceback
-                    self.log.error('Error running callback for job: %s:\n%s' % (job.name, traceback.format_exc()))
+                    self.log.error(f'Error running callback for job: {job.name}:\n{traceback.format_exc()}')
         self.prune_finished_jobs()
         if job.traceback and not job.was_aborted:
             logdata = job.read_log()
-            self.log.error('The job: %s failed:\n%s\n%s' % (job.job_name, logdata, job.traceback))
+            self.log.error(f'The job: {job.job_name} failed:\n{logdata}\n{job.traceback}')
         job.remove_log()
         self.start_waiting_jobs()
 
@@ -238,7 +238,7 @@ class JobsManager(object):
         with self.lock:
             remove = []
             now = monotonic()
-            for job_id, job in self.finished_jobs.iteritems():
+            for job_id, job in iteritems(self.finished_jobs):
                 if now - job.end_time > 3600:
                     remove.append(job_id)
             for job_id in remove:

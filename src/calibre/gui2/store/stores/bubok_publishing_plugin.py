@@ -1,18 +1,21 @@
 # -*- coding: utf-8 -*-
+from __future__ import absolute_import, division, print_function, unicode_literals
 
-from __future__ import (unicode_literals, division, absolute_import, print_function)
 store_version = 2  # Needed for dynamic plugin loading
 
 __license__ = 'GPL 3'
 __copyright__ = '2014, Rafael Vega <rafavega@gmail.com>'
 __docformat__ = 'restructuredtext en'
 
-import urllib
 from contextlib import closing
 
-from lxml import html
+try:
+    from urllib.parse import quote_plus
+except ImportError:
+    from urllib import quote_plus
 
-from PyQt5.Qt import QUrl
+from lxml import html
+from qt.core import QUrl
 
 from calibre import browser, url_slash_cleaner
 from calibre.gui2 import open_url
@@ -32,10 +35,10 @@ class BubokPublishingStore(BasicStoreConfig, StorePlugin):
             d = WebStoreDialog(self.gui, url, parent, detail_item)
             d.setWindowTitle(self.name)
             d.set_tags(self.config.get('tags', ''))
-            d.exec_()
+            d.exec()
 
     def search(self, query, max_results=10, timeout=60):
-        url = 'http://www.bubok.es/resellers/calibre_search/' + urllib.quote_plus(query)
+        url = 'http://www.bubok.es/resellers/calibre_search/' + quote_plus(query)
 
         br = browser()
 
@@ -72,4 +75,3 @@ class BubokPublishingStore(BasicStoreConfig, StorePlugin):
 
     def get_details(self, search_result, timeout):
         return True
-

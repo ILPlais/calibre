@@ -1,4 +1,4 @@
-#!/usr/bin/env  python2
+#!/usr/bin/env python
 
 __license__ = 'GPL v3'
 __copyright__ = '2008-2011, Lionel Bergeret <lbergeret at gmail.com>'
@@ -32,7 +32,7 @@ class LaLibre(BasicNewsRecipe):
 
     feeds = [
 
-    (u'L\'actu', u'http://www.lalibre.be/rss/?section=10'),
+    (u"L'actu", u'http://www.lalibre.be/rss/?section=10'),
     (u'Culture', u'http://www.lalibre.be/rss/?section=5'),
     (u'Economie', u'http://www.lalibre.be/rss/?section=3'),
     (u'Libre Entreprise', u'http://www.lalibre.be/rss/?section=904'),

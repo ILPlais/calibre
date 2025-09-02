@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-
 __license__   = 'GPL v3'
 __copyright__ = '2009, John Schember <john at nachtimwald.com>'
 __docformat__ = 'restructuredtext en'
@@ -11,11 +9,11 @@ Device driver for Bookeen's Cybook Gen 3 and Opus and Orizon
 import os
 import re
 
+import calibre.devices.cybook.t2b as t2b
+import calibre.devices.cybook.t4b as t4b
 from calibre import fsync
 from calibre.constants import isunix
 from calibre.devices.usbms.driver import USBMS
-import calibre.devices.cybook.t2b as t2b
-import calibre.devices.cybook.t4b as t4b
 
 
 class CYBOOK(USBMS):
@@ -36,7 +34,7 @@ class CYBOOK(USBMS):
 
     VENDOR_NAME = 'BOOKEEN'
     WINDOWS_MAIN_MEM = re.compile(r'CYBOOK_(OPUS|GEN3)__-FD')
-    WINDOWS_CARD_A_MEM = re.compile('CYBOOK_(OPUS|GEN3)__-SD')
+    WINDOWS_CARD_A_MEM = re.compile(r'CYBOOK_(OPUS|GEN3)__-SD')
     OSX_MAIN_MEM_VOL_PAT = re.compile(r'/Cybook')
 
     EBOOK_DIR_MAIN = 'eBooks'
@@ -51,7 +49,7 @@ class CYBOOK(USBMS):
             coverdata = coverdata[2]
         else:
             coverdata = None
-        with lopen('%s_6090.t2b' % os.path.join(path, filename), 'wb') as t2bfile:
+        with open(f'{os.path.join(path, filename)}_6090.t2b', 'wb') as t2bfile:
             t2b.write_t2b(t2bfile, coverdata)
             fsync(t2bfile)
 
@@ -74,7 +72,7 @@ class ORIZON(CYBOOK):
 
     VENDOR_NAME = ['BOOKEEN', 'LINUX']
     WINDOWS_MAIN_MEM = re.compile(r'(CYBOOK_ORIZON__-FD)|(FILE-STOR_GADGET)')
-    WINDOWS_CARD_A_MEM = re.compile('(CYBOOK_ORIZON__-SD)|(FILE-STOR_GADGET)')
+    WINDOWS_CARD_A_MEM = re.compile(r'(CYBOOK_ORIZON__-SD)|(FILE-STOR_GADGET)')
 
     EBOOK_DIR_MAIN = EBOOK_DIR_CARD_A = 'Digital Editions'
 
@@ -91,7 +89,7 @@ class ORIZON(CYBOOK):
             coverdata = coverdata[2]
         else:
             coverdata = None
-        with lopen('%s.thn' % filepath, 'wb') as thnfile:
+        with open(f'{filepath}.thn', 'wb') as thnfile:
             t4b.write_t4b(thnfile, coverdata)
             fsync(thnfile)
 
@@ -137,4 +135,24 @@ class MUSE(CYBOOK):
     def can_handle(cls, device_info, debug=False):
         if isunix:
             return device_info[3] == 'Bookeen' and device_info[4] in ('Cybook', 'Lev', 'Nolimbook', 'Letto', 'Nolim', 'Saga', 'NolimbookXL')
+        return True
+
+
+class DIVA(CYBOOK):
+
+    name           = 'Bookeen Diva HD Device Interface'
+    gui_name       = 'Diva HD'
+    description    = _('Communicate with the Bookeen Diva HD e-book reader.')
+    author         = 'Kovid Goyal'
+
+    VENDOR_ID = [0x1d6b]
+    PRODUCT_ID = [0x0104]
+    BCD = [0x100]
+
+    FORMATS     = ['epub', 'html', 'fb2', 'txt', 'pdf']
+    EBOOK_DIR_MAIN = 'Books'
+    SCAN_FROM_ROOT = True
+
+    @classmethod
+    def can_handle(cls, device_info, debug=False):
         return True

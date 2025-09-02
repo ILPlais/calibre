@@ -10,7 +10,7 @@ In the standard *regexp* mode for search and replace, you specify both a
 regular expression to search for as well as a template that is used to replace
 all found matches. In function mode, instead of using a fixed template, you
 specify an arbitrary function, in the
-`Python programming language <https://docs.python.org/2.7/>`_. This allows
+`Python programming language <https://docs.python.org>`_. This allows
 you to do lots of things that are not possible with simple templates.
 
 Techniques for using function mode and the syntax will be described by means of
@@ -31,7 +31,7 @@ automatically change the case of all text inside heading tags to title case::
     Find expression: <([Hh][1-6])[^>]*>.+?</\1>
 
 For the function, simply choose the :guilabel:`Title-case text (ignore tags)` builtin
-function. The will change titles that look like: ``<h1>some TITLE</h1>`` to
+function. The will change titles that look like: ``<h1>some titLE</h1>`` to
 ``<h1>Some Title</h1>``. It will work even if there are other HTML tags inside
 the heading tags.
 
@@ -54,10 +54,10 @@ function and copy the Python code from below.
 
 Every :guilabel:`Search & replace` custom function must have a unique name and consist of a
 Python function named replace, that accepts all the arguments shown above.
-For the moment, we wont worry about all the different arguments to
+For the moment, we won't worry about all the different arguments to
 ``replace()`` function. Just focus on the ``match`` argument. It represents a
 match when running a search and replace. Its full documentation in available
-`here <https://docs.python.org/2.7/library/re.html#match-objects>`_.
+`here <https://docs.python.org/library/re.html#match-objects>`_.
 ``match.group()`` simply returns all the matched text and all we do is replace
 hyphens in that text with em-dashes, first replacing double hyphens and
 then single hyphens.
@@ -176,9 +176,9 @@ Contents based on these headings. Create the custom function below:
                     parent = root.children[-1] if tag_name == 'h2' and root.children else root
                     parent.add(text, file_name, anchor)
                 toc = toc_to_html(root, current_container(), 'toc.html', 'Table of Contents for ' + metadata.title, metadata.language)
-                print (xml2str(toc))
+                print(xml2str(toc))
             else:
-                print ('No headings to build ToC from found')
+                print('No headings to build ToC from found')
         else:
             # Add an entry corresponding to this match to the Table of Contents
             if 'toc' not in data:
@@ -207,7 +207,7 @@ HTML Table of Contents, ready to be pasted into :file:`toc.html`.
 The function above is heavily commented, so it should be easy to follow. The
 key new feature is the use of another useful extra argument to the
 ``replace()`` function, the ``data`` object. The ``data`` object is a Python
-*dict* that persists between all successive invocations of ``replace()`` during
+*dictionary* that persists between all successive invocations of ``replace()`` during
 a single :guilabel:`Replace All` operation.
 
 Another new feature is the use of ``call_after_last_match`` -- setting that to
@@ -239,7 +239,7 @@ The ``match`` argument
 ^^^^^^^^^^^^^^^^^^^^^^
 
 The ``match`` argument represents the currently found match. It is a
-`Python Match object <https://docs.python.org/2.7/library/re.html#match-objects>`_.
+`Python Match object <https://docs.python.org/library/re.html#match-objects>`_.
 Its most useful method is ``group()`` which can be used to get the matched
 text corresponding to individual capture groups in the search regular
 expression.
@@ -278,9 +278,9 @@ for the current book's language.
 The ``data`` argument
 ^^^^^^^^^^^^^^^^^^^^^
 
-This a simple Python ``dict``. When you run
+This a simple Python ``dictionary``. When you run
 :guilabel:`Replace all`, every successive match will cause ``replace()`` to be
-called with the same ``dict`` as data. You can thus use it to store arbitrary
+called with the same ``dictionary`` as data. You can thus use it to store arbitrary
 data between invocations of ``replace()`` during a :guilabel:`Replace all`
 operation.
 
@@ -393,7 +393,7 @@ Suppressing the result dialog when performing searches on marked text
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 You can also suppress the result dialog (which can slow down the repeated
-application of a search/replace on many blocks of text) by setting 
+application of a search/replace on many blocks of text) by setting
 the ``suppress_result_dialog`` attribute on your function, like this:
 
 .. code-block:: python
@@ -408,4 +408,4 @@ More examples
 ----------------
 
 More useful examples, contributed by calibre users, can be found in the
-`calibre Editor forum <https://www.mobileread.com/forums/showthread.php?t=237181>`_.
+`calibre E-book editor forum <https://www.mobileread.com/forums/showthread.php?t=237181>`_.

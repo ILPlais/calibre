@@ -1,68 +1,65 @@
-#!/usr/bin/env python2
-# vim:fileencoding=utf-8
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
+#!/usr/bin/env python
+
 
 __license__ = 'GPL v3'
 __copyright__ = '2014, Kovid Goyal <kovid at kovidgoyal.net>'
 
-import regex, sys
-from polyglot.builtins import map, zip
-
-is_narrow_build = sys.maxunicode < 0x10ffff
+import regex
 
 
-class Parser(object):
-
+class Parser:
     ''' See epubcfi.ebnf for the specification that this parser tries to
-    follow. I have implemented it manually, since I dont want to depend on
+    follow. I have implemented it manually, since I don't want to depend on
     grako, and the grammar is pretty simple. This parser is thread-safe, i.e.
-    it can be used from multiple threads simulataneously. '''
+    it can be used from multiple threads simultaneously. '''
 
     def __init__(self):
         # All allowed unicode characters + escaped special characters
         special_char = r'[\[\](),;=^]'
-        if is_narrow_build:
-            unescaped_char = '[[\t\n\r -\ud7ff\ue000-\ufffd]--%s]' % special_char
-        else:
-            unescaped_char = '[[\t\n\r -\ud7ff\ue000-\ufffd\U00010000-\U0010ffff]--%s]' % special_char
-        escaped_char = r'\^' + special_char
-        chars = r'(?:%s|(?:%s))+' % (unescaped_char, escaped_char)
+        unescaped_char = f'[[\t\n\r -\ud7ff\ue000-\ufffd\U00010000-\U0010ffff]--{special_char}]'
+        # calibre used to escape hyphens as well, so recognize them even though
+        # not strictly spec compliant
+        escaped_char = r'\^' + special_char[:-1] + '-]'
+        chars = fr'(?:{unescaped_char}|(?:{escaped_char}))+'
         chars_no_space = chars.replace('0020', '0021')
         # No leading zeros allowed for integers
         integer = r'(?:[1-9][0-9]*)|0'
         # No leading zeros, except for numbers in (0, 1) and no trailing zeros for the fractional part
-        frac = r'\.[0-9]*[1-9]'
-        number = r'(?:[1-9][0-9]*(?:{0})?)|(?:0{0})|(?:0)'.format(frac)
-        c = lambda x:regex.compile(x, flags=regex.VERSION1)
+        frac = r'\.[0-9]{1,}'
+        number = rf'(?:[1-9][0-9]*(?:{frac})?)|(?:0{frac})|(?:0)'
+        def c(x):
+            return regex.compile(x, flags=regex.VERSION1)
 
         # A step of the form /integer
-        self.step_pat = c(r'/(%s)' % integer)
+        self.step_pat = c(rf'/({integer})')
         # An id assertion of the form [characters]
-        self.id_assertion_pat = c(r'\[(%s)\]' % chars)
+        self.id_assertion_pat = c(rf'\[({chars})\]')
 
         # A text offset of the form :integer
-        self.text_offset_pat = c(r':(%s)' % integer)
+        self.text_offset_pat = c(rf':({integer})')
         # A temporal offset of the form ~number
-        self.temporal_offset_pat = c(r'~(%s)' % number)
+        self.temporal_offset_pat = c(rf'~({number})')
         # A spatial offset of the form @number:number
-        self.spatial_offset_pat = c(r'@({0}):({0})'.format(number))
+        self.spatial_offset_pat = c(rf'@({number}):({number})')
         # A spatio-temporal offset of the form ~number@number:number
-        self.st_offset_pat = c(r'~({0})@({0}):({0})'.format(number))
+        self.st_offset_pat = c(rf'~({number})@({number}):({number})')
 
         # Text assertion patterns
-        self.ta1_pat = c(r'({0})(?:,({0})){{0,1}}'.format(chars))
-        self.ta2_pat = c(r',(%s)' % chars)
-        self.parameters_pat = c(r'(?:;(%s)=((?:%s,?)+))+' % (chars_no_space, chars))
-        self.csv_pat = c(r'(?:(%s),?)+' % chars)
+        self.ta1_pat = c(rf'({chars})(?:,({chars})){{0,1}}')
+        self.ta2_pat = c(rf',({chars})')
+        self.parameters_pat = c(fr'(?:;({chars_no_space})=((?:{chars},?)+))+')
+        self.csv_pat = c(rf'(?:({chars}),?)+')
 
         # Unescape characters
-        unescape_pat = c(r'%s(%s)' % (escaped_char[:2], escaped_char[2:]))
+        unescape_pat = c(fr'{escaped_char[:2]}({escaped_char[2:]})')
         self.unescape = lambda x: unescape_pat.sub(r'\1', x)
 
     def parse_epubcfi(self, raw):
         ' Parse a full epubcfi of the form epubcfi(path [ , path , path ]) '
         null = {}, {}, {}, raw
+        if not raw:
+            return null
+
         if not raw.startswith('epubcfi('):
             return null
         raw = raw[len('epubcfi('):]
@@ -194,13 +191,55 @@ def cfi_sort_key(cfi, only_path=True):
     except Exception:
         import traceback
         traceback.print_exc()
-        return ()
+        return (), (0, (0, 0), 0)
     if not pcfi:
         import sys
-        print ('Failed to parse CFI: %r' % pcfi, file=sys.stderr)
-        return ()
+        print(f'Failed to parse CFI: {cfi!r}', file=sys.stderr)
+        return (), (0, (0, 0), 0)
     steps = get_steps(pcfi)
     step_nums = tuple(s.get('num', 0) for s in steps)
     step = steps[-1] if steps else {}
     offsets = (step.get('temporal_offset', 0), tuple(reversed(step.get('spatial_offset', (0, 0)))), step.get('text_offset', 0), )
-    return (step_nums, offsets)
+    return step_nums, offsets
+
+
+def decode_cfi(root, cfi):
+    from lxml.etree import XPathEvalError
+    p = parser()
+    try:
+        pcfi = p.parse_path(cfi)[0]
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        return
+    if not pcfi:
+        import sys
+        print(f'Failed to parse CFI: {pcfi!r}', file=sys.stderr)
+        return
+    steps = get_steps(pcfi)
+    ans = root
+    for step in steps:
+        num = step.get('num', 0)
+        node_id = step.get('id')
+        try:
+            match = ans.xpath(f'descendant::*[@id="{node_id}"]')
+        except XPathEvalError:
+            match = ()
+        if match:
+            ans = match[0]
+            continue
+        index = 0
+        for child in ans.iterchildren('*'):
+            index |= 1  # increment index by 1 if it is even
+            index += 1
+            if index == num:
+                ans = child
+                break
+        else:
+            return
+    return ans
+
+
+if __name__ == '__main__':
+    import sys
+    print(cfi_sort_key(sys.argv[-1], only_path=False))

@@ -1,8 +1,6 @@
-#!/usr/bin/env python2
-# vim:fileencoding=utf-8
+#!/usr/bin/env python
 # License: GPLv3 Copyright: 2017, Kovid Goyal <kovid at kovidgoyal.net>
 
-from __future__ import absolute_import, division, print_function, unicode_literals
 
 import os
 import shutil
@@ -13,12 +11,10 @@ import time
 import unittest
 from threading import Thread
 
-from calibre.constants import cache_dir, fcntl, iswindows
+from calibre.constants import cache_dir, iswindows
 from calibre.utils.lock import ExclusiveFile, create_single_instance_mutex, unix_open
-from calibre.utils.tdir_in_cache import (
-    clean_tdirs_in, is_tdir_locked, retry_lock_tdir, tdir_in_cache, tdirs_in,
-    unlock_file
-)
+from calibre.utils.tdir_in_cache import clean_tdirs_in, is_tdir_locked, retry_lock_tdir, tdir_in_cache, tdirs_in, unlock_file
+from polyglot.builtins import iteritems, native_string_type
 
 
 def FastFailEF(name):
@@ -33,7 +29,7 @@ class Other(Thread):
         try:
             with FastFailEF('testsp'):
                 self.locked = True
-        except EnvironmentError:
+        except OSError:
             self.locked = False
 
 
@@ -50,10 +46,9 @@ def run_worker(mod, func, **kw):
     env = kw.get('env', os.environ.copy())
     env['CALIBRE_SIMPLE_WORKER'] = mod + ':' + func
     if iswindows:
-        import win32process
-        kw['creationflags'] = win32process.CREATE_NO_WINDOW
-    kw['env'] = {str(k): str(v)
-                 for k, v in env.iteritems()}  # windows needs bytes in env
+        kw['creationflags'] = subprocess.CREATE_NO_WINDOW
+    kw['env'] = {native_string_type(k): native_string_type(v)
+                 for k, v in iteritems(env)}  # windows needs bytes in env
     return subprocess.Popen(exe, **kw)
 
 
@@ -73,7 +68,7 @@ class IPCLockTest(unittest.TestCase):
             try:
                 shutil.rmtree(self.tdir)
                 break
-            except EnvironmentError:
+            except OSError:
                 time.sleep(0.1)
 
     def test_exclusive_file_same_process(self):
@@ -85,6 +80,7 @@ class IPCLockTest(unittest.TestCase):
             t.start(), t.join()
             self.assertIs(t.locked, False)
         if not iswindows:
+            import fcntl
             with unix_open(fname) as f:
                 self.assertEqual(
                     1, fcntl.fcntl(f.fileno(), fcntl.F_GETFD) & fcntl.FD_CLOEXEC
@@ -110,6 +106,7 @@ class IPCLockTest(unittest.TestCase):
         finally:
             if child.poll() is None:
                 child.kill()
+                child.wait()
 
     def test_exclusive_file_other_process_clean(self):
         self.run_other_ef_op(True)
@@ -130,6 +127,7 @@ class IPCLockTest(unittest.TestCase):
         while not os.path.exists('ready'):
             time.sleep(0.01)
         child.kill()
+        child.wait()
         release_mutex = create_single_instance_mutex('test')
         self.assertIsNotNone(release_mutex)
         release_mutex()
@@ -153,7 +151,7 @@ class IPCLockTest(unittest.TestCase):
         self.assertFalse(is_tdir_locked(tdirs[0]))
         clean_tdirs_in('t')
         self.assertFalse(os.path.exists(tdirs[0]))
-        self.assertEqual(os.listdir('t'), [u'tdir-lock'])
+        self.assertEqual(os.listdir('t'), ['tdir-lock'])
 
 
 def other1():
@@ -166,23 +164,32 @@ def other1():
 
 def other2():
     release_mutex = create_single_instance_mutex('test')
-    raise SystemExit(0 if release_mutex is None else 1)
+    if release_mutex is None:
+        ret = 0
+    else:
+        ret = 1
+        release_mutex()
+    raise SystemExit(ret)
 
 
 def other3():
-    create_single_instance_mutex('test')
-    os.mkdir('ready')
-    time.sleep(30)
+    release_mutex = create_single_instance_mutex('test')
+    try:
+        os.mkdir('ready')
+        time.sleep(30)
+    finally:
+        if release_mutex is not None:
+            release_mutex()
 
 
 def other4():
-    cache_dir.ans = os.getcwdu()
+    cache_dir.ans = os.getcwd()
     tdir_in_cache('t')
     time.sleep(30)
 
 
 def other5():
-    cache_dir.ans = os.getcwdu()
+    cache_dir.ans = os.getcwd()
     if not os.path.isdir(tdir_in_cache('t')):
         raise SystemExit(1)
 
@@ -191,6 +198,10 @@ def find_tests():
     return unittest.defaultTestLoader.loadTestsFromTestCase(IPCLockTest)
 
 
+def run_tests():
+    from calibre.utils.run_tests import run_tests
+    run_tests(find_tests)
+
+
 if __name__ == '__main__':
-    suite = find_tests()
-    unittest.TextTestRunner(verbosity=4).run(suite)
+    run_tests()

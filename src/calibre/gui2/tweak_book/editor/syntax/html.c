@@ -164,15 +164,15 @@ static PyTypeObject html_StateType;
 typedef struct {
     PyObject_HEAD
     // Type-specific fields go here.
-    PyObject *tag_being_defined; 
-    PyObject *tags; 
-    PyObject *is_bold; 
-    PyObject *is_italic; 
+    PyObject *tag_being_defined;
+    PyObject *tags;
+    PyObject *is_bold;
+    PyObject *is_italic;
     PyObject *current_lang;
-    PyObject *parse; 
-    PyObject *css_formats; 
-    PyObject *sub_parser_state; 
-    PyObject *default_lang; 
+    PyObject *parse;
+    PyObject *css_formats;
+    PyObject *sub_parser_state;
+    PyObject *default_lang;
     PyObject *attribute_name;
 
 } html_State;
@@ -213,7 +213,7 @@ html_State_new(PyTypeObject *type, PyObject *args, PyObject *kwds)
     self->default_lang = NULL;
     self->attribute_name = NULL;
 
-    if (!PyArg_ParseTuple(args, "|OOOOOOOOOO", 
+    if (!PyArg_ParseTuple(args, "|OOOOOOOOOO",
             &(self->tag_being_defined),
             &(self->tags),
             &(self->is_bold),
@@ -386,10 +386,22 @@ html_init(PyObject *self, PyObject *args) {
     Py_RETURN_NONE;
 }
 
+static inline long number_to_long(PyObject *number) {
+#if PY_VERSION_HEX >= 0x03030000
+    return PyLong_AsLong(number);
+#else
+    if(PyInt_Check(number)) {
+        return PyInt_AS_LONG(number);
+    } else {
+        return PyLong_AsLong(number);
+    }
+#endif
+}
+
 static PyObject*
 html_check_spelling(PyObject *self, PyObject *args) {
     PyObject *ans = NULL, *temp = NULL, *items = NULL, *text = NULL, *fmt = NULL, *locale = NULL, *sfmt = NULL, *_store_locale = NULL, *t = NULL, *utmp = NULL;
-    long text_len = 0, start = 0, length = 0, ppos = 0; 
+    long text_len = 0, start = 0, length = 0, ppos = 0;
     int store_locale = 0, ok = 0;
     Py_ssize_t i = 0, j = 0;
 
@@ -397,7 +409,7 @@ html_check_spelling(PyObject *self, PyObject *args) {
     store_locale = PyObject_IsTrue(_store_locale);
     temp = PyObject_GetAttrString(locale, "langcode");
     if (temp == NULL) goto error;
-    items = PyObject_CallFunctionObjArgs(split, text, temp, NULL); 
+    items = PyObject_CallFunctionObjArgs(split, text, temp, NULL);
     Py_DECREF(temp); temp = NULL;
     if (items == NULL) goto error;
     ans = PyTuple_New((2 * PyList_GET_SIZE(items)) + 1);
@@ -410,9 +422,9 @@ html_check_spelling(PyObject *self, PyObject *args) {
 
     for (i = 0, j = 0; i < PyList_GET_SIZE(items); i++) {
         temp = PyList_GET_ITEM(items, i);
-        start = PyLong_AsLong(PyTuple_GET_ITEM(temp, 0));
+        start = number_to_long(PyTuple_GET_ITEM(temp, 0));
         if(start == -1 && PyErr_Occurred() != NULL) goto error;
-        length = PyLong_AsLong(PyTuple_GET_ITEM(temp, 1));
+        length = number_to_long(PyTuple_GET_ITEM(temp, 1));
         if(length == -1 && PyErr_Occurred() != NULL) goto error;
         temp = NULL;
 
@@ -454,7 +466,7 @@ html_check_spelling(PyObject *self, PyObject *args) {
 error:
     Py_XDECREF(ans); ans = NULL;
 end:
-    Py_XDECREF(items); Py_XDECREF(temp); 
+    Py_XDECREF(items); Py_XDECREF(temp);
     return ans;
 }
 
@@ -470,44 +482,21 @@ static PyMethodDef html_methods[] = {
     {NULL, NULL, 0, NULL}
 };
 
-#if PY_MAJOR_VERSION >= 3
-#define INITERROR return NULL
-static struct PyModuleDef html_module = {
-    /* m_base     */ PyModuleDef_HEAD_INIT,
-    /* m_name     */ "html",
-    /* m_doc      */ "Speedups for the html syntax highlighter",
-    /* m_size     */ -1,
-    /* m_methods  */ html_methods,
-    /* m_slots    */ 0,
-    /* m_traverse */ 0,
-    /* m_clear    */ 0,
-    /* m_free     */ 0,
-};
-
-CALIBRE_MODINIT_FUNC PyInit_html(void) {
-    PyObject *temp, *mod = PyModule_Create(&html_module);
-#else
-#define INITERROR return
-CALIBRE_MODINIT_FUNC inithtml(void) {
-    PyObject *temp, *mod = Py_InitModule3("html", html_methods,
-        "Speedups for the html syntax highlighter");
-#endif
-
-    if (mod == NULL) INITERROR;
-
+static int
+exec_module(PyObject *mod) {
     if (PyType_Ready(&html_TagType) < 0)
-        INITERROR;
+        return -1;
     if (PyType_Ready(&html_StateType) < 0)
-        INITERROR;
+        return -1;
 
-    temp = Py_BuildValue("ssssssss", "b", "strong", "h1", "h2", "h3", "h4", "h5", "h6", "h7");
-    if (temp == NULL) INITERROR;
+    PyObject *temp = Py_BuildValue("ssssssss", "b", "strong", "h1", "h2", "h3", "h4", "h5", "h6", "h7");
+    if (temp == NULL) return -1;
     bold_tags = PyFrozenSet_New(temp);
     Py_DECREF(temp);
     temp = NULL;
 
     temp = Py_BuildValue("ss", "i", "em");
-    if (temp == NULL) INITERROR;
+    if (temp == NULL) return -1;
     italic_tags = PyFrozenSet_New(temp);
     Py_DECREF(temp);
     temp = NULL;
@@ -518,7 +507,7 @@ CALIBRE_MODINIT_FUNC inithtml(void) {
         Py_XDECREF(bold_tags);
         Py_XDECREF(italic_tags);
         Py_XDECREF(zero);
-        INITERROR;
+        return -1;
     }
 
     Py_INCREF(&html_TagType);
@@ -527,9 +516,17 @@ CALIBRE_MODINIT_FUNC inithtml(void) {
     PyModule_AddObject(mod, "State", (PyObject *)&html_StateType);
     PyModule_AddObject(mod, "bold_tags", bold_tags);
     PyModule_AddObject(mod, "italic_tags", italic_tags);
-
-
-#if PY_MAJOR_VERSION >= 3
-    return mod;
-#endif
+	return 0;
 }
+
+static PyModuleDef_Slot slots[] = { {Py_mod_exec, exec_module}, {0, NULL} };
+
+static struct PyModuleDef module_def = {
+    .m_base     = PyModuleDef_HEAD_INIT,
+    .m_name     = "html_syntax_highlighter",
+    .m_doc      =  "Speedups for the html syntax highlighter",
+    .m_methods  = html_methods,
+    .m_slots    = slots,
+};
+
+CALIBRE_MODINIT_FUNC PyInit_html_syntax_highlighter(void) { return PyModuleDef_Init(&module_def); }

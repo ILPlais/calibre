@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-
 __license__ = 'GPL 3'
 __copyright__ = '2009, John Schember <john@nachtimwald.com>'
 __docformat__ = 'restructuredtext en'
@@ -7,9 +5,9 @@ __docformat__ = 'restructuredtext en'
 from calibre.utils.config_base import Config, ConfigProxy
 
 
-class DeviceConfig(object):
+class DeviceConfig:
 
-    HELP_MESSAGE = _('Configure Device')
+    HELP_MESSAGE = _('Configure device')
 
     #: Can be None, a string or a list of strings. When it is a string
     #: that string is used for the help text and the actual customization value
@@ -59,11 +57,11 @@ class DeviceConfig(object):
     @classmethod
     def _config(cls):
         name = cls._config_base_name()
-        c = Config('device_drivers_%s' % name, _('settings for device drivers'))
+        c = Config(f'device_drivers_{name}', _('settings for device drivers'))
         c.add_opt('format_map', default=cls.FORMATS,
                 help=_('Ordered list of formats the device will accept'))
         c.add_opt('use_subdirs', default=cls.SUPPORTS_SUB_DIRS_DEFAULT,
-                help=_('Place files in sub-directories if the device supports them'))
+                help=_('Place files in sub-folders if the device supports them'))
         c.add_opt('read_metadata', default=True,
                 help=_('Read metadata from files on device'))
         c.add_opt('use_author_sort', default=False,
@@ -100,22 +98,22 @@ class DeviceConfig(object):
         if cls.EXTRA_CUSTOMIZATION_MESSAGE:
             if isinstance(cls.EXTRA_CUSTOMIZATION_MESSAGE, list):
                 ec = []
-                for i in range(0, len(cls.EXTRA_CUSTOMIZATION_MESSAGE)):
+                for i in range(len(cls.EXTRA_CUSTOMIZATION_MESSAGE)):
                     if config_widget.opt_extra_customization[i] is None:
                         ec.append(None)
                         continue
                     if hasattr(config_widget.opt_extra_customization[i], 'isChecked'):
                         ec.append(config_widget.opt_extra_customization[i].isChecked())
                     elif hasattr(config_widget.opt_extra_customization[i], 'currentText'):
-                        ec.append(unicode(config_widget.opt_extra_customization[i].currentText()).strip())
+                        ec.append(str(config_widget.opt_extra_customization[i].currentText()).strip())
                     else:
-                        ec.append(unicode(config_widget.opt_extra_customization[i].text()).strip())
+                        ec.append(str(config_widget.opt_extra_customization[i].text()).strip())
             else:
-                ec = unicode(config_widget.opt_extra_customization.text()).strip()
+                ec = str(config_widget.opt_extra_customization.text()).strip()
                 if not ec:
                     ec = None
             proxy['extra_customization'] = ec
-        st = unicode(config_widget.opt_save_template.text())
+        st = str(config_widget.opt_save_template.text())
         proxy['save_template'] = st
 
     @classmethod

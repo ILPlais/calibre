@@ -1,22 +1,25 @@
-#!/usr/bin/env python2
-# vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
-from __future__ import print_function
+#!/usr/bin/env python
+
 
 __license__   = 'GPL v3'
 __copyright__ = '2010, Kovid Goyal <kovid@kovidgoyal.net>'
 __docformat__ = 'restructuredtext en'
 
-import os, shutil, time, sys
+import os
+import shutil
+import sys
+import time
 
 from calibre import isbytestring
-from calibre.constants import (iswindows, isosx, plugins, filesystem_encoding,
-        islinux)
+from calibre.constants import filesystem_encoding, islinux, ismacos, iswindows
 
 recycle = None
 
 if iswindows:
-    from calibre.utils.ipc import eintr_retry_call
     from threading import Lock
+
+    from calibre.utils.ipc import eintr_retry_call
+    from calibre_extensions import winutil
     recycler = None
     rlock = Lock()
 
@@ -27,16 +30,13 @@ if iswindows:
             recycler = start_pipe_worker('from calibre.utils.recycle_bin import recycler_main; recycler_main()')
 
     def recycle_path(path):
-        from win32com.shell import shell, shellcon
-        flags = (shellcon.FOF_ALLOWUNDO | shellcon.FOF_NOCONFIRMATION | shellcon.FOF_NOCONFIRMMKDIR | shellcon.FOF_NOERRORUI |
-                 shellcon.FOF_SILENT | shellcon.FOF_RENAMEONCOLLISION)
-        retcode, aborted = shell.SHFileOperation((0, shellcon.FO_DELETE, path, None, flags, None, None))
-        if retcode != 0 or aborted:
-            raise RuntimeError('Failed to delete: %r with error code: %d' % (path, retcode))
+        winutil.move_to_trash(str(path))
 
     def recycler_main():
+        stdin = getattr(sys.stdin, 'buffer', sys.stdin)
+        stdout = getattr(sys.stdout, 'buffer', sys.stdout)
         while True:
-            path = eintr_retry_call(sys.stdin.readline)
+            path = eintr_retry_call(stdin.readline)
             if not path:
                 break
             try:
@@ -45,31 +45,32 @@ if iswindows:
                 break
             try:
                 recycle_path(path)
-            except:
-                eintr_retry_call(print, b'KO', file=sys.stdout)
-                sys.stdout.flush()
+            except Exception:
+                eintr_retry_call(stdout.write, b'KO\n')
+                stdout.flush()
                 try:
                     import traceback
                     traceback.print_exc()  # goes to stderr, which is the same as for parent process
                 except Exception:
                     pass  # Ignore failures to write the traceback, since GUI processes on windows have no stderr
             else:
-                eintr_retry_call(print, b'OK', file=sys.stdout)
-                sys.stdout.flush()
+                eintr_retry_call(stdout.write, b'OK\n')
+                stdout.flush()
 
     def delegate_recycle(path):
         if '\n' in path:
-            raise ValueError('Cannot recycle paths that have newlines in them (%r)' % path)
+            raise ValueError(f'Cannot recycle paths that have newlines in them ({path!r})')
         with rlock:
             start_recycler()
-            eintr_retry_call(print, path.encode('utf-8'), file=recycler.stdin)
+            recycler.stdin.write(path.encode('utf-8'))
+            recycler.stdin.write(b'\n')
             recycler.stdin.flush()
             # Theoretically this could be made non-blocking using a
             # thread+queue, however the original implementation was blocking,
             # so I am leaving it as blocking.
             result = eintr_retry_call(recycler.stdout.readline)
             if result.rstrip() != b'OK':
-                raise RuntimeError('recycler failed to recycle: %r' % path)
+                raise RuntimeError(f'recycler failed to recycle: {path!r}')
 
     def recycle(path):
         # We have to run the delete to recycle bin in a separate process as the
@@ -86,14 +87,14 @@ if iswindows:
         path = os.path.abspath(path)  # Windows does not like recycling relative paths
         return delegate_recycle(path)
 
-elif isosx:
-    u = plugins['usbobserver'][0]
-    if hasattr(u, 'send2trash'):
-        def osx_recycle(path):
-            if isbytestring(path):
-                path = path.decode(filesystem_encoding)
-            u.send2trash(path)
-        recycle = osx_recycle
+elif ismacos:
+    from calibre_extensions.cocoa import send2trash
+
+    def osx_recycle(path):
+        if isbytestring(path):
+            path = path.decode(filesystem_encoding)
+        send2trash(path)
+    recycle = osx_recycle
 elif islinux:
     from calibre.utils.linux_trash import send2trash
 
@@ -122,7 +123,7 @@ def delete_file(path, permanent=False):
         try:
             recycle(path)
             return
-        except:
+        except Exception:
             import traceback
             traceback.print_exc()
     os.remove(path)
@@ -135,7 +136,7 @@ def delete_tree(path, permanent=False):
             # leading to access errors. If we get an exception, wait and hope
             # that whatever has the file (Antivirus, DropBox?) lets go of it.
             shutil.rmtree(path)
-        except:
+        except Exception:
             import traceback
             traceback.print_exc()
             time.sleep(1)
@@ -145,8 +146,7 @@ def delete_tree(path, permanent=False):
             try:
                 recycle(path)
                 return
-            except:
+            except Exception:
                 import traceback
                 traceback.print_exc()
         delete_tree(path, permanent=True)
-

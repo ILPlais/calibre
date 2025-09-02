@@ -1,18 +1,21 @@
 # -*- coding: utf-8 -*-
+from __future__ import absolute_import, division, print_function, unicode_literals
 
-from __future__ import (unicode_literals, division, absolute_import, print_function)
 store_version = 4  # Needed for dynamic plugin loading
 
 __license__ = 'GPL 3'
 __copyright__ = '2011, John Schember <john@nachtimwald.com>'
 __docformat__ = 'restructuredtext en'
 
-import urllib2
 from contextlib import closing
 
-from lxml import html
+try:
+    from urllib.parse import quote
+except ImportError:
+    from urllib import quote
 
-from PyQt5.Qt import QUrl
+from lxml import html
+from qt.core import QUrl
 
 from calibre import browser, url_slash_cleaner
 from calibre.gui2 import open_url
@@ -39,11 +42,11 @@ class MillsBoonUKStore(BasicStoreConfig, StorePlugin):
             d = WebStoreDialog(self.gui, url, parent, detail_url)
             d.setWindowTitle(self.name)
             d.set_tags(self.config.get('tags', ''))
-            d.exec_()
+            d.exec()
 
     def search(self, query, max_results=10, timeout=60):
         base_url = 'https://www.millsandboon.co.uk'
-        url = base_url + '/search.aspx??format=ebook&searchText=' + urllib2.quote(query)
+        url = base_url + '/search.aspx??format=ebook&searchText=' + quote(query)
         br = browser()
 
         counter = max_results
@@ -57,7 +60,7 @@ class MillsBoonUKStore(BasicStoreConfig, StorePlugin):
                     continue
 
                 cover_url = ''.join(data.xpath('.//div[@class="img-wrapper"]/a/img/@src'))
-                title =  ''.join(data.xpath('.//div[@class="img-wrapper"]/a/img/@alt')).strip()
+                title = ''.join(data.xpath('.//div[@class="img-wrapper"]/a/img/@alt')).strip()
                 author = ''.join(data.xpath('.//a[@class="author"]/text()'))
                 price = ''.join(data.xpath('.//div[@class="type-wrapper"]/ul/li[child::span[text()="eBook"]]/a/text()'))
                 format_ = ''.join(data.xpath('.//p[@class="doc-meta-format"]/span[last()]/text()'))

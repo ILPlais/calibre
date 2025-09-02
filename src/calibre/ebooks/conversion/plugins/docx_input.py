@@ -1,7 +1,5 @@
-#!/usr/bin/env python2
-# vim:fileencoding=utf-8
-from __future__ import (unicode_literals, division, absolute_import,
-                        print_function)
+#!/usr/bin/env python
+
 
 __license__ = 'GPL v3'
 __copyright__ = '2013, Kovid Goyal <kovid at kovidgoyal.net>'
@@ -24,7 +22,7 @@ class DOCXInput(InputFormatPlugin):
         OptionRecommendation(name='docx_no_pagebreaks_between_notes', recommended_value=False,
             help=_('Do not insert a page break after every endnote.')),
         OptionRecommendation(name='docx_inline_subsup', recommended_value=False,
-            help=_('Render superscripts and subscripts so that they do not affect the line height.')),
+            help=_('Render superscripts and subscripts so that they do not affect the line height')),
     }
 
     recommendations = {('page_breaks_before', '/', OptionRecommendation.MED)}

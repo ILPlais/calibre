@@ -1,7 +1,6 @@
-#!/usr/bin/env python2
-# vim:fileencoding=utf-8
+#!/usr/bin/env python
 # License: GPLv3 Copyright: 2015, Kovid Goyal <kovid at kovidgoyal.net>
-from __future__ import absolute_import, division, print_function, unicode_literals
+
 
 import json
 from functools import partial
@@ -15,9 +14,10 @@ from calibre.srv.routes import Router
 from calibre.srv.users import UserManager
 from calibre.utils.date import utcnow
 from calibre.utils.search_query_parser import ParseException
+from polyglot.builtins import itervalues
 
 
-class Context(object):
+class Context:
 
     log = None
     url_for = None
@@ -65,11 +65,11 @@ class Context(object):
         lf = partial(self.user_manager.allowed_library_names, request_data.username)
         allowed_libraries = self.library_broker.allowed_libraries(lf)
         if not allowed_libraries:
-            raise HTTPForbidden('The user {} is not allowed to access any libraries on this server'.format(request_data.username))
-        library_id = library_id or next(allowed_libraries.iterkeys())
+            raise HTTPForbidden(f'The user {request_data.username} is not allowed to access any libraries on this server')
+        library_id = library_id or next(iter(allowed_libraries))
         if library_id in allowed_libraries:
             return self.library_broker.get(library_id)
-        raise HTTPForbidden('The user {} is not allowed to access the library {}'.format(request_data.username, library_id))
+        raise HTTPForbidden(f'The user {request_data.username} is not allowed to access the library {library_id}')
 
     def library_info(self, request_data):
         if not request_data.username:
@@ -77,8 +77,8 @@ class Context(object):
         lf = partial(self.user_manager.allowed_library_names, request_data.username)
         allowed_libraries = self.library_broker.allowed_libraries(lf)
         if not allowed_libraries:
-            raise HTTPForbidden('The user {} is not allowed to access any libraries on this server'.format(request_data.username))
-        return dict(allowed_libraries), next(allowed_libraries.iterkeys())
+            raise HTTPForbidden(f'The user {request_data.username} is not allowed to access any libraries on this server')
+        return dict(allowed_libraries), next(iter(allowed_libraries))
 
     def restriction_for(self, request_data, db):
         return self.user_manager.library_restriction(request_data.username, path_for_db(db))
@@ -91,6 +91,13 @@ class Context(object):
             except ParseException:
                 return False
         return db.has_id(book_id)
+
+    def newest_book_ids(self, request_data, db, count=5):
+        restriction = self.restriction_for(request_data, db)
+        allowed_book_ids = None
+        if restriction:
+            allowed_book_ids = db.search('', restriction=restriction)
+        return db.newly_added_book_ids(count=count, book_ids=allowed_book_ids)
 
     def get_allowed_book_ids_from_restriction(self, request_data, db):
         restriction = self.restriction_for(request_data, db)
@@ -107,11 +114,11 @@ class Context(object):
 
     def check_for_write_access(self, request_data):
         if not request_data.username:
-            if request_data.is_local_connection and self.opts.local_write:
+            if request_data.is_trusted_ip:
                 return
             raise HTTPForbidden('Anonymous users are not allowed to make changes')
         if self.user_manager.is_readonly(request_data.username):
-            raise HTTPForbidden('The user {} does not have permission to make changes'.format(request_data.username))
+            raise HTTPForbidden(f'The user {request_data.username} does not have permission to make changes')
 
     def get_effective_book_ids(self, db, request_data, vl, report_parse_errors=False):
         try:
@@ -147,7 +154,7 @@ class Context(object):
             if old is None or old[0] <= db.last_modified():
                 categories = db.get_categories(book_ids=restrict_to_ids, sort=opts.sort_by, first_letter_sort=opts.collapse_model == 'first letter')
                 data = json.dumps(render(db, categories), ensure_ascii=False)
-                if isinstance(data, type('')):
+                if isinstance(data, str):
                     data = data.encode('utf-8')
                 cache[key] = old = (utcnow(), data)
                 if len(cache) > self.CATEGORY_CACHE_SIZE:
@@ -182,10 +189,10 @@ class Context(object):
             return old[1]
 
 
-SRV_MODULES = ('ajax', 'books', 'cdb', 'code', 'content', 'legacy', 'opds', 'users_api', 'convert')
+SRV_MODULES = ('ajax', 'books', 'cdb', 'code', 'content', 'legacy', 'opds', 'users_api', 'convert', 'fts')
 
 
-class Handler(object):
+class Handler:
 
     def __init__(self, libraries, opts, testing=False, notify_changes=None):
         ctx = Context(libraries, opts, testing=testing, notify_changes=notify_changes)
@@ -198,7 +205,7 @@ class Handler(object):
         self.router = Router(ctx=ctx, url_prefix=opts.url_prefix, auth_controller=self.auth_controller)
         for module in SRV_MODULES:
             module = import_module('calibre.srv.' + module)
-            self.router.load_routes(vars(module).itervalues())
+            self.router.load_routes(itervalues(vars(module)))
         self.router.finalize()
         self.router.ctx.url_for = self.router.url_for
         self.dispatch = self.router.dispatch

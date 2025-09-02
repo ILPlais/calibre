@@ -1,30 +1,29 @@
-#!/usr/bin/env python2
-# vim:fileencoding=utf-8
+#!/usr/bin/env python
 # License: GPLv3 Copyright: 2016, Kovid Goyal <kovid at kovidgoyal.net>
 
-from __future__ import absolute_import, division, print_function, unicode_literals
 
-import cgi
 import mimetypes
 import os
 import posixpath
 import re
 import shutil
-from base64 import standard_b64decode
 from collections import defaultdict
 from contextlib import closing
 from functools import partial
 from io import BytesIO
 from multiprocessing.dummy import Pool
 from tempfile import NamedTemporaryFile
-from urllib2 import urlopen
-from urlparse import urlparse
 
-from calibre import as_unicode, sanitize_file_name2
+from calibre import as_unicode, browser
+from calibre import sanitize_file_name as sanitize_file_name_base
+from calibre.constants import iswindows
 from calibre.ebooks.oeb.base import OEB_DOCS, OEB_STYLES, barename, iterlinks
 from calibre.ebooks.oeb.polish.utils import guess_type
 from calibre.ptempfile import TemporaryDirectory
 from calibre.web import get_download_filename_from_response
+from polyglot.binary import from_base64_bytes
+from polyglot.builtins import iteritems
+from polyglot.urllib import unquote, urlparse
 
 
 def is_external(url):
@@ -44,7 +43,7 @@ def iterhtmllinks(container, name):
 
 def get_external_resources(container):
     ans = defaultdict(list)
-    for name, media_type in container.mime_map.iteritems():
+    for name, media_type in iteritems(container.mime_map):
         if container.has_name(name) and container.exists(name):
             if media_type in OEB_DOCS:
                 for el, attr, link in iterhtmllinks(container, name):
@@ -58,15 +57,17 @@ def get_external_resources(container):
 
 def get_filename(original_url_parsed, response):
     ans = get_download_filename_from_response(response) or posixpath.basename(original_url_parsed.path) or 'unknown'
-    ct = response.info().get('Content-Type', '')
-    if ct:
-        ct = cgi.parse_header(ct)[0].lower()
-        if ct:
-            mt = guess_type(ans)
-            if mt != ct:
-                exts = mimetypes.guess_all_extensions(ct)
-                if exts:
-                    ans += exts[0]
+    headers = response.info()
+    try:
+        ct = headers.get_params()[0][0].lower()
+    except Exception:
+        ct = ''
+    if ct and ct != 'application/octet-stream':
+        mt = guess_type(ans)
+        if mt != ct:
+            exts = mimetypes.guess_all_extensions(ct)
+            if exts:
+                ans += exts[0]
     return ans
 
 
@@ -78,7 +79,7 @@ def get_content_length(response):
         return -1
 
 
-class ProgressTracker(object):
+class ProgressTracker:
 
     def __init__(self, fobj, url, sz, progress_report):
         self.fobj = fobj
@@ -97,7 +98,7 @@ class ProgressTracker(object):
 
 def sanitize_file_name(x):
     from calibre.ebooks.oeb.polish.check.parsing import make_filename_safe
-    x = sanitize_file_name2(x)
+    x = sanitize_file_name_base(x)
     while '..' in x:
         x = x.replace('..', '.')
     return make_filename_safe(x)
@@ -109,15 +110,18 @@ def download_one(tdir, timeout, progress_report, data_uri_map, url):
         data_url_key = None
         with NamedTemporaryFile(dir=tdir, delete=False) as df:
             if purl.scheme == 'file':
-                src = lopen(purl.path, 'rb')
-                filename = os.path.basename(src)
+                path = unquote(purl.path)
+                if iswindows and path.startswith('/'):
+                    path = path[1:]
+                src = open(path, 'rb')
+                filename = os.path.basename(path)
                 sz = (src.seek(0, os.SEEK_END), src.tell(), src.seek(0))[1]
             elif purl.scheme == 'data':
                 prefix, payload = purl.path.split(',', 1)
                 parts = prefix.split(';')
                 if parts and parts[-1].lower() == 'base64':
                     payload = re.sub(r'\s+', '', payload)
-                    payload = standard_b64decode(payload)
+                    payload = from_base64_bytes(payload)
                 else:
                     payload = payload.encode('utf-8')
                 seen_before = data_uri_map.get(payload)
@@ -135,7 +139,7 @@ def download_one(tdir, timeout, progress_report, data_uri_map, url):
                             break
                 filename = 'data-uri.' + ext
             else:
-                src = urlopen(url, timeout=timeout)
+                src = browser().open(url, timeout=timeout)
                 filename = get_filename(purl, src)
                 sz = get_content_length(src)
             progress_report(url, 0, sz)
@@ -147,9 +151,9 @@ def download_one(tdir, timeout, progress_report, data_uri_map, url):
             filename = sanitize_file_name(filename)
             mt = guess_type(filename)
             if mt in OEB_DOCS:
-                raise ValueError('The external resource {} looks like a HTML document ({})'.format(url, filename))
+                raise ValueError(f'The external resource {url} looks like a HTML document ({filename})')
             if not mt or mt == 'application/octet-stream' or '.' not in filename:
-                raise ValueError('The external resource {} is not of a known type'.format(url))
+                raise ValueError(f'The external resource {url} is not of a known type')
             return True, (url, filename, dest.name, mt)
     except Exception as err:
         return False, (url, as_unicode(err))
@@ -165,7 +169,7 @@ def download_external_resources(container, urls, timeout=60, progress_report=lam
             for ok, result in pool.imap_unordered(partial(download_one, tdir, timeout, progress_report, data_uri_map), urls):
                 if ok:
                     url, suggested_filename, downloaded_file, mt = result
-                    with lopen(downloaded_file, 'rb') as src:
+                    with open(downloaded_file, 'rb') as src:
                         name = container.add_file(suggested_filename, src, mt, modify_name_if_needed=True)
                     replacements[url] = name
                 else:
@@ -186,12 +190,12 @@ def replacer(url_map):
 def replace_resources(container, urls, replacements):
     url_maps = defaultdict(dict)
     changed = False
-    for url, names in urls.iteritems():
+    for url, names in iteritems(urls):
         replacement = replacements.get(url)
         if replacement is not None:
             for name in names:
                 url_maps[name][url] = container.name_to_href(replacement, name)
-    for name, url_map in url_maps.iteritems():
+    for name, url_map in iteritems(url_maps):
         r = replacer(url_map)
         container.replace_links(name, r)
         changed |= r.replaced
