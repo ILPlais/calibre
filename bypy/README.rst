@@ -16,7 +16,7 @@ Building *must* run on a Linux computer.
 First create some empty top level directory and run the following commands::
 
     git clone https://github.com/kovidgoyal/bypy.git
-    git clone https://github.com/kovidgoyal/calibre.git
+    git clone https://github.com/ILPlais/calibre.git
     cd calibre
 
 Now we need to bootstrap calibre, for which all its Linux build dependencies
